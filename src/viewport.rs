@@ -1,1 +1,204 @@
-// Filled in by Task 3.
+use crate::line_index::LineIndex;
+use crate::render::{count_rows, render_line, Cell, RenderOpts};
+use crate::source::Source;
+
+#[derive(Debug, Clone)]
+pub struct Frame {
+    pub body: Vec<Vec<Cell>>,   // exactly (rows-1) entries
+    pub status: String,
+}
+
+pub struct Viewport {
+    top_line: usize,
+    top_row: usize,
+    cols: u16,
+    rows: u16,
+    pub opts: RenderOpts,
+    pub show_line_numbers: bool,
+    pub source_label: String,
+}
+
+impl Viewport {
+    pub fn new(cols: u16, rows: u16, source_label: String) -> Self {
+        let mut opts = RenderOpts::default();
+        opts.cols = cols;
+        Self {
+            top_line: 0,
+            top_row: 0,
+            cols,
+            rows,
+            opts,
+            show_line_numbers: false,
+            source_label,
+        }
+    }
+
+    pub fn body_rows(&self) -> u16 { self.rows.saturating_sub(1).max(1) }
+
+    /// Width of the line-number gutter (digits + 1 space separator), 0 if disabled.
+    fn gutter_width(&self, idx: &LineIndex) -> u16 {
+        if !self.show_line_numbers { return 0; }
+        let n = idx.line_count().max(1);
+        let digits = (n as f64).log10().floor() as u16 + 1;
+        digits + 1
+    }
+
+    fn render_opts(&self, gutter: u16) -> RenderOpts {
+        let mut o = self.opts.clone();
+        o.cols = self.cols.saturating_sub(gutter);
+        o
+    }
+
+    pub fn frame(&self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
+        let body_rows = self.body_rows() as usize;
+        idx.extend_to_line(self.top_line + body_rows + 1, src);
+
+        let gutter = self.gutter_width(idx);
+        let r_opts = self.render_opts(gutter);
+
+        let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
+        let mut line_n = self.top_line;
+        let mut skip = self.top_row;
+        let total_lines = idx.line_count();
+
+        while body.len() < body_rows {
+            if line_n >= total_lines {
+                let mut row = Vec::with_capacity(self.cols as usize);
+                if gutter > 0 {
+                    for _ in 0..gutter { row.push(Cell::Empty); }
+                }
+                while row.len() < self.cols as usize { row.push(Cell::Empty); }
+                body.push(row);
+                line_n += 1;
+                continue;
+            }
+            let range = idx.line_range(line_n, src);
+            let bytes = src.bytes(range);
+            let rows = render_line(&bytes, &r_opts);
+            for (i, mut content_row) in rows.into_iter().enumerate() {
+                if i < skip { continue; }
+                if body.len() >= body_rows { break; }
+                let mut full: Vec<Cell> = Vec::with_capacity(self.cols as usize);
+                if gutter > 0 {
+                    let label = if i == 0 { format!("{:>width$} ", line_n + 1, width = (gutter as usize - 1)) } else { " ".repeat(gutter as usize) };
+                    for c in label.chars() {
+                        full.push(Cell::Char { ch: c, width: 1 });
+                    }
+                }
+                full.append(&mut content_row);
+                body.push(full);
+            }
+            skip = 0;
+            line_n += 1;
+        }
+
+        let status = self.format_status(idx, src);
+        Frame { body, status }
+    }
+
+    fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
+        let body_rows = self.body_rows() as usize;
+        let total = idx.line_count();
+        let top = self.top_line + 1;
+        let bottom = (self.top_line + body_rows).min(total.max(1));
+        let pct = if total == 0 { 0 } else { (bottom * 100) / total };
+        let total_str = if src.is_complete() { format!("{}", total) } else { format!("{}+", total) };
+        format!("{}  {}-{}/{}  {}%", self.source_label, top, bottom, total_str, pct)
+    }
+
+    pub fn scroll_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
+        if delta == 0 { return; }
+        if delta > 0 {
+            let mut remaining = delta as usize;
+            while remaining > 0 {
+                idx.extend_to_line(self.top_line + 1, src);
+                let total = idx.line_count();
+                if self.top_line >= total.saturating_sub(1) { break; }
+                let range = idx.line_range(self.top_line, src);
+                let bytes = src.bytes(range);
+                let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                if self.top_row + 1 < line_rows {
+                    self.top_row += 1;
+                } else {
+                    self.top_row = 0;
+                    self.top_line += 1;
+                }
+                remaining -= 1;
+            }
+        } else {
+            let mut remaining = (-delta) as usize;
+            while remaining > 0 {
+                if self.top_row > 0 {
+                    self.top_row -= 1;
+                } else if self.top_line > 0 {
+                    self.top_line -= 1;
+                    let range = idx.line_range(self.top_line, src);
+                    let bytes = src.bytes(range);
+                    let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                    self.top_row = line_rows.saturating_sub(1);
+                } else {
+                    break;
+                }
+                remaining -= 1;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::MockSource;
+
+    fn setup(content: &[u8]) -> (MockSource, LineIndex) {
+        let m = MockSource::new();
+        m.append(content);
+        m.finish();
+        let idx = LineIndex::new();
+        (m, idx)
+    }
+
+    #[test]
+    fn frame_renders_body_height_rows() {
+        let (m, mut idx) = setup(b"a\nb\nc\nd\ne\n");
+        let v = Viewport::new(10, 5, "test".into());  // body = 4
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(frame.body.len(), 4);
+        assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1 });
+        assert_eq!(frame.body[3][0], Cell::Char { ch: 'd', width: 1 });
+    }
+
+    #[test]
+    fn scroll_down_advances_top_line() {
+        let (m, mut idx) = setup(b"a\nb\nc\nd\n");
+        let mut v = Viewport::new(10, 5, "test".into());
+        v.scroll_lines(2, &m, &mut idx);
+        assert_eq!(v.top_line, 2);
+        assert_eq!(v.top_row, 0);
+    }
+
+    #[test]
+    fn scroll_up_clamps_at_zero() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let mut v = Viewport::new(10, 5, "test".into());
+        v.scroll_lines(-5, &m, &mut idx);
+        assert_eq!(v.top_line, 0);
+        assert_eq!(v.top_row, 0);
+    }
+
+    #[test]
+    fn scroll_down_clamps_at_last_line() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let mut v = Viewport::new(10, 5, "test".into());
+        v.scroll_lines(50, &m, &mut idx);
+        assert_eq!(v.top_line, 2);
+    }
+
+    #[test]
+    fn status_line_shows_range_and_pct() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
+        let v = Viewport::new(20, 5, "f".into());  // body = 4
+        let frame = v.frame(&m, &mut idx);
+        assert!(frame.status.starts_with("f  1-4/10"));
+    }
+}
