@@ -1,11 +1,11 @@
-# `rustless` — Claude Code project notes
+# `tess` — Claude Code project notes
 
 A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Currently MVP-level: open a file or piped stdin, scroll, paging, line numbers, wrap/chop, tab expansion, byte-faithful UTF-8 rendering. No search yet, no follow mode, no multi-file nav — see `OUT-OF-SCOPE.md` for the full deferred list.
 
 ## Build, run, test
 
 ```
-cargo build --release           # binary at target/release/rustless
+cargo build --release           # binary at target/release/tess
 cargo test                      # 62 unit + integration tests
 cargo run -- Cargo.toml         # quick interactive run
 ls -la | cargo run --release    # piped stdin

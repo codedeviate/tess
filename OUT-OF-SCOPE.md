@@ -107,4 +107,4 @@ Spotted during a code review of Task 10 — there's both a top-level import and 
 
 ## Bug-for-bug compatibility with GNU `less`
 
-Explicitly **not** a goal of MVP, and probably not worth chasing. If we ever did, we'd need to sit `less -V` against `rustless -V` and walk every flag. Most users care about the daily-driver flags, which is what the items above prioritize.
+Explicitly **not** a goal of MVP, and probably not worth chasing. If we ever did, we'd need to sit `less -V` against `tess -V` and walk every flag. Most users care about the daily-driver flags, which is what the items above prioritize.

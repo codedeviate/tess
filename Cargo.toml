@@ -1,5 +1,5 @@
 [package]
-name = "rustless"
+name = "tess"
 version = "0.1.0"
 edition = "2021"
 description = "A less-style terminal pager."
@@ -17,9 +17,9 @@ libc = "0.2"
 tempfile = "3"
 
 [lib]
-name = "rustless"
+name = "tess"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rustless"
+name = "tess"
 path = "src/main.rs"

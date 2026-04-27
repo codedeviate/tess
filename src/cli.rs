@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use clap::Parser;
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "rustless", version, about = "A less-style terminal pager.")]
+#[command(name = "tess", version, about = "A less-style terminal pager.")]
 pub struct Args {
     /// Show line numbers.
     #[arg(short = 'N', long = "LINE-NUMBERS")]
@@ -26,7 +26,7 @@ mod tests {
 
     #[test]
     fn parses_no_flags_no_files() {
-        let a = Args::parse_from(["rustless"]);
+        let a = Args::parse_from(["tess"]);
         assert!(!a.line_numbers);
         assert!(!a.chop);
         assert_eq!(a.tab_width, 8);
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn parses_short_flags_and_file() {
-        let a = Args::parse_from(["rustless", "-N", "-S", "foo.txt"]);
+        let a = Args::parse_from(["tess", "-N", "-S", "foo.txt"]);
         assert!(a.line_numbers);
         assert!(a.chop);
         assert_eq!(a.files, vec![PathBuf::from("foo.txt")]);
@@ -43,13 +43,13 @@ mod tests {
 
     #[test]
     fn parses_tab_width() {
-        let a = Args::parse_from(["rustless", "--tab-width", "4", "x"]);
+        let a = Args::parse_from(["tess", "--tab-width", "4", "x"]);
         assert_eq!(a.tab_width, 4);
     }
 
     #[test]
     fn collects_multiple_files() {
-        let a = Args::parse_from(["rustless", "a", "b", "c"]);
+        let a = Args::parse_from(["tess", "a", "b", "c"]);
         assert_eq!(a.files.len(), 3);
     }
 }

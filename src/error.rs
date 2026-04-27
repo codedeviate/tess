@@ -22,13 +22,13 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::OpenFile { path, source } => {
-                write!(f, "rustless: {}: {}", path.display(), source)
+                write!(f, "tess: {}: {}", path.display(), source)
             }
             Error::NotAFile { path } => {
-                write!(f, "rustless: {}: not a regular file", path.display())
+                write!(f, "tess: {}: not a regular file", path.display())
             }
-            Error::NoInput => write!(f, "rustless: no input (specify a file or pipe stdin)"),
-            Error::Runtime(msg) => write!(f, "rustless: {}", msg),
+            Error::NoInput => write!(f, "tess: no input (specify a file or pipe stdin)"),
+            Error::Runtime(msg) => write!(f, "tess: {}", msg),
         }
     }
 }
@@ -45,7 +45,7 @@ mod tests {
     fn display_wraps_io_error_with_context() {
         let io = std::io::Error::new(std::io::ErrorKind::NotFound, "no such file");
         let e = Error::OpenFile { path: "/nope".into(), source: io };
-        assert_eq!(format!("{}", e), "rustless: /nope: no such file");
+        assert_eq!(format!("{}", e), "tess: /nope: no such file");
     }
 
     #[test]

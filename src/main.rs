@@ -1,12 +1,12 @@
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use rustless::app;
-use rustless::cli::Args;
-use rustless::error::{Error, Result};
-use rustless::source::{FileSource, Source, StdinSource};
-use rustless::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
-use rustless::viewport::Viewport;
+use tess::app;
+use tess::cli::Args;
+use tess::error::{Error, Result};
+use tess::source::{FileSource, Source, StdinSource};
+use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
+use tess::viewport::Viewport;
 use clap::Parser;
 
 fn main() -> ExitCode {
@@ -47,7 +47,7 @@ fn real_main() -> Result<()> {
     let (src, label): (Box<dyn Source>, String) = if let Some(path) = args.files.first() {
         if args.files.len() > 1 {
             eprintln!(
-                "rustless: ignoring {} additional file(s) (multi-file navigation not yet supported)",
+                "tess: ignoring {} additional file(s) (multi-file navigation not yet supported)",
                 args.files.len() - 1
             );
         }

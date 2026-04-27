@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use rustless::line_index::LineIndex;
-use rustless::render::Cell;
-use rustless::source::FileSource;
-use rustless::viewport::Viewport;
+use tess::line_index::LineIndex;
+use tess::render::Cell;
+use tess::source::FileSource;
+use tess::viewport::Viewport;
 
-fn render_to_strings(viewport: &Viewport, src: &dyn rustless::source::Source) -> (Vec<String>, String) {
+fn render_to_strings(viewport: &Viewport, src: &dyn tess::source::Source) -> (Vec<String>, String) {
     let mut idx = LineIndex::new();
     let frame = viewport.frame(src, &mut idx);
     let body: Vec<String> = frame.body.iter().map(|row| {
