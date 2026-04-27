@@ -12,6 +12,9 @@ unicode-segmentation = "1"
 unicode-width = "0.1"
 signal-hook = "0.3"
 libc = "0.2"
+regex = "1"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"

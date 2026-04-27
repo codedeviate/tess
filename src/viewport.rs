@@ -1,10 +1,20 @@
+use crate::filter::{CompiledFilter, FilterMatch};
 use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowStyle {
+    Normal,
+    /// Render with a reduced-emphasis terminal attribute. Used by `--dim` to
+    /// keep filtered-out lines visible as context.
+    Dim,
+}
+
 #[derive(Debug, Clone)]
 pub struct Frame {
-    pub body: Vec<Vec<Cell>>,   // exactly (rows-1) entries
+    pub body: Vec<Vec<Cell>>,        // exactly (rows-1) entries
+    pub row_styles: Vec<RowStyle>,   // parallel to body
     pub status: String,
 }
 
@@ -17,6 +27,14 @@ pub struct Viewport {
     pub show_line_numbers: bool,
     pub source_label: String,
     follow_mode: bool,
+    filter: Option<CompiledFilter>,
+    dim_mode: bool,
+    /// In hide mode (filter active, !dim), maps visible position → logical line
+    /// index. Empty otherwise.
+    visible_lines: Vec<usize>,
+    /// How many logical lines we've evaluated for filter membership. Used by
+    /// `extend_visible_lines` to avoid re-scanning lines on every tick.
+    visible_scanned: usize,
 }
 
 impl Viewport {
@@ -32,6 +50,54 @@ impl Viewport {
             show_line_numbers: false,
             source_label,
             follow_mode: false,
+            filter: None,
+            dim_mode: false,
+            visible_lines: Vec::new(),
+            visible_scanned: 0,
+        }
+    }
+
+    pub fn set_filter(&mut self, filter: Option<CompiledFilter>) {
+        self.filter = filter;
+        self.visible_lines.clear();
+        self.visible_scanned = 0;
+        // Drop scroll state — line numbering may have changed under us.
+        self.top_line = 0;
+        self.top_row = 0;
+    }
+
+    pub fn set_dim_mode(&mut self, on: bool) {
+        self.dim_mode = on;
+        // Hide mode is the only mode that needs visible_lines; clear when
+        // turning dim ON, and re-derive from scratch when turning dim OFF
+        // (next extend_visible_lines call rebuilds it).
+        self.visible_lines.clear();
+        self.visible_scanned = 0;
+    }
+
+    pub fn filter_active(&self) -> bool { self.filter.is_some() }
+
+    pub fn dim_mode(&self) -> bool { self.dim_mode }
+
+    fn hide_mode(&self) -> bool { self.filter.is_some() && !self.dim_mode }
+
+    /// Walk any newly indexed logical lines and append matching ones to
+    /// `visible_lines` if we're in hide mode. No-op otherwise. Cheap to call
+    /// every loop tick — keeps a `visible_scanned` cursor.
+    pub fn extend_visible_lines(&mut self, idx: &LineIndex, src: &dyn Source) {
+        if !self.hide_mode() {
+            return;
+        }
+        let Some(filter) = self.filter.as_ref() else { return };
+        let total = idx.line_count();
+        while self.visible_scanned < total {
+            let line_n = self.visible_scanned;
+            let range = idx.line_range(line_n, src);
+            let bytes = src.bytes(range);
+            if matches!(filter.evaluate(&bytes), FilterMatch::Matched) {
+                self.visible_lines.push(line_n);
+            }
+            self.visible_scanned += 1;
         }
     }
 
@@ -48,7 +114,17 @@ impl Viewport {
     /// follow mode is on.
     pub fn is_at_bottom(&self, idx: &LineIndex) -> bool {
         let body = self.body_rows() as usize;
-        self.top_line + body >= idx.line_count()
+        if self.hide_mode() {
+            // top_line is a logical line; find its position in visible_lines.
+            let pos = self
+                .visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(self.visible_lines.len());
+            pos + body >= self.visible_lines.len()
+        } else {
+            self.top_line + body >= idx.line_count()
+        }
     }
 
     /// Width of the line-number gutter (digits + 1 space separator), 0 if disabled.
@@ -73,9 +149,26 @@ impl Viewport {
         let r_opts = self.render_opts(gutter);
 
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
-        let mut line_n = self.top_line;
-        let mut skip = self.top_row;
+        let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
+        // In hide mode we walk visible_lines; otherwise we walk logical lines.
+        let hide = self.hide_mode();
         let total_lines = idx.line_count();
+
+        // For hide mode, find where the viewport starts in visible_lines.
+        let mut hide_pos = if hide {
+            self.visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(self.visible_lines.len())
+        } else {
+            0
+        };
+        let mut line_n = if hide {
+            self.visible_lines.get(hide_pos).copied().unwrap_or(total_lines)
+        } else {
+            self.top_line
+        };
+        let mut skip = if hide { 0 } else { self.top_row };
 
         while body.len() < body_rows {
             if line_n >= total_lines {
@@ -85,12 +178,28 @@ impl Viewport {
                 }
                 while row.len() < self.cols as usize { row.push(Cell::Empty); }
                 body.push(row);
+                row_styles.push(RowStyle::Normal);
                 line_n += 1;
                 continue;
             }
             let range = idx.line_range(line_n, src);
             let bytes = src.bytes(range);
             let rows = render_line(&bytes, &r_opts);
+            // Compute style for this logical line.
+            let style = if let Some(f) = self.filter.as_ref() {
+                if self.dim_mode {
+                    match f.evaluate(&bytes) {
+                        FilterMatch::Matched => RowStyle::Normal,
+                        _ => RowStyle::Dim,
+                    }
+                } else {
+                    // hide mode: only matching lines reach here
+                    RowStyle::Normal
+                }
+            } else {
+                RowStyle::Normal
+            };
+
             for (i, mut content_row) in rows.into_iter().enumerate() {
                 if i < skip { continue; }
                 if body.len() >= body_rows { break; }
@@ -103,28 +212,82 @@ impl Viewport {
                 }
                 full.append(&mut content_row);
                 body.push(full);
+                row_styles.push(style);
             }
             skip = 0;
-            line_n += 1;
+            // Advance to next line — visible-space if hiding, logical-space otherwise.
+            if hide {
+                hide_pos += 1;
+                line_n = self.visible_lines.get(hide_pos).copied().unwrap_or(total_lines);
+            } else {
+                line_n += 1;
+            }
         }
 
         let status = self.format_status(idx, src);
-        Frame { body, status }
+        Frame { body, row_styles, status }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
         let body_rows = self.body_rows() as usize;
         let total = idx.line_count();
-        let top = self.top_line + 1;
-        let bottom = (self.top_line + body_rows).min(total.max(1));
-        let pct = if total == 0 { 0 } else { (bottom * 100) / total };
-        let total_str = if src.is_complete() { format!("{}", total) } else { format!("{}+", total) };
-        let follow_suffix = if self.follow_mode { "  (F)" } else { "" };
-        format!("{}  {}-{}/{}  {}%{}", self.source_label, top, bottom, total_str, pct, follow_suffix)
+        // In hide mode, the line range and percentage refer to visible (matched)
+        // lines, not the underlying logical line count.
+        let (top, bottom, total_for_pct, total_str): (usize, usize, usize, String) = if self.hide_mode() {
+            let visible_total = self.visible_lines.len();
+            // top_line is a logical line; find its visible index.
+            let cur = self
+                .visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(visible_total);
+            let top = cur + 1;
+            let bottom = (cur + body_rows).min(visible_total.max(1));
+            let total_str = if src.is_complete() {
+                format!("{visible_total}/{total}")
+            } else {
+                format!("{visible_total}/{total}+")
+            };
+            (top, bottom, visible_total, total_str)
+        } else {
+            let top = self.top_line + 1;
+            let bottom = (self.top_line + body_rows).min(total.max(1));
+            let total_str = if src.is_complete() { format!("{total}") } else { format!("{total}+") };
+            (top, bottom, total, total_str)
+        };
+        let pct = if total_for_pct == 0 { 0 } else { (bottom * 100) / total_for_pct };
+        let mut s = format!("{}  {}-{}/{}  {}%", self.source_label, top, bottom, total_str, pct);
+        if let Some(f) = self.filter.as_ref() {
+            s.push_str(&format!("  [{}]", f.format_name));
+            s.push_str(if self.dim_mode { "  [dim]" } else { "  [filter]" });
+        }
+        if self.follow_mode { s.push_str("  (F)"); }
+        s
     }
 
     pub fn scroll_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
         if delta == 0 { return; }
+        if self.hide_mode() {
+            // Scroll by visible (matching) lines. We don't honor wrap rows in
+            // hide mode — top_row stays 0. Each unit of `delta` advances or
+            // retreats one visible line.
+            self.extend_visible_lines(idx, src);
+            let total = self.visible_lines.len();
+            if total == 0 {
+                self.top_line = 0;
+                self.top_row = 0;
+                return;
+            }
+            let cur = self
+                .visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(total);
+            let new = (cur as i64 + delta).clamp(0, total.saturating_sub(1) as i64) as usize;
+            self.top_line = self.visible_lines[new];
+            self.top_row = 0;
+            return;
+        }
         if delta > 0 {
             let mut remaining = delta as usize;
             while remaining > 0 {
@@ -188,10 +351,18 @@ impl Viewport {
 
     pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
         idx.extend_to_end(src);
-        let total = idx.line_count();
         let body = self.body_rows() as usize;
-        self.top_line = total.saturating_sub(body);
-        self.top_row = 0;
+        if self.hide_mode() {
+            self.extend_visible_lines(idx, src);
+            let total = self.visible_lines.len();
+            let target_visible = total.saturating_sub(body);
+            self.top_line = self.visible_lines.get(target_visible).copied().unwrap_or(0);
+            self.top_row = 0;
+        } else {
+            let total = idx.line_count();
+            self.top_line = total.saturating_sub(body);
+            self.top_row = 0;
+        }
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {

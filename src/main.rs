@@ -4,6 +4,8 @@ use std::process::ExitCode;
 use tess::app;
 use tess::cli::Args;
 use tess::error::{Error, Result};
+use tess::filter::{CompiledFilter, FilterSpec};
+use tess::format;
 use tess::line_index::LineIndex;
 use tess::source::{find_tail_offset, FileSource, Source, StdinSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
@@ -41,6 +43,26 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
 
 fn real_main() -> Result<()> {
     let args = Args::parse();
+
+    // --list-formats: print and exit before doing any source/terminal work.
+    if args.list_formats {
+        let formats = format::load_all().map_err(Error::Runtime)?;
+        format::print_format_list(&formats);
+        return Ok(());
+    }
+
+    // Validate format/filter combination up front so errors land cleanly to
+    // stderr without entering raw mode.
+    if !args.filter.is_empty() && args.format.is_none() {
+        return Err(Error::Runtime(
+            "--filter requires --format".to_string(),
+        ));
+    }
+    if args.dim && args.filter.is_empty() {
+        return Err(Error::Runtime(
+            "--dim has no effect without --filter".to_string(),
+        ));
+    }
 
     // Resolve source. Track whether we actually consumed stdin — only then
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
@@ -103,6 +125,27 @@ fn real_main() -> Result<()> {
         let _ = redirect_stdin_to_tty();
     }
 
+    // Compile filter specs against the chosen format BEFORE entering raw mode
+    // so errors print cleanly.
+    let compiled_filter = if let Some(name) = args.format.as_deref() {
+        let formats = format::load_all().map_err(Error::Runtime)?;
+        let fmt = formats.get(name).ok_or_else(|| {
+            Error::Runtime(format!(
+                "unknown format `{name}` (run --list-formats to see available)"
+            ))
+        })?;
+        if !args.filter.is_empty() {
+            let specs: Vec<FilterSpec> = args.filter.iter()
+                .map(|s| FilterSpec::parse(s).map_err(Error::Runtime))
+                .collect::<Result<_>>()?;
+            Some(CompiledFilter::compile(fmt, specs).map_err(Error::Runtime)?)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let sigterm = install_signal_flag();
     let _guard = TerminalGuard::enter()
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
@@ -113,6 +156,10 @@ fn real_main() -> Result<()> {
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
     viewport.set_follow_mode(args.follow);
+    if let Some(f) = compiled_filter {
+        viewport.set_filter(Some(f));
+        viewport.set_dim_mode(args.dim);
+    }
 
     app::run(src, viewport, idx, sigterm)?;
     Ok(())

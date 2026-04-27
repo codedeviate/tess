@@ -31,6 +31,27 @@ pub struct Args {
     #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
 
+    /// Apply a named log format (built-in or user-defined in
+    /// ~/.config/tess/formats.toml). Required by `--filter`.
+    #[arg(long = "format", value_name = "NAME")]
+    pub format: Option<String>,
+
+    /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
+    /// Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠).
+    /// Examples: `--filter status=500`, `--filter ip~^10\.`.
+    /// Requires `--format`.
+    #[arg(long = "filter", value_name = "FIELD<op>VALUE")]
+    pub filter: Vec<String>,
+
+    /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
+    /// surrounding context visible.
+    #[arg(long = "dim")]
+    pub dim: bool,
+
+    /// Print available log formats and their named fields, then exit.
+    #[arg(long = "list-formats")]
+    pub list_formats: bool,
+
     /// Files to view (only the first is opened in MVP).
     pub files: Vec<PathBuf>,
 }
@@ -112,5 +133,30 @@ mod tests {
         let a = Args::parse_from(["tess", "x"]);
         assert!(a.head.is_none());
         assert!(a.tail.is_none());
+    }
+
+    #[test]
+    fn parses_format_and_filter() {
+        let a = Args::parse_from([
+            "tess", "--format", "apache-combined",
+            "--filter", "status=500",
+            "--filter", "ip~^10\\.",
+            "log",
+        ]);
+        assert_eq!(a.format.as_deref(), Some("apache-combined"));
+        assert_eq!(a.filter.len(), 2);
+        assert_eq!(a.filter[0], "status=500");
+    }
+
+    #[test]
+    fn parses_dim() {
+        let a = Args::parse_from(["tess", "--format", "x", "--filter", "y=z", "--dim", "f"]);
+        assert!(a.dim);
+    }
+
+    #[test]
+    fn parses_list_formats() {
+        let a = Args::parse_from(["tess", "--list-formats"]);
+        assert!(a.list_formats);
     }
 }

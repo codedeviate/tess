@@ -14,7 +14,7 @@ use crate::input::{translate, Command};
 use crate::line_index::LineIndex;
 use crate::render::Cell;
 use crate::source::Source;
-use crate::viewport::{Frame, Viewport};
+use crate::viewport::{Frame, RowStyle, Viewport};
 
 pub fn run(
     src: Box<dyn Source>,
@@ -28,10 +28,19 @@ pub fn run(
     let mut stdout = io::stdout();
     let timeout = Duration::from_millis(250);
 
-    // If follow mode is on at startup, snap to the bottom of the source so
-    // the user sees the newest content (tail-style).
+    // If a filter is active in hide mode, we need to scan the whole source
+    // up front to find matching lines. Without a filter this is intentionally
+    // skipped — lazy indexing keeps `tess` fast on huge files.
+    if viewport.filter_active() && !viewport.dim_mode() {
+        idx.extend_to_end(src.as_ref());
+        viewport.extend_visible_lines(&idx, src.as_ref());
+    }
+
+    // If follow mode is on at startup, snap to the bottom of the (possibly
+    // filtered) source so the user sees the newest content (tail-style).
     if viewport.follow_mode() {
         src.pump();
+        viewport.extend_visible_lines(&idx, src.as_ref());
         viewport.goto_bottom(src.as_ref(), &mut idx);
     }
 
@@ -121,6 +130,7 @@ pub fn run(
                     src.pump();
                     let lines_before = idx.line_count();
                     idx.notice_new_bytes(src.as_ref());
+                    viewport.extend_visible_lines(&idx, src.as_ref());
                     if idx.line_count() != lines_before {
                         needs_redraw = true;
                         if was_at_bottom {
@@ -132,6 +142,7 @@ pub fn run(
                     // up-to-date so line counts stay accurate, but don't auto-scroll.
                     let lines_before = idx.line_count();
                     idx.notice_new_bytes(src.as_ref());
+                    viewport.extend_visible_lines(&idx, src.as_ref());
                     if idx.line_count() != lines_before {
                         needs_redraw = true;
                     }
@@ -150,7 +161,14 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
     out.queue(Clear(ClearType::All))?;
     for (i, row) in frame.body.iter().enumerate() {
         out.queue(MoveTo(0, i as u16))?;
+        let style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
+        if matches!(style, RowStyle::Dim) {
+            out.queue(SetAttribute(Attribute::Dim))?;
+        }
         out.queue(Print(cells_to_string(row, cols)))?;
+        if matches!(style, RowStyle::Dim) {
+            out.queue(SetAttribute(Attribute::Reset))?;
+        }
     }
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
