@@ -112,6 +112,11 @@ impl LineIndex {
 
     pub fn extend_to_line(&mut self, n: usize, src: &dyn Source) {
         while self.starts.len() <= n && self.scanned_through < src.len() {
+            if self.at_scan_cap() {
+                // head_cap is set and we've already scanned the sentinel past
+                // the cap; no further progress is possible.
+                return;
+            }
             self.extend_to_byte(src, src.len());
         }
     }
@@ -206,6 +211,19 @@ mod tests {
         assert_eq!(idx.line_range(0, &m), 0..1);
         assert_eq!(idx.line_range(1, &m), 2..3);
         assert_eq!(idx.line_range(2, &m), 4..5);
+    }
+
+    #[test]
+    fn head_cap_extend_to_line_terminates() {
+        // Regression: extend_to_line(n) used to spin forever when head_cap
+        // had already been hit, because extend_to_byte returned without
+        // advancing scanned_through.
+        let m = MockSource::new();
+        m.append(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
+        let mut idx = LineIndex::new();
+        idx.set_head_cap(3);
+        idx.extend_to_line(20, &m);  // far past the cap
+        assert_eq!(idx.line_count(), 3);
     }
 
     #[test]
