@@ -2,6 +2,9 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+use std::io::Read;
+use std::thread;
 
 pub trait Source: Send + Sync {
     fn len(&self) -> usize;
@@ -70,6 +73,73 @@ impl Source for FileSource {
     fn is_complete(&self) -> bool { true }
 }
 
+/// A test/utility source whose contents can be appended at runtime.
+pub struct MockSource {
+    buf: Arc<Mutex<Vec<u8>>>,
+    complete: Arc<AtomicBool>,
+}
+
+impl MockSource {
+    pub fn new() -> Self {
+        Self {
+            buf: Arc::new(Mutex::new(Vec::new())),
+            complete: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn append(&self, more: &[u8]) {
+        self.buf.lock().unwrap().extend_from_slice(more);
+    }
+
+    pub fn finish(&self) {
+        self.complete.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Source for MockSource {
+    fn len(&self) -> usize { self.buf.lock().unwrap().len() }
+    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> {
+        Cow::Owned(self.buf.lock().unwrap()[range].to_vec())
+    }
+    fn is_complete(&self) -> bool { self.complete.load(Ordering::SeqCst) }
+}
+
+pub struct StdinSource {
+    buf: Arc<Mutex<Vec<u8>>>,
+    complete: Arc<AtomicBool>,
+}
+
+impl StdinSource {
+    /// Spawn a background thread reading stdin into a shared buffer.
+    pub fn spawn() -> Self {
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let complete = Arc::new(AtomicBool::new(false));
+        let buf_w = Arc::clone(&buf);
+        let complete_w = Arc::clone(&complete);
+        thread::spawn(move || {
+            let mut stdin = std::io::stdin().lock();
+            let mut tmp = [0u8; 8192];
+            loop {
+                match stdin.read(&mut tmp) {
+                    Ok(0) => break,
+                    Ok(n) => buf_w.lock().unwrap().extend_from_slice(&tmp[..n]),
+                    Err(_) => break,
+                }
+            }
+            complete_w.store(true, Ordering::SeqCst);
+        });
+        Self { buf, complete }
+    }
+}
+
+impl Source for StdinSource {
+    fn len(&self) -> usize { self.buf.lock().unwrap().len() }
+    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> {
+        Cow::Owned(self.buf.lock().unwrap()[range].to_vec())
+    }
+    fn is_complete(&self) -> bool { self.complete.load(Ordering::SeqCst) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +168,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = FileSource::open(dir.path()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn mock_source_grows_and_finishes() {
+        let m = MockSource::new();
+        assert_eq!(m.len(), 0);
+        assert!(!m.is_complete());
+        m.append(b"abc");
+        assert_eq!(m.len(), 3);
+        assert_eq!(&*m.bytes(0..3), b"abc");
+        m.append(b"def");
+        assert_eq!(&*m.bytes(0..6), b"abcdef");
+        m.finish();
+        assert!(m.is_complete());
     }
 }
