@@ -143,6 +143,53 @@ impl Viewport {
             }
         }
     }
+
+    pub fn page_down(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        let n = self.body_rows() as i64;
+        self.scroll_lines(n, src, idx);
+    }
+
+    pub fn page_up(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        let n = self.body_rows() as i64;
+        self.scroll_lines(-n, src, idx);
+    }
+
+    pub fn half_page_down(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        let n = (self.body_rows() / 2).max(1) as i64;
+        self.scroll_lines(n, src, idx);
+    }
+
+    pub fn half_page_up(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        let n = (self.body_rows() / 2).max(1) as i64;
+        self.scroll_lines(-n, src, idx);
+    }
+
+    pub fn goto_top(&mut self) {
+        self.top_line = 0;
+        self.top_row = 0;
+    }
+
+    pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        idx.extend_to_end(src);
+        let total = idx.line_count();
+        let body = self.body_rows() as usize;
+        self.top_line = total.saturating_sub(body);
+        self.top_row = 0;
+    }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.cols = cols.max(1);
+        self.rows = rows.max(2);
+        self.opts.cols = self.cols;
+    }
+
+    pub fn toggle_line_numbers(&mut self) {
+        self.show_line_numbers = !self.show_line_numbers;
+    }
+
+    pub fn toggle_chop(&mut self) {
+        self.opts.wrap = !self.opts.wrap;
+    }
 }
 
 #[cfg(test)]
@@ -200,5 +247,88 @@ mod tests {
         let v = Viewport::new(20, 5, "f".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.starts_with("f  1-4/10"));
+    }
+
+    #[test]
+    fn page_down_advances_by_body_rows() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");
+        let mut v = Viewport::new(10, 5, "f".into());  // body = 4
+        v.page_down(&m, &mut idx);
+        assert_eq!(v.top_line, 4);
+    }
+
+    #[test]
+    fn page_up_then_page_down_returns_to_start_when_no_resize() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.page_down(&m, &mut idx);
+        v.page_up(&m, &mut idx);
+        assert_eq!(v.top_line, 0);
+        assert_eq!(v.top_row, 0);
+    }
+
+    #[test]
+    fn half_page_down_advances_by_half_body() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");
+        let mut v = Viewport::new(10, 7, "f".into());  // body = 6, half = 3
+        v.half_page_down(&m, &mut idx);
+        assert_eq!(v.top_line, 3);
+    }
+
+    #[test]
+    fn goto_top_resets_position() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n");
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.scroll_lines(2, &m, &mut idx);
+        v.goto_top();
+        assert_eq!(v.top_line, 0);
+        assert_eq!(v.top_row, 0);
+    }
+
+    #[test]
+    fn goto_bottom_scrolls_to_last_page() {
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
+        let mut v = Viewport::new(10, 5, "f".into());  // body = 4
+        v.goto_bottom(&m, &mut idx);
+        // Last page should show lines 7..=10 → top_line = 6.
+        assert_eq!(v.top_line, 6);
+    }
+
+    #[test]
+    fn resize_updates_dimensions_and_render_opts() {
+        let (m, mut idx) = setup(b"1\n2\n");
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.resize(40, 12);
+        assert_eq!(v.cols, 40);
+        assert_eq!(v.rows, 12);
+        assert_eq!(v.opts.cols, 40);
+        let _ = v.frame(&m, &mut idx);
+    }
+
+    #[test]
+    fn toggle_line_numbers_changes_gutter() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let mut v = Viewport::new(10, 5, "f".into());
+        let frame_off = v.frame(&m, &mut idx);
+        v.toggle_line_numbers();
+        let frame_on = v.frame(&m, &mut idx);
+        // With gutter, first cell is a digit or space, not 'a'.
+        assert_eq!(frame_off.body[0][0], Cell::Char { ch: 'a', width: 1 });
+        assert_ne!(frame_on.body[0][0], Cell::Char { ch: 'a', width: 1 });
+    }
+
+    #[test]
+    fn toggle_chop_changes_wrap_mode() {
+        let (m, mut idx) = setup(b"abcdefghij\n");
+        let mut v = Viewport::new(4, 5, "f".into());
+        v.toggle_chop();
+        let frame = v.frame(&m, &mut idx);
+        // After toggle_chop, the line is one row, not wrapped.
+        // Body row 0 is "abcd"; rows 1..3 are blank fill.
+        assert_eq!(frame.body[0][..4],
+            [Cell::Char { ch: 'a', width: 1 }, Cell::Char { ch: 'b', width: 1 },
+             Cell::Char { ch: 'c', width: 1 }, Cell::Char { ch: 'd', width: 1 }]);
+        // Row 1 should be all-empty (no wrap continuation).
+        assert!(frame.body[1].iter().all(|c| matches!(c, Cell::Empty)));
     }
 }
