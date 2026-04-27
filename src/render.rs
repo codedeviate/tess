@@ -26,32 +26,57 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
     let mut rows: Vec<Vec<Cell>> = Vec::new();
     let mut current: Vec<Cell> = Vec::with_capacity(cols);
 
-    let push_char = |current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts| {
+    fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts) {
         if current.len() >= opts.cols as usize {
             if opts.wrap {
-                rows.push(std::mem::take(current));
+                let mut full = std::mem::replace(current, Vec::with_capacity(opts.cols as usize));
+                while full.len() < opts.cols as usize { full.push(Cell::Empty); }
+                rows.push(full);
             } else {
                 return;
             }
         }
         current.push(cell);
-    };
+    }
 
-    // Treat input as ASCII for now; bytes >= 0x80 handled in later tasks.
-    for &b in bytes {
+    fn push_str(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, s: &str, opts: &RenderOpts) {
+        for c in s.chars() {
+            push(current, rows, Cell::Char { ch: c, width: 1 }, opts);
+        }
+    }
+
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
         if b == b'\t' {
-            let stop = opts.tab_width as usize;
-            if stop == 0 { continue; }
+            let stop = opts.tab_width.max(1) as usize;
             let cur_col = current.len();
-            // Wrap-aware: column position is current.len() within the row.
             let next_stop = ((cur_col / stop) + 1) * stop;
             for _ in cur_col..next_stop {
-                push_char(&mut current, &mut rows, Cell::Char { ch: ' ', width: 1 }, opts);
+                push(&mut current, &mut rows, Cell::Char { ch: ' ', width: 1 }, opts);
             }
-        } else if b.is_ascii() && !b.is_ascii_control() {
-            push_char(&mut current, &mut rows, Cell::Char { ch: b as char, width: 1 }, opts);
+            i += 1;
+        } else if b == b'\n' {
+            // Newlines never reach render_line in practice (LineIndex splits on them).
+            // Defensive: ignore.
+            i += 1;
+        } else if b < 0x20 || b == 0x7F {
+            // Control byte → ^X form
+            let printable = if b == 0x7F { '?' } else { (b ^ 0x40) as char };
+            push(&mut current, &mut rows, Cell::Char { ch: '^', width: 1 }, opts);
+            push(&mut current, &mut rows, Cell::Char { ch: printable, width: 1 }, opts);
+            i += 1;
+        } else if b < 0x80 {
+            // Plain printable ASCII
+            push(&mut current, &mut rows, Cell::Char { ch: b as char, width: 1 }, opts);
+            i += 1;
+        } else {
+            // High-bit byte: in this task, always render as <HH>. Task 6 promotes
+            // valid UTF-8 sequences to a single grapheme cell.
+            let s = format!("<{:02X}>", b);
+            push_str(&mut current, &mut rows, &s, opts);
+            i += 1;
         }
-        // Other bytes: ignored for now (filled in by later tasks).
     }
 
     while current.len() < cols {
@@ -123,5 +148,45 @@ mod tests {
             assert_eq!(rows[0][i], ch(' '));
         }
         assert_eq!(rows[0][16], ch('x'));
+    }
+
+    #[test]
+    fn null_renders_as_caret_at() {
+        let rows = render_line(b"\0", &opts(5, true));
+        assert_eq!(rows[0][0], ch('^'));
+        assert_eq!(rows[0][1], ch('@'));
+    }
+
+    #[test]
+    fn esc_renders_as_caret_lbracket() {
+        let rows = render_line(b"\x1b", &opts(5, true));
+        assert_eq!(rows[0][0], ch('^'));
+        assert_eq!(rows[0][1], ch('['));
+    }
+
+    #[test]
+    fn del_renders_as_caret_question() {
+        let rows = render_line(b"\x7f", &opts(5, true));
+        assert_eq!(rows[0][0], ch('^'));
+        assert_eq!(rows[0][1], ch('?'));
+    }
+
+    #[test]
+    fn invalid_utf8_byte_renders_as_angle_hex() {
+        let rows = render_line(&[0xFF], &opts(8, true));
+        assert_eq!(rows[0][0], ch('<'));
+        assert_eq!(rows[0][1], ch('F'));
+        assert_eq!(rows[0][2], ch('F'));
+        assert_eq!(rows[0][3], ch('>'));
+    }
+
+    #[test]
+    fn partial_multibyte_each_byte_renders_separately() {
+        // 0xC3 starts a 2-byte sequence; alone it's invalid → <C3>
+        let rows = render_line(&[0xC3], &opts(8, true));
+        assert_eq!(rows[0][0], ch('<'));
+        assert_eq!(rows[0][1], ch('C'));
+        assert_eq!(rows[0][2], ch('3'));
+        assert_eq!(rows[0][3], ch('>'));
     }
 }
