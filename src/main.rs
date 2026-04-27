@@ -21,26 +21,29 @@ fn main() -> ExitCode {
 }
 
 /// Redirect fd 0 to /dev/tty so crossterm can read keyboard events after
-/// stdin has been fully consumed from a pipe.
+/// stdin has been fully consumed from a pipe. Opened read+write because
+/// crossterm needs both directions on the tty fd.
 #[cfg(unix)]
 fn redirect_stdin_to_tty() -> std::io::Result<()> {
     use std::os::unix::io::AsRawFd;
-    let tty = std::fs::File::open("/dev/tty")?;
-    // Replace fd 0 with /dev/tty so crossterm reads keyboard from it.
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")?;
     unsafe {
         if libc::dup2(tty.as_raw_fd(), libc::STDIN_FILENO) < 0 {
             return Err(std::io::Error::last_os_error());
         }
     }
-    // tty's File goes out of scope and its fd is closed,
-    // but fd 0 still points to /dev/tty.
     Ok(())
 }
 
 fn real_main() -> Result<()> {
     let args = Args::parse();
 
-    // Resolve source.
+    // Resolve source. Track whether we actually consumed stdin — only then
+    // do we need to redirect fd 0 to /dev/tty for keyboard input.
+    let mut consumed_stdin = false;
     let (src, label): (Box<dyn Source>, String) = if let Some(path) = args.files.first() {
         if args.files.len() > 1 {
             eprintln!(
@@ -59,18 +62,18 @@ fn real_main() -> Result<()> {
     } else if !io::stdin().is_terminal() {
         let ss = StdinSource::read_all()
             .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?;
+        consumed_stdin = true;
         (Box::new(ss), "(stdin)".to_string())
     } else {
         return Err(Error::NoInput);
     };
 
-    // If we used StdinSource, fd 0 is at EOF (the pipe drained). Redirect it
-    // to /dev/tty so crossterm can read keyboard events. For files this is
-    // harmless — fd 0 is already the user's terminal.
+    // Only redirect fd 0 to /dev/tty if we actually drained stdin from a pipe.
+    // For file inputs, stdin is already the user's terminal — replacing it with
+    // a read-only /dev/tty fd would break crossterm's event source.
     #[cfg(unix)]
-    if redirect_stdin_to_tty().is_err() {
-        // No /dev/tty available (e.g. running under a non-interactive harness).
-        // Continue anyway — the user explicitly invoked rustless.
+    if consumed_stdin {
+        let _ = redirect_stdin_to_tty();
     }
 
     let sigterm = install_signal_flag();
