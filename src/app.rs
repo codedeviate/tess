@@ -22,41 +22,91 @@ pub fn run(src: Box<dyn Source>, mut viewport: Viewport, sigterm: Arc<AtomicBool
     viewport.resize(cols, rows);
 
     let mut stdout = io::stdout();
+    let timeout = Duration::from_millis(250);
+
+    // Always draw the initial frame before entering the event loop.
+    let mut needs_redraw = true;
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
             break;
         }
 
-        let frame = viewport.frame(src.as_ref(), &mut idx);
-        write_frame(&mut stdout, &frame, cols, rows)
-            .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
+        if needs_redraw {
+            let frame = viewport.frame(src.as_ref(), &mut idx);
+            write_frame(&mut stdout, &frame, cols, rows)
+                .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
+            needs_redraw = false;
+        }
 
         // Poll with timeout so stdin sources can be re-checked.
-        let has_event = poll(Duration::from_millis(50)).unwrap_or(false);
-        if has_event {
-            let event = read().map_err(|e| crate::error::Error::Runtime(format!("input: {}", e)))?;
-            let cmd = translate(event);
-            match cmd {
-                Command::Quit => break,
-                Command::Resize(c, r) => {
-                    cols = c; rows = r;
-                    viewport.resize(c, r);
+        match poll(timeout) {
+            Ok(true) => {
+                let event = read().map_err(|e| crate::error::Error::Runtime(format!("input: {}", e)))?;
+                let cmd = translate(event);
+                match cmd {
+                    Command::Quit => break,
+                    Command::Resize(c, r) => {
+                        cols = c; rows = r;
+                        viewport.resize(c, r);
+                        needs_redraw = true;
+                    }
+                    Command::ScrollLines(n) => {
+                        viewport.scroll_lines(n, src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::PageDown => {
+                        viewport.page_down(src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::PageUp => {
+                        viewport.page_up(src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::HalfPageDown => {
+                        viewport.half_page_down(src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::HalfPageUp => {
+                        viewport.half_page_up(src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::GoTop => {
+                        viewport.goto_top();
+                        needs_redraw = true;
+                    }
+                    Command::GoBottom => {
+                        viewport.goto_bottom(src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
+                    Command::Refresh => {
+                        needs_redraw = true;
+                    }
+                    Command::ToggleLineNumbers => {
+                        viewport.toggle_line_numbers();
+                        needs_redraw = true;
+                    }
+                    Command::ToggleChop => {
+                        viewport.toggle_chop();
+                        needs_redraw = true;
+                    }
+                    Command::Noop => {}
                 }
-                Command::ScrollLines(n) => viewport.scroll_lines(n, src.as_ref(), &mut idx),
-                Command::PageDown => viewport.page_down(src.as_ref(), &mut idx),
-                Command::PageUp => viewport.page_up(src.as_ref(), &mut idx),
-                Command::HalfPageDown => viewport.half_page_down(src.as_ref(), &mut idx),
-                Command::HalfPageUp => viewport.half_page_up(src.as_ref(), &mut idx),
-                Command::GoTop => viewport.goto_top(),
-                Command::GoBottom => viewport.goto_bottom(src.as_ref(), &mut idx),
-                Command::Refresh => { /* re-render on next loop */ }
-                Command::ToggleLineNumbers => viewport.toggle_line_numbers(),
-                Command::ToggleChop => viewport.toggle_chop(),
-                Command::Noop => {}
             }
-        } else if !src.is_complete() {
-            idx.notice_new_bytes(src.as_ref());
+            Ok(false) => {
+                // Timeout — check if a streaming source grew.
+                if !src.is_complete() {
+                    let before = src.len();
+                    idx.notice_new_bytes(src.as_ref());
+                    if src.len() != before {
+                        needs_redraw = true;
+                    }
+                }
+            }
+            Err(_) => {
+                // poll() error — sleep the timeout duration to avoid tight-spinning.
+                std::thread::sleep(timeout);
+            }
         }
     }
     Ok(())

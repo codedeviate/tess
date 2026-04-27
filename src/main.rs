@@ -20,6 +20,23 @@ fn main() -> ExitCode {
     }
 }
 
+/// Redirect fd 0 to /dev/tty so crossterm can read keyboard events after
+/// stdin has been fully consumed from a pipe.
+#[cfg(unix)]
+fn redirect_stdin_to_tty() -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let tty = std::fs::File::open("/dev/tty")?;
+    // Replace fd 0 with /dev/tty so crossterm reads keyboard from it.
+    unsafe {
+        if libc::dup2(tty.as_raw_fd(), libc::STDIN_FILENO) < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    // tty's File goes out of scope and its fd is closed,
+    // but fd 0 still points to /dev/tty.
+    Ok(())
+}
+
 fn real_main() -> Result<()> {
     let args = Args::parse();
 
@@ -40,10 +57,21 @@ fn real_main() -> Result<()> {
         })?;
         (Box::new(fs), path.display().to_string())
     } else if !io::stdin().is_terminal() {
-        (Box::new(StdinSource::spawn()), "(stdin)".to_string())
+        let ss = StdinSource::read_all()
+            .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?;
+        (Box::new(ss), "(stdin)".to_string())
     } else {
         return Err(Error::NoInput);
     };
+
+    // If we used StdinSource, fd 0 is at EOF (the pipe drained). Redirect it
+    // to /dev/tty so crossterm can read keyboard events. For files this is
+    // harmless — fd 0 is already the user's terminal.
+    #[cfg(unix)]
+    if redirect_stdin_to_tty().is_err() {
+        // No /dev/tty available (e.g. running under a non-interactive harness).
+        // Continue anyway — the user explicitly invoked rustless.
+    }
 
     let sigterm = install_signal_flag();
     let _guard = TerminalGuard::enter()

@@ -3,8 +3,6 @@ use std::fs::File;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::io::Read;
-use std::thread;
 
 pub trait Source: Send + Sync {
     fn len(&self) -> usize;
@@ -105,39 +103,25 @@ impl Source for MockSource {
 }
 
 pub struct StdinSource {
-    buf: Arc<Mutex<Vec<u8>>>,
-    complete: Arc<AtomicBool>,
+    bytes: Vec<u8>,
 }
 
 impl StdinSource {
-    /// Spawn a background thread reading stdin into a shared buffer.
-    pub fn spawn() -> Self {
-        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let complete = Arc::new(AtomicBool::new(false));
-        let buf_w = Arc::clone(&buf);
-        let complete_w = Arc::clone(&complete);
-        thread::spawn(move || {
-            let mut stdin = std::io::stdin().lock();
-            let mut tmp = [0u8; 8192];
-            loop {
-                match stdin.read(&mut tmp) {
-                    Ok(0) => break,
-                    Ok(n) => buf_w.lock().unwrap().extend_from_slice(&tmp[..n]),
-                    Err(_) => break,
-                }
-            }
-            complete_w.store(true, Ordering::SeqCst);
-        });
-        Self { buf, complete }
+    /// Read all of stdin into a buffer synchronously. After this returns,
+    /// stdin (fd 0) is at EOF; the caller is responsible for redirecting fd 0
+    /// to /dev/tty before entering raw mode if interactive input is needed.
+    pub fn read_all() -> std::io::Result<Self> {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::io::stdin().lock().read_to_end(&mut bytes)?;
+        Ok(Self { bytes })
     }
 }
 
 impl Source for StdinSource {
-    fn len(&self) -> usize { self.buf.lock().unwrap().len() }
-    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> {
-        Cow::Owned(self.buf.lock().unwrap()[range].to_vec())
-    }
-    fn is_complete(&self) -> bool { self.complete.load(Ordering::SeqCst) }
+    fn len(&self) -> usize { self.bytes.len() }
+    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> { Cow::Borrowed(&self.bytes[range]) }
+    fn is_complete(&self) -> bool { true }
 }
 
 #[cfg(test)]
