@@ -4,7 +4,8 @@ use std::process::ExitCode;
 use tess::app;
 use tess::cli::Args;
 use tess::error::{Error, Result};
-use tess::source::{FileSource, Source, StdinSource};
+use tess::line_index::LineIndex;
+use tess::source::{find_tail_offset, FileSource, Source, StdinSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
@@ -42,8 +43,11 @@ fn real_main() -> Result<()> {
     let args = Args::parse();
 
     // Resolve source. Track whether we actually consumed stdin — only then
-    // do we need to redirect fd 0 to /dev/tty for keyboard input.
+    // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
+    // whether `--tail` is meaningful for this source (streaming stdin can't
+    // do random-access tail).
     let mut consumed_stdin = false;
+    let mut source_supports_tail = true;
     let (src, label): (Box<dyn Source>, String) = if let Some(path) = args.files.first() {
         if args.files.len() > 1 {
             eprintln!(
@@ -61,6 +65,7 @@ fn real_main() -> Result<()> {
         (Box::new(fs), path.display().to_string())
     } else if !io::stdin().is_terminal() {
         let ss = if args.follow {
+            source_supports_tail = false;
             StdinSource::spawn_streaming()
                 .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
         } else {
@@ -72,6 +77,23 @@ fn real_main() -> Result<()> {
     } else {
         return Err(Error::NoInput);
     };
+
+    // Apply --tail by computing a starting byte offset for the LineIndex.
+    // Streaming stdin (with -f) can't do this — bytes arrive over time.
+    let mut idx = match args.tail {
+        Some(n) if source_supports_tail => {
+            let off = find_tail_offset(src.as_ref(), n);
+            LineIndex::new_starting_at(off)
+        }
+        Some(_) => {
+            eprintln!("tess: --tail is not supported on streaming stdin (-f); ignoring");
+            LineIndex::new()
+        }
+        None => LineIndex::new(),
+    };
+    if let Some(n) = args.head {
+        idx.set_head_cap(n);
+    }
 
     // Only redirect fd 0 to /dev/tty if we actually drained stdin from a pipe.
     // For file inputs, stdin is already the user's terminal — replacing it with
@@ -92,6 +114,6 @@ fn real_main() -> Result<()> {
     viewport.opts.tab_width = args.tab_width;
     viewport.set_follow_mode(args.follow);
 
-    app::run(src, viewport, sigterm)?;
+    app::run(src, viewport, idx, sigterm)?;
     Ok(())
 }

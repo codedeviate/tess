@@ -14,6 +14,44 @@ pub trait Source: Send + Sync {
     fn pump(&self) {}
 }
 
+/// Find the byte offset such that `bytes[offset..]` is exactly the last `n`
+/// logical lines of `src` (lines delimited by `\n`; a trailing `\n` at EOF is
+/// not its own line). Returns 0 when the source has fewer than `n` lines, or
+/// `src.len()` when `n == 0`.
+///
+/// Reverse-scans in 64 KiB chunks so a 10 GB file stays cheap — only the
+/// trailing pages need to be touched.
+pub fn find_tail_offset(src: &dyn Source, n: usize) -> usize {
+    let total = src.len();
+    if n == 0 || total == 0 {
+        return total;
+    }
+    // Don't count a trailing newline as a "line break to step over": it
+    // terminates the last line, it's not a separator before another line.
+    let mut end = total;
+    if end > 0 && src.bytes((end - 1)..end)[0] == b'\n' {
+        end -= 1;
+    }
+
+    let chunk_size: usize = 64 * 1024;
+    let mut count = 0usize;
+    let mut pos = end;
+    while pos > 0 {
+        let chunk_start = pos.saturating_sub(chunk_size);
+        let bytes = src.bytes(chunk_start..pos);
+        for i in (0..bytes.len()).rev() {
+            if bytes[i] == b'\n' {
+                count += 1;
+                if count == n {
+                    return chunk_start + i + 1;
+                }
+            }
+        }
+        pos = chunk_start;
+    }
+    0
+}
+
 pub struct FileSource {
     mmap: Option<memmap2::Mmap>,
     fallback_buf: Option<Vec<u8>>,
@@ -294,6 +332,57 @@ mod tests {
         assert_eq!(&*src.bytes(5..12), b" second");
         // Range straddling the boundary (3..10 = 7 bytes of "first second").
         assert_eq!(&*src.bytes(3..10), b"st seco");
+    }
+
+    #[test]
+    fn find_tail_offset_zero_lines_returns_total() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        assert_eq!(find_tail_offset(&m, 0), 6);
+    }
+
+    #[test]
+    fn find_tail_offset_empty_source() {
+        let m = MockSource::new();
+        assert_eq!(find_tail_offset(&m, 5), 0);
+    }
+
+    #[test]
+    fn find_tail_offset_fewer_lines_than_n_returns_zero() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");  // 3 lines
+        assert_eq!(find_tail_offset(&m, 10), 0);
+    }
+
+    #[test]
+    fn find_tail_offset_last_one_with_trailing_newline() {
+        let m = MockSource::new();
+        m.append(b"alpha\nbeta\ngamma\n");  // 3 lines
+        // gamma starts at byte 11.
+        assert_eq!(find_tail_offset(&m, 1), 11);
+    }
+
+    #[test]
+    fn find_tail_offset_last_two_with_trailing_newline() {
+        let m = MockSource::new();
+        m.append(b"alpha\nbeta\ngamma\n");
+        // beta starts at byte 6.
+        assert_eq!(find_tail_offset(&m, 2), 6);
+    }
+
+    #[test]
+    fn find_tail_offset_last_one_no_trailing_newline() {
+        let m = MockSource::new();
+        m.append(b"alpha\nbeta\ngamma");  // last line not terminated
+        // gamma starts at byte 11.
+        assert_eq!(find_tail_offset(&m, 1), 11);
+    }
+
+    #[test]
+    fn find_tail_offset_exactly_n_lines_returns_zero() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");  // 3 lines exactly
+        assert_eq!(find_tail_offset(&m, 3), 0);
     }
 
     #[test]

@@ -21,6 +21,16 @@ pub struct Args {
     #[arg(short = 'f', long = "follow")]
     pub follow: bool,
 
+    /// Show only the first N lines of the source. Mutually exclusive with --tail.
+    #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
+    pub head: Option<usize>,
+
+    /// Show only the last N lines of the source. For files this skips most of
+    /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
+    /// Mutually exclusive with --head. Streaming stdin is not supported.
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
+    pub tail: Option<usize>,
+
     /// Files to view (only the first is opened in MVP).
     pub files: Vec<PathBuf>,
 }
@@ -75,5 +85,32 @@ mod tests {
     fn follow_defaults_off() {
         let a = Args::parse_from(["tess", "x"]);
         assert!(!a.follow);
+    }
+
+    #[test]
+    fn parses_head() {
+        let a = Args::parse_from(["tess", "--head", "100", "x"]);
+        assert_eq!(a.head, Some(100));
+        assert_eq!(a.tail, None);
+    }
+
+    #[test]
+    fn parses_tail() {
+        let a = Args::parse_from(["tess", "--tail", "50", "x"]);
+        assert_eq!(a.tail, Some(50));
+        assert_eq!(a.head, None);
+    }
+
+    #[test]
+    fn head_and_tail_are_mutually_exclusive() {
+        let r = Args::try_parse_from(["tess", "--head", "10", "--tail", "20", "x"]);
+        assert!(r.is_err(), "clap should reject combining --head and --tail");
+    }
+
+    #[test]
+    fn head_tail_default_to_none() {
+        let a = Args::parse_from(["tess", "x"]);
+        assert!(a.head.is_none());
+        assert!(a.tail.is_none());
     }
 }

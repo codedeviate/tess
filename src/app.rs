@@ -16,8 +16,12 @@ use crate::render::Cell;
 use crate::source::Source;
 use crate::viewport::{Frame, Viewport};
 
-pub fn run(src: Box<dyn Source>, mut viewport: Viewport, sigterm: Arc<AtomicBool>) -> Result<()> {
-    let mut idx = LineIndex::new();
+pub fn run(
+    src: Box<dyn Source>,
+    mut viewport: Viewport,
+    mut idx: LineIndex,
+    sigterm: Arc<AtomicBool>,
+) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
 

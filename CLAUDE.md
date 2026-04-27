@@ -1,6 +1,6 @@
 # `tess` — Claude Code project notes
 
-A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Currently MVP-level plus follow mode (`-f` / `--follow`, interactive `Shift-F`) for `tail -f`-style log watching. No search yet, no multi-file nav — see `OUT-OF-SCOPE.md` for the full deferred list.
+A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Currently MVP-level plus follow mode (`-f` / `--follow`, interactive `Shift-F`) for `tail -f`-style log watching, and `--head N` / `--tail N` flags for opening huge log files cheaply (the `--tail` path reverse-scans for the byte offset and only indexes from there forward). No search yet, no multi-file nav — see `OUT-OF-SCOPE.md` for the full deferred list.
 
 ## Build, run, test
 
