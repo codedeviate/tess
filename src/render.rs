@@ -21,6 +21,59 @@ impl Default for RenderOpts {
     }
 }
 
+/// Try to decode one grapheme cluster starting at `bytes[i]`.
+/// Returns the cluster as &str and number of bytes consumed.
+/// Returns None if `bytes[i..]` does not begin with a valid UTF-8 sequence.
+fn decode_cluster(bytes: &[u8], i: usize) -> Option<(&str, usize)> {
+    // Find the longest valid UTF-8 prefix starting at i (capped at 4 bytes
+    // for the first codepoint, then continue while next codepoint is a
+    // zero-width continuation of the same cluster).
+    // Strategy: try to validate up to 4 bytes for the leading codepoint,
+    // then extend as long as additional codepoints belong to the same cluster.
+
+    // First, validate one codepoint.
+    let max = (i + 4).min(bytes.len());
+    let mut end = i;
+    for try_end in (i + 1)..=max {
+        if std::str::from_utf8(&bytes[i..try_end]).is_ok() {
+            end = try_end;
+            break;
+        }
+    }
+    if end == i {
+        return None;
+    }
+
+    // Now extend by additional valid codepoints that the segmenter groups
+    // into the first cluster. Use unicode-segmentation for cluster boundaries.
+    // We keep adding bytes (validated as UTF-8) until the cluster boundary
+    // changes or we run out of bytes.
+    let mut probe_end = end;
+    loop {
+        // Try extending by up to 4 more bytes.
+        let probe_max = (probe_end + 4).min(bytes.len());
+        let mut next_end = probe_end;
+        for try_end in (probe_end + 1)..=probe_max {
+            if std::str::from_utf8(&bytes[i..try_end]).is_ok() {
+                next_end = try_end;
+                break;
+            }
+        }
+        if next_end == probe_end {
+            break;
+        }
+        let candidate = std::str::from_utf8(&bytes[i..next_end]).unwrap();
+        let cluster_count = candidate.graphemes(true).count();
+        if cluster_count > 1 {
+            // Adding broke into a new cluster; stop at probe_end.
+            break;
+        }
+        probe_end = next_end;
+    }
+
+    Some((std::str::from_utf8(&bytes[i..probe_end]).unwrap(), probe_end - i))
+}
+
 pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
     let cols = opts.cols as usize;
     let mut rows: Vec<Vec<Cell>> = Vec::new();
@@ -57,25 +110,36 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
             }
             i += 1;
         } else if b == b'\n' {
-            // Newlines never reach render_line in practice (LineIndex splits on them).
-            // Defensive: ignore.
             i += 1;
         } else if b < 0x20 || b == 0x7F {
-            // Control byte → ^X form
             let printable = if b == 0x7F { '?' } else { (b ^ 0x40) as char };
             push(&mut current, &mut rows, Cell::Char { ch: '^', width: 1 }, opts);
             push(&mut current, &mut rows, Cell::Char { ch: printable, width: 1 }, opts);
             i += 1;
-        } else if b < 0x80 {
-            // Plain printable ASCII
-            push(&mut current, &mut rows, Cell::Char { ch: b as char, width: 1 }, opts);
-            i += 1;
         } else {
-            // High-bit byte: in this task, always render as <HH>. Task 6 promotes
-            // valid UTF-8 sequences to a single grapheme cell.
-            let s = format!("<{:02X}>", b);
-            push_str(&mut current, &mut rows, &s, opts);
-            i += 1;
+            // Try to decode a UTF-8 grapheme cluster starting at i.
+            match decode_cluster(bytes, i) {
+                Some((cluster, consumed)) => {
+                    let w = UnicodeWidthStr::width(cluster) as u8;
+                    let base_char = cluster.chars().next().unwrap_or('\u{FFFD}');
+                    if w == 0 {
+                        // Lone combining mark with no base — emit replacement.
+                        push(&mut current, &mut rows, Cell::Char { ch: '\u{FFFD}', width: 1 }, opts);
+                    } else {
+                        push(&mut current, &mut rows, Cell::Char { ch: base_char, width: w }, opts);
+                        for _ in 1..w {
+                            push(&mut current, &mut rows, Cell::Continuation, opts);
+                        }
+                    }
+                    i += consumed;
+                }
+                None => {
+                    // Invalid byte: emit <HH>, advance one byte.
+                    let s = format!("<{:02X}>", b);
+                    push_str(&mut current, &mut rows, &s, opts);
+                    i += 1;
+                }
+            }
         }
     }
 
@@ -188,5 +252,37 @@ mod tests {
         assert_eq!(rows[0][1], ch('C'));
         assert_eq!(rows[0][2], ch('3'));
         assert_eq!(rows[0][3], ch('>'));
+    }
+
+    #[test]
+    fn single_byte_utf8_e_acute() {
+        let rows = render_line("é".as_bytes(), &opts(5, true));
+        assert_eq!(rows[0][0], Cell::Char { ch: 'é', width: 1 });
+    }
+
+    #[test]
+    fn cjk_char_takes_two_columns() {
+        // 日 is width 2.
+        let rows = render_line("日".as_bytes(), &opts(5, true));
+        assert_eq!(rows[0][0], Cell::Char { ch: '日', width: 2 });
+        assert_eq!(rows[0][1], Cell::Continuation);
+        assert_eq!(rows[0][2], Cell::Empty);
+    }
+
+    #[test]
+    fn emoji_takes_two_columns() {
+        let rows = render_line("🦀".as_bytes(), &opts(5, true));
+        // Width depends on unicode-width; crab emoji is width 2.
+        assert!(matches!(rows[0][0], Cell::Char { width: 2, .. }));
+        assert_eq!(rows[0][1], Cell::Continuation);
+    }
+
+    #[test]
+    fn combining_mark_folds_into_prior_cell() {
+        // "e\u{0301}" is one grapheme cluster (e with combining acute).
+        let rows = render_line("e\u{0301}".as_bytes(), &opts(5, true));
+        // Cluster renders as a single cell carrying base char.
+        assert!(matches!(rows[0][0], Cell::Char { width: 1, .. }));
+        assert_eq!(rows[0][1], Cell::Empty);
     }
 }
