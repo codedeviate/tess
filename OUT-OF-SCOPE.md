@@ -14,17 +14,6 @@ Forward and backward regex search with case-insensitivity flags. Needs:
 
 Touches: new module(s), `viewport`, `render`, `input`. Probably the biggest single addition.
 
-### Follow mode (`+F`, `Shift-F`)  — **M**
-
-Like `tail -f`. When at the bottom of the buffer, automatically advance as new bytes arrive. Press any key to break out.
-
-Prerequisite: the streaming-stdin design has to come back. MVP simplified `StdinSource` to read everything up front (no thread) because the original threaded design contended with crossterm for stdin and broke event delivery. Returning to streaming will require:
-- A reader thread that fills a shared `Arc<Mutex<Vec<u8>>>`.
-- Calling `idx.notice_new_bytes` on each loop tick.
-- The redirect from fd 0 to `/dev/tty` (already in place for pipe mode) so crossterm still sees the keyboard.
-
-Touches: `source`, `app`, `viewport` (auto-scroll-when-at-bottom logic).
-
 ### Multi-file navigation (`:n`, `:p`, `:e`, file list)  — **M**
 
 The CLI already accepts multiple files but only opens the first; we even emit a stderr warning about ignored ones. Need a small `file_set` module that owns a list of `Source`s and a current-index, plus the colon-prefix command interface.
@@ -78,12 +67,11 @@ The handwritten `enum Error` works for MVP but the boilerplate grows linearly wi
 
 ## Internal cleanups noticed during the session
 
-### Streaming `StdinSource`, take two  — **M**
+### Follow-mode follow-ups — **S each**
 
-Required by follow mode (above). When it returns:
-- Keep the synchronous `read_all` path for the non-streaming case.
-- Add a `spawn_streaming()` constructor for follow mode.
-- Verify it coexists with crossterm's event reader (the `use-dev-tty` event source uses its own `/dev/tty` fd, so contention with our drained-stdin fd shouldn't recur — but verify under load).
+- **File rotation / truncation**: real `tail -F` re-opens the file when it shrinks or its inode changes. We currently keep a single `File` handle and would read garbage past a truncation. Detect via `metadata().len() < known_size` (or inode change) and re-open from offset 0.
+- **No-content idle hint**: when in follow mode and nothing has arrived for a while, an indicator like `(F idle)` could be useful. Trivially derivable from "ticks since last growth".
+- **Press-any-key suspends follow** (real `less +F` semantics): right now `Shift-F` is the explicit toggle and movement keys leave follow on (auto-scroll just doesn't fire because user isn't at bottom). If a user finds this surprising, change `ScrollLines(-…)` and friends to also `set_follow_mode(false)`.
 
 ### PTY-based integration tests  — **M**
 

@@ -1,6 +1,6 @@
 # `tess` — Claude Code project notes
 
-A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Currently MVP-level: open a file or piped stdin, scroll, paging, line numbers, wrap/chop, tab expansion, byte-faithful UTF-8 rendering. No search yet, no follow mode, no multi-file nav — see `OUT-OF-SCOPE.md` for the full deferred list.
+A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Currently MVP-level plus follow mode (`-f` / `--follow`, interactive `Shift-F`) for `tail -f`-style log watching. No search yet, no multi-file nav — see `OUT-OF-SCOPE.md` for the full deferred list.
 
 ## Build, run, test
 
@@ -28,7 +28,7 @@ input (KeyEvent → Command translation)                used by app
 ```
 
 - **`render` is the kernel.** Pure functions, no I/O, no terminal. The hard rules (UTF-8 cluster decode, tab stops, control-byte `^X` form, invalid-byte `<HH>` form, wrap vs chop with width-2 char boundaries) all live here so they get the densest unit-test coverage.
-- **`source` abstracts byte sources.** `FileSource` mmaps; `StdinSource` reads stdin into a `Vec<u8>` synchronously (no thread in MVP); `MockSource` is for tests.
+- **`source` abstracts byte sources.** `FileSource` mmaps the original content and keeps a separate file handle for streaming follow-mode reads (new bytes go into an appended `Vec`). `StdinSource` has two modes — synchronous `read_all` (no `-f`) or threaded `spawn_streaming` (with `-f`); the streaming variant dups stdin onto a private fd before main can `dup2` `/dev/tty` over fd 0. `MockSource` is for tests.
 - **`line_index` lazily scans for newlines** and supports incremental growth via `notice_new_bytes` (intended for streaming sources later).
 - **`viewport` owns scroll state** (`top_line`, `top_row` for wrap-aware scrolling) and composes `Frame { body, status }`. It uses `render::count_rows` to compute scroll math without allocating cells.
 - **`app::run` is the event loop**: render-on-change → `poll(250ms)` → dispatch. On `poll()` error, sleep the timeout to avoid spinning.
@@ -39,7 +39,7 @@ input (KeyEvent → Command translation)                used by app
 - **Stdin path uses `dup2` to redirect fd 0 to `/dev/tty`** *only when stdin was actually drained from a pipe*. In file mode we leave fd 0 alone — replacing the shell's healthy tty fd breaks crossterm's event source init.
 - **Byte-faithful rendering, not lossy decode.** Real `less` shows `\x1b` as `^[` and stray `0xFF` as `<FF>`. We do too. UTF-8 grapheme clusters are decoded via `unicode-segmentation`; widths via `unicode-width`.
 - **Body height = `rows - 1`.** Last row is the status line (`<label>  <top>-<bottom>/<total>  <pct>%`, `+` suffix on total when source is incomplete).
-- **No async runtime.** Sync main loop. Stdin is read synchronously up-front; if/when follow mode is added, the streaming machinery from the original spec will need to come back (see `OUT-OF-SCOPE.md`).
+- **No async runtime.** Sync main loop. Without `--follow`, stdin is read synchronously up-front. With `--follow`, a background thread reads from a duped stdin fd into a shared buffer, and the main loop's timeout branch calls `src.pump()` to fold any new bytes into the index, auto-scrolling to bottom when the viewport was at bottom before the growth.
 
 ## Testing strategy
 

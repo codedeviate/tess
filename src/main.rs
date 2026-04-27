@@ -60,8 +60,13 @@ fn real_main() -> Result<()> {
         })?;
         (Box::new(fs), path.display().to_string())
     } else if !io::stdin().is_terminal() {
-        let ss = StdinSource::read_all()
-            .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?;
+        let ss = if args.follow {
+            StdinSource::spawn_streaming()
+                .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
+        } else {
+            StdinSource::read_all()
+                .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
+        };
         consumed_stdin = true;
         (Box::new(ss), "(stdin)".to_string())
     } else {
@@ -85,6 +90,7 @@ fn real_main() -> Result<()> {
     if args.line_numbers { viewport.toggle_line_numbers(); }
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
+    viewport.set_follow_mode(args.follow);
 
     app::run(src, viewport, sigterm)?;
     Ok(())

@@ -14,6 +14,7 @@ pub enum Command {
     Refresh,
     ToggleLineNumbers,
     ToggleChop,
+    ToggleFollow,
     Noop,
 }
 
@@ -43,6 +44,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('-'), false) => Command::Noop, // -N / -S need a follow-up letter; handled in app loop later
         (Char('N'), false) => Command::ToggleLineNumbers,
         (Char('S'), false) => Command::ToggleChop,
+        (Char('F'), false) => Command::ToggleFollow,
         _ => Command::Noop,
     }
 }
@@ -87,6 +89,16 @@ mod tests {
     #[test]
     fn capital_n_toggles_line_numbers() {
         assert_eq!(translate(key(KeyCode::Char('N'), KeyModifiers::SHIFT)), Command::ToggleLineNumbers);
+    }
+
+    #[test]
+    fn capital_f_toggles_follow() {
+        assert_eq!(translate(key(KeyCode::Char('F'), KeyModifiers::SHIFT)), Command::ToggleFollow);
+    }
+
+    #[test]
+    fn lowercase_f_still_pages_down() {
+        assert_eq!(translate(key(KeyCode::Char('f'), KeyModifiers::NONE)), Command::PageDown);
     }
 
     #[test]

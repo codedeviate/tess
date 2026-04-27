@@ -24,6 +24,13 @@ pub fn run(src: Box<dyn Source>, mut viewport: Viewport, sigterm: Arc<AtomicBool
     let mut stdout = io::stdout();
     let timeout = Duration::from_millis(250);
 
+    // If follow mode is on at startup, snap to the bottom of the source so
+    // the user sees the newest content (tail-style).
+    if viewport.follow_mode() {
+        src.pump();
+        viewport.goto_bottom(src.as_ref(), &mut idx);
+    }
+
     // Always draw the initial frame before entering the event loop.
     let mut needs_redraw = true;
 
@@ -90,15 +97,38 @@ pub fn run(src: Box<dyn Source>, mut viewport: Viewport, sigterm: Arc<AtomicBool
                         viewport.toggle_chop();
                         needs_redraw = true;
                     }
+                    Command::ToggleFollow => {
+                        viewport.toggle_follow();
+                        if viewport.follow_mode() {
+                            // Re-engaging: pump any pending bytes and snap to bottom.
+                            src.pump();
+                            idx.notice_new_bytes(src.as_ref());
+                            viewport.goto_bottom(src.as_ref(), &mut idx);
+                        }
+                        needs_redraw = true;
+                    }
                     Command::Noop => {}
                 }
             }
             Ok(false) => {
-                // Timeout — check if a streaming source grew.
-                if !src.is_complete() {
-                    let before = src.len();
+                // Timeout — check whether the source has grown.
+                if viewport.follow_mode() {
+                    let was_at_bottom = viewport.is_at_bottom(&idx);
+                    src.pump();
+                    let lines_before = idx.line_count();
                     idx.notice_new_bytes(src.as_ref());
-                    if src.len() != before {
+                    if idx.line_count() != lines_before {
+                        needs_redraw = true;
+                        if was_at_bottom {
+                            viewport.goto_bottom(src.as_ref(), &mut idx);
+                        }
+                    }
+                } else if !src.is_complete() {
+                    // Streaming stdin without follow mode: still keep the index
+                    // up-to-date so line counts stay accurate, but don't auto-scroll.
+                    let lines_before = idx.line_count();
+                    idx.notice_new_bytes(src.as_ref());
+                    if idx.line_count() != lines_before {
                         needs_redraw = true;
                     }
                 }

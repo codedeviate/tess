@@ -16,6 +16,11 @@ pub struct Args {
     #[arg(long = "tab-width", default_value_t = 8)]
     pub tab_width: u8,
 
+    /// Follow mode: keep watching the source for new bytes (like `tail -f`).
+    /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
+    #[arg(short = 'f', long = "follow")]
+    pub follow: bool,
+
     /// Files to view (only the first is opened in MVP).
     pub files: Vec<PathBuf>,
 }
@@ -51,5 +56,24 @@ mod tests {
     fn collects_multiple_files() {
         let a = Args::parse_from(["tess", "a", "b", "c"]);
         assert_eq!(a.files.len(), 3);
+    }
+
+    #[test]
+    fn parses_follow_short_flag() {
+        let a = Args::parse_from(["tess", "-f", "log.txt"]);
+        assert!(a.follow);
+        assert_eq!(a.files, vec![PathBuf::from("log.txt")]);
+    }
+
+    #[test]
+    fn parses_follow_long_flag() {
+        let a = Args::parse_from(["tess", "--follow"]);
+        assert!(a.follow);
+    }
+
+    #[test]
+    fn follow_defaults_off() {
+        let a = Args::parse_from(["tess", "x"]);
+        assert!(!a.follow);
     }
 }
