@@ -98,6 +98,30 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
         }
     }
 
+    fn push_wide(
+        current: &mut Vec<Cell>,
+        rows: &mut Vec<Vec<Cell>>,
+        ch: char,
+        width: u8,
+        opts: &RenderOpts,
+    ) {
+        let cols = opts.cols as usize;
+        // If the wide char wouldn't fit in the remainder of this row, wrap first.
+        if current.len() + width as usize > cols {
+            if opts.wrap {
+                let mut full = std::mem::replace(current, Vec::with_capacity(cols));
+                while full.len() < cols { full.push(Cell::Empty); }
+                rows.push(full);
+            } else {
+                return; // chop
+            }
+        }
+        current.push(Cell::Char { ch, width });
+        for _ in 1..width {
+            current.push(Cell::Continuation);
+        }
+    }
+
     let mut i = 0;
     while i < bytes.len() {
         let b = bytes[i];
@@ -126,10 +150,7 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
                         // Lone combining mark with no base — emit replacement.
                         push(&mut current, &mut rows, Cell::Char { ch: '\u{FFFD}', width: 1 }, opts);
                     } else {
-                        push(&mut current, &mut rows, Cell::Char { ch: base_char, width: w }, opts);
-                        for _ in 1..w {
-                            push(&mut current, &mut rows, Cell::Continuation, opts);
-                        }
+                        push_wide(&mut current, &mut rows, base_char, w, opts);
                     }
                     i += consumed;
                 }
@@ -284,5 +305,33 @@ mod tests {
         // Cluster renders as a single cell carrying base char.
         assert!(matches!(rows[0][0], Cell::Char { width: 1, .. }));
         assert_eq!(rows[0][1], Cell::Empty);
+    }
+
+    #[test]
+    fn wrap_long_line_into_multiple_rows() {
+        let rows = render_line(b"abcdefghij", &opts(4, true));
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0], vec![ch('a'), ch('b'), ch('c'), ch('d')]);
+        assert_eq!(rows[1], vec![ch('e'), ch('f'), ch('g'), ch('h')]);
+        assert_eq!(rows[2], vec![ch('i'), ch('j'), Cell::Empty, Cell::Empty]);
+    }
+
+    #[test]
+    fn chop_long_line_truncates() {
+        let rows = render_line(b"abcdefghij", &opts(4, false));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0], vec![ch('a'), ch('b'), ch('c'), ch('d')]);
+    }
+
+    #[test]
+    fn wide_char_at_boundary_pushed_to_next_row() {
+        // cols=3, content "ab日" — 日 is width 2, doesn't fit at col 2,
+        // so row 0 = a, b, Empty; row 1 = 日(continuation), Empty.
+        let rows = render_line("ab日".as_bytes(), &opts(3, true));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec![ch('a'), ch('b'), Cell::Empty]);
+        assert_eq!(rows[1][0], Cell::Char { ch: '日', width: 2 });
+        assert_eq!(rows[1][1], Cell::Continuation);
+        assert_eq!(rows[1][2], Cell::Empty);
     }
 }
