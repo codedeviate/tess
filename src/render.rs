@@ -171,6 +171,59 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
     rows
 }
 
+pub fn count_rows(bytes: &[u8], opts: &RenderOpts) -> usize {
+    if !opts.wrap {
+        return 1;
+    }
+    let cols = opts.cols.max(1) as usize;
+    let mut col = 0usize;
+    let mut rows = 1usize;
+
+    let bump = |w: usize, col: &mut usize, rows: &mut usize| {
+        if *col + w > cols {
+            *rows += 1;
+            *col = 0;
+        }
+        *col += w;
+    };
+
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\t' {
+            let stop = opts.tab_width.max(1) as usize;
+            let next_stop = ((col / stop) + 1) * stop;
+            let advance = next_stop - col;
+            // Tabs may overflow into multiple wraps if cols < tab_width.
+            for _ in 0..advance {
+                bump(1, &mut col, &mut rows);
+            }
+            i += 1;
+        } else if b == b'\n' {
+            i += 1;
+        } else if b < 0x20 || b == 0x7F {
+            bump(1, &mut col, &mut rows); // ^
+            bump(1, &mut col, &mut rows); // X
+            i += 1;
+        } else {
+            match decode_cluster(bytes, i) {
+                Some((cluster, consumed)) => {
+                    let w = UnicodeWidthStr::width(cluster) as usize;
+                    let w = if w == 0 { 1 } else { w };
+                    bump(w, &mut col, &mut rows);
+                    i += consumed;
+                }
+                None => {
+                    // <HH> = 4 cells
+                    for _ in 0..4 { bump(1, &mut col, &mut rows); }
+                    i += 1;
+                }
+            }
+        }
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +386,33 @@ mod tests {
         assert_eq!(rows[1][0], Cell::Char { ch: '日', width: 2 });
         assert_eq!(rows[1][1], Cell::Continuation);
         assert_eq!(rows[1][2], Cell::Empty);
+    }
+
+    #[test]
+    fn count_rows_matches_render_line_for_short() {
+        let o = opts(80, true);
+        let bytes = b"hello world";
+        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
+    }
+
+    #[test]
+    fn count_rows_matches_render_line_for_long_wrap() {
+        let o = opts(4, true);
+        let bytes = b"abcdefghij";
+        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
+    }
+
+    #[test]
+    fn count_rows_chop_is_one() {
+        let o = opts(4, false);
+        let bytes = b"abcdefghij";
+        assert_eq!(count_rows(bytes, &o), 1);
+    }
+
+    #[test]
+    fn count_rows_handles_wide_char() {
+        let o = opts(3, true);
+        let bytes = "ab日".as_bytes();
+        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
     }
 }
