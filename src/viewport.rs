@@ -1,3 +1,5 @@
+use regex::Regex;
+
 use crate::filter::{CompiledFilter, FilterMatch};
 use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
@@ -9,6 +11,22 @@ pub enum RowStyle {
     /// Render with a reduced-emphasis terminal attribute. Used by `--dim` to
     /// keep filtered-out lines visible as context.
     Dim,
+    /// Render with a high-emphasis terminal attribute (reverse video). Used
+    /// by `/` and `?` search to mark matching rows.
+    Highlight,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchDirection {
+    Forward,
+    Backward,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchState {
+    pub raw: String,
+    pub regex: Regex,
+    pub direction: SearchDirection,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +53,7 @@ pub struct Viewport {
     /// How many logical lines we've evaluated for filter membership. Used by
     /// `extend_visible_lines` to avoid re-scanning lines on every tick.
     visible_scanned: usize,
+    search: Option<SearchState>,
 }
 
 impl Viewport {
@@ -54,7 +73,91 @@ impl Viewport {
             dim_mode: false,
             visible_lines: Vec::new(),
             visible_scanned: 0,
+            search: None,
         }
+    }
+
+    /// Compile and store a search pattern. Returns the parse error from the
+    /// regex crate if the pattern is invalid; the previous search (if any)
+    /// is preserved on error.
+    pub fn set_search(&mut self, raw: String, direction: SearchDirection) -> Result<(), String> {
+        let regex = Regex::new(&raw).map_err(|e| e.to_string())?;
+        self.search = Some(SearchState { raw, regex, direction });
+        Ok(())
+    }
+
+    pub fn clear_search(&mut self) { self.search = None; }
+
+    pub fn search_active(&self) -> bool { self.search.is_some() }
+
+    /// Jump to the next match of the active search, in `direction` (or its
+    /// reverse if `reverse` is true). Wraps at the end of the source.
+    /// Returns true iff a match was found and the viewport moved.
+    pub fn search_repeat(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
+        let Some(s) = self.search.as_ref() else { return false; };
+        let forward = match (s.direction, reverse) {
+            (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
+            _ => false,
+        };
+        idx.extend_to_end(src);
+        let pattern = s.regex.clone();
+        if self.hide_mode() {
+            self.extend_visible_lines(idx, src);
+            self.search_step_in_visible(&pattern, src, idx, forward)
+        } else {
+            self.search_step_in_logical(&pattern, src, idx, forward)
+        }
+    }
+
+    fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
+        let range = idx.line_range(line_n, src);
+        let bytes = src.bytes(range);
+        match std::str::from_utf8(&bytes) {
+            Ok(s) => pattern.is_match(s),
+            Err(_) => false,
+        }
+    }
+
+    fn search_step_in_logical(&mut self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, forward: bool) -> bool {
+        let total = idx.line_count();
+        if total == 0 { return false; }
+        let start = self.top_line;
+        // Walk every logical line once, starting from start+1 (or start-1)
+        // and wrapping at the end / beginning.
+        for offset in 1..=total {
+            let line_n = if forward {
+                (start + offset) % total
+            } else {
+                (start + total - offset) % total
+            };
+            if self.line_matches(pattern, src, idx, line_n) {
+                self.top_line = line_n;
+                self.top_row = 0;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn search_step_in_visible(&mut self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, forward: bool) -> bool {
+        let total = self.visible_lines.len();
+        if total == 0 { return false; }
+        // Find current visible position for top_line.
+        let cur = self.visible_lines.iter().position(|&l| l >= self.top_line).unwrap_or(0);
+        for offset in 1..=total {
+            let visible_idx = if forward {
+                (cur + offset) % total
+            } else {
+                (cur + total - offset) % total
+            };
+            let line_n = self.visible_lines[visible_idx];
+            if self.line_matches(pattern, src, idx, line_n) {
+                self.top_line = line_n;
+                self.top_row = 0;
+                return true;
+            }
+        }
+        false
     }
 
     pub fn set_filter(&mut self, filter: Option<CompiledFilter>) {
@@ -185,8 +288,9 @@ impl Viewport {
             let range = idx.line_range(line_n, src);
             let bytes = src.bytes(range);
             let rows = render_line(&bytes, &r_opts);
-            // Compute style for this logical line.
-            let style = if let Some(f) = self.filter.as_ref() {
+            // Compute style for this logical line. Search highlight overrides
+            // dim/normal so search hits stay visible even in dim mode.
+            let base_style = if let Some(f) = self.filter.as_ref() {
                 if self.dim_mode {
                     match f.evaluate(&bytes) {
                         FilterMatch::Matched => RowStyle::Normal,
@@ -198,6 +302,16 @@ impl Viewport {
                 }
             } else {
                 RowStyle::Normal
+            };
+            let style = if let Some(s) = self.search.as_ref() {
+                let line_str = std::str::from_utf8(&bytes).unwrap_or("");
+                if !line_str.is_empty() && s.regex.is_match(line_str) {
+                    RowStyle::Highlight
+                } else {
+                    base_style
+                }
+            } else {
+                base_style
             };
 
             for (i, mut content_row) in rows.into_iter().enumerate() {
@@ -260,6 +374,10 @@ impl Viewport {
         if let Some(f) = self.filter.as_ref() {
             s.push_str(&format!("  [{}]", f.format_name));
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [filter]" });
+        }
+        if let Some(sr) = self.search.as_ref() {
+            let prefix = if matches!(sr.direction, SearchDirection::Forward) { "/" } else { "?" };
+            s.push_str(&format!("  [{}{}]", prefix, sr.raw));
         }
         if self.follow_mode { s.push_str("  (F)"); }
         s
@@ -629,6 +747,115 @@ mod tests {
         // Viewport should NOT have moved (auto-scroll suppressed).
         let frame_after = v.frame(&m, &mut idx);
         assert_eq!(frame_after.body[0][0], top_first_cell_before, "viewport moved despite being scrolled up");
+    }
+
+    // ----- Search -----
+
+    #[test]
+    fn set_search_compiles_regex() {
+        let mut v = Viewport::new(10, 5, "f".into());
+        assert!(v.set_search("foo".into(), SearchDirection::Forward).is_ok());
+        assert!(v.search_active());
+    }
+
+    #[test]
+    fn set_search_rejects_bad_regex() {
+        let mut v = Viewport::new(10, 5, "f".into());
+        let err = v.set_search("[".into(), SearchDirection::Forward).unwrap_err();
+        assert!(!err.is_empty());
+        assert!(!v.search_active(), "no search should be set on error");
+    }
+
+    #[test]
+    fn search_step_forward_finds_match_after_top() {
+        let (m, mut idx) = setup(b"alpha\nbeta\ngamma\ndelta\nepsilon\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_search("gamma".into(), SearchDirection::Forward).unwrap();
+        let found = v.search_repeat(&m, &mut idx, false);
+        assert!(found);
+        // gamma is line 2 (0-indexed)
+        assert_eq!(v.top_line, 2);
+    }
+
+    #[test]
+    fn search_step_backward_finds_match_before_top() {
+        let (m, mut idx) = setup(b"alpha\nbeta\ngamma\ndelta\nepsilon\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.scroll_lines(4, &m, &mut idx); // top_line = 4
+        v.set_search("alpha".into(), SearchDirection::Backward).unwrap();
+        let found = v.search_repeat(&m, &mut idx, false);
+        assert!(found);
+        assert_eq!(v.top_line, 0);
+    }
+
+    #[test]
+    fn search_wraps_at_end() {
+        let (m, mut idx) = setup(b"alpha\nbeta\ngamma\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.scroll_lines(2, &m, &mut idx); // top_line = 2 (last line)
+        v.set_search("alpha".into(), SearchDirection::Forward).unwrap();
+        let found = v.search_repeat(&m, &mut idx, false);
+        assert!(found, "search should wrap forward past EOF");
+        assert_eq!(v.top_line, 0);
+    }
+
+    #[test]
+    fn search_no_match_returns_false_and_does_not_move() {
+        let (m, mut idx) = setup(b"alpha\nbeta\ngamma\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_search("nowhere".into(), SearchDirection::Forward).unwrap();
+        let found = v.search_repeat(&m, &mut idx, false);
+        assert!(!found);
+        assert_eq!(v.top_line, 0);
+    }
+
+    #[test]
+    fn frame_marks_matching_row_as_highlight() {
+        let (m, mut idx) = setup(b"alpha\nbeta\ngamma\ndelta\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_search("gamma".into(), SearchDirection::Forward).unwrap();
+        let frame = v.frame(&m, &mut idx);
+        // Body has 4 rows (body_rows = 4); rows[2] is "gamma".
+        assert_eq!(frame.row_styles[0], RowStyle::Normal);
+        assert_eq!(frame.row_styles[1], RowStyle::Normal);
+        assert_eq!(frame.row_styles[2], RowStyle::Highlight);
+        assert_eq!(frame.row_styles[3], RowStyle::Normal);
+    }
+
+    #[test]
+    fn search_highlight_overrides_dim() {
+        // Set up filter dim mode: alpha matches filter, beta doesn't.
+        // Then search for "beta": its row should be Highlight, not Dim.
+        let (m, mut idx) = setup(b"alpha\nbeta\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        let formats = crate::format::load_all().unwrap();
+        let fmt = crate::format::LogFormat::compile(
+            "simple",
+            r"^(?P<line>.+)$",
+        )
+        .unwrap();
+        let _ = formats;
+        let f = crate::filter::CompiledFilter::compile(
+            &fmt,
+            vec![crate::filter::FilterSpec::parse("line=alpha").unwrap()],
+        )
+        .unwrap();
+        v.set_filter(Some(f));
+        v.set_dim_mode(true);
+        v.set_search("beta".into(), SearchDirection::Forward).unwrap();
+        let frame = v.frame(&m, &mut idx);
+        // alpha matches filter → Normal; beta would be Dim, but search hits → Highlight.
+        assert_eq!(frame.row_styles[0], RowStyle::Normal);
+        assert_eq!(frame.row_styles[1], RowStyle::Highlight);
+    }
+
+    #[test]
+    fn search_status_shows_pattern() {
+        let (m, mut idx) = setup(b"x\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_search("foo".into(), SearchDirection::Forward).unwrap();
+        let frame = v.frame(&m, &mut idx);
+        assert!(frame.status.contains("[/foo]"), "status: {}", frame.status);
     }
 
     #[test]

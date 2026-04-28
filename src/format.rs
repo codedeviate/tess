@@ -323,6 +323,11 @@ pub fn print_format_list(formats: &HashMap<String, LogFormat>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the `HOME` env var; otherwise they
+    /// trample each other when cargo runs tests in parallel.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn builtins_all_compile() {
@@ -379,6 +384,7 @@ mod tests {
 
     #[test]
     fn load_groups_reads_user_config() {
+        let _g = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -528,6 +534,7 @@ file = "/tmp/x.log"
 
     #[test]
     fn load_groups_rejects_reserved_name() {
+        let _g = HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -549,6 +556,7 @@ file = "/x.log"
 
     #[test]
     fn user_config_overrides_builtin_via_load_all() {
+        let _g = HOME_LOCK.lock().unwrap();
         // Use a temp HOME to avoid touching the real user's config.
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");

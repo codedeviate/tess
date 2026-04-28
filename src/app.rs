@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::cursor::MoveTo;
-use crossterm::event::{poll, read};
+use crossterm::event::{poll, read, Event, KeyCode, KeyEvent};
 use crossterm::style::{Print, ResetColor, SetAttribute, Attribute};
 use crossterm::terminal::{Clear, ClearType, size};
 use crossterm::QueueableCommand;
@@ -14,7 +14,24 @@ use crate::input::{translate, Command};
 use crate::line_index::LineIndex;
 use crate::render::Cell;
 use crate::source::Source;
-use crate::viewport::{Frame, RowStyle, Viewport};
+use crate::viewport::{Frame, RowStyle, SearchDirection, Viewport};
+
+/// Per-keystroke modes the app event loop can be in.
+#[derive(Debug, Clone)]
+enum InputMode {
+    Normal,
+    /// User pressed `-`; the next keystroke selects an option to toggle.
+    OptionPrefix,
+    /// User pressed `/` or `?`; subsequent characters accumulate into a
+    /// search pattern until Enter (commit) or Esc (cancel).
+    SearchPrompt {
+        direction: SearchDirection,
+        buffer: String,
+        /// If a search compile error occurred, show this in place of the
+        /// buffer until the next keystroke.
+        error: Option<String>,
+    },
+}
 
 pub fn run(
     src: Box<dyn Source>,
@@ -46,6 +63,7 @@ pub fn run(
 
     // Always draw the initial frame before entering the event loop.
     let mut needs_redraw = true;
+    let mut mode = InputMode::Normal;
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -53,7 +71,15 @@ pub fn run(
         }
 
         if needs_redraw {
-            let frame = viewport.frame(src.as_ref(), &mut idx);
+            let mut frame = viewport.frame(src.as_ref(), &mut idx);
+            // Override the status row when we're in an interactive prompt.
+            if let InputMode::SearchPrompt { direction, buffer, error } = &mode {
+                let prefix = if matches!(direction, SearchDirection::Forward) { "/" } else { "?" };
+                frame.status = match error {
+                    Some(e) => format!("{prefix}{buffer}  [error: {e}]"),
+                    None => format!("{prefix}{buffer}"),
+                };
+            }
             write_frame(&mut stdout, &frame, cols, rows)
                 .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
             needs_redraw = false;
@@ -63,6 +89,57 @@ pub fn run(
         match poll(timeout) {
             Ok(true) => {
                 let event = read().map_err(|e| crate::error::Error::Runtime(format!("input: {}", e)))?;
+                // Modal input handling: the search prompt and option prefix
+                // intercept keys before they're translated to commands.
+                match &mut mode {
+                    InputMode::SearchPrompt { direction, buffer, error } => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            match code {
+                                KeyCode::Esc => { mode = InputMode::Normal; needs_redraw = true; }
+                                KeyCode::Enter => {
+                                    if buffer.is_empty() {
+                                        mode = InputMode::Normal;
+                                    } else {
+                                        match viewport.set_search(buffer.clone(), *direction) {
+                                            Ok(()) => {
+                                                viewport.search_repeat(src.as_ref(), &mut idx, false);
+                                                mode = InputMode::Normal;
+                                            }
+                                            Err(e) => { *error = Some(e); }
+                                        }
+                                    }
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Backspace => {
+                                    buffer.pop();
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char(c) => {
+                                    buffer.push(c);
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
+                    InputMode::OptionPrefix => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            match code {
+                                KeyCode::Char('N') | KeyCode::Char('n') => viewport.toggle_line_numbers(),
+                                KeyCode::Char('S') | KeyCode::Char('s') => viewport.toggle_chop(),
+                                KeyCode::Char('F') | KeyCode::Char('f') => viewport.toggle_follow(),
+                                _ => {}
+                            }
+                        }
+                        mode = InputMode::Normal;
+                        needs_redraw = true;
+                        continue;
+                    }
+                    InputMode::Normal => {}
+                }
                 let cmd = translate(event);
                 match cmd {
                     Command::Quit => break,
@@ -120,6 +197,35 @@ pub fn run(
                         }
                         needs_redraw = true;
                     }
+                    Command::SearchForward => {
+                        mode = InputMode::SearchPrompt {
+                            direction: SearchDirection::Forward,
+                            buffer: String::new(),
+                            error: None,
+                        };
+                        needs_redraw = true;
+                    }
+                    Command::SearchBackward => {
+                        mode = InputMode::SearchPrompt {
+                            direction: SearchDirection::Backward,
+                            buffer: String::new(),
+                            error: None,
+                        };
+                        needs_redraw = true;
+                    }
+                    Command::NextMatch => {
+                        if viewport.search_repeat(src.as_ref(), &mut idx, false) {
+                            needs_redraw = true;
+                        }
+                    }
+                    Command::PreviousMatch => {
+                        if viewport.search_repeat(src.as_ref(), &mut idx, true) {
+                            needs_redraw = true;
+                        }
+                    }
+                    Command::OptionPrefix => {
+                        mode = InputMode::OptionPrefix;
+                    }
                     Command::Noop => {}
                 }
             }
@@ -162,11 +268,13 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
     for (i, row) in frame.body.iter().enumerate() {
         out.queue(MoveTo(0, i as u16))?;
         let style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
-        if matches!(style, RowStyle::Dim) {
-            out.queue(SetAttribute(Attribute::Dim))?;
+        match style {
+            RowStyle::Dim => { out.queue(SetAttribute(Attribute::Dim))?; }
+            RowStyle::Highlight => { out.queue(SetAttribute(Attribute::Reverse))?; }
+            RowStyle::Normal => {}
         }
         out.queue(Print(cells_to_string(row, cols)))?;
-        if matches!(style, RowStyle::Dim) {
+        if !matches!(style, RowStyle::Normal) {
             out.queue(SetAttribute(Attribute::Reset))?;
         }
     }

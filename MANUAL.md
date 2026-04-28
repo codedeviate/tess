@@ -84,13 +84,37 @@ cmd | tess [OPTIONS]
 | `u` `Ctrl-U` | Half-page up |
 | `g` `<` `Home` | Go to top |
 | `G` `>` `End` | Go to bottom |
-| `Shift-N` | Toggle line numbers |
-| `Shift-S` | Toggle chop / wrap |
+| `/` *pattern* `Enter` | Forward regex search; `Esc` cancels the prompt |
+| `?` *pattern* `Enter` | Backward regex search |
+| `n` | Repeat last search (same direction) |
+| `N` | Repeat last search (opposite direction) |
+| `-N` (dash, then N) | Toggle line numbers |
+| `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `r` `Ctrl-L` | Force redraw |
 | `q` `Q` `Ctrl-C` | Quit |
 
 In hide-mode filtering, scroll/page/goto operate on visible (matching) lines — the viewport skips past hidden ones.
+
+### Search
+
+Pressing `/` opens a search prompt at the bottom of the screen. Type a regex (the same flavor as `--filter` uses), then `Enter` to execute or `Esc` to cancel. `?` does the same backward. The matched logical line scrolls to the top of the viewport and gets a reverse-video highlight; subsequent matches retain the highlight as you scroll past them. `n` repeats the last search in its original direction; `N` repeats it the other way. Search wraps at the end of the source.
+
+When a filter is active, search interacts with it predictably: in hide mode, only currently-visible (matching) lines are searched. In dim mode, search hits override the dim styling so they remain visible as you scroll, even if they wouldn't normally pass the filter.
+
+The status line picks up `[/<pattern>]` (or `[?<pattern>]`) while a search is set.
+
+### Option-toggle prefix (`-`)
+
+Borrowed from real `less`: pressing `-` enters a one-shot option-prefix mode. The next keystroke selects which option to flip:
+
+| `-` then… | Effect |
+|---|---|
+| `N` | Toggle line numbers |
+| `S` | Toggle chop / wrap |
+| `F` | Toggle follow (also available as `Shift-F` directly) |
+
+Lowercase variants work too (`-n`, `-s`, `-f`). Any other key after `-` cancels the prefix harmlessly.
 
 ---
 
@@ -99,7 +123,7 @@ In hide-mode filtering, scroll/page/goto operate on visible (matching) lines —
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
@@ -107,8 +131,11 @@ The bottom row shows current state. Format:
 - **`<pct>%`** — position percentage.
 - **`[<format>]`** — present when `--format` is active (e.g. `[apache-combined]`).
 - **`[filter]` / `[dim]`** — present when filtering, indicating mode.
+- **`[/<search>]`** / **`[?<search>]`** — active search pattern (forward or backward). Cleared only when a new search is set or you exit.
 - **`(F)`** — present when follow mode is on. New bytes auto-scroll into view if you're at the bottom.
 - **`+`** suffix on `total` — the source may still grow (streaming stdin or follow mode).
+
+While a search prompt is open, the entire status row is replaced with `/<typed-so-far>` (or `?…`). `Enter` commits, `Esc` cancels, `Backspace` edits.
 
 ---
 
@@ -430,4 +457,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.2.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.3.0`. Run `tess --version` to confirm.
