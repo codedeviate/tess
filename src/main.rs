@@ -42,7 +42,13 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
 }
 
 fn real_main() -> Result<()> {
-    let args = Args::parse();
+    // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
+    // parses. A `--<groupname>` token becomes the group's flags inline, and
+    // remaining bare positionals become `--filter <arg>` pairs.
+    let groups = format::load_groups().map_err(Error::Runtime)?;
+    let argv: Vec<String> = std::env::args().collect();
+    let argv = format::expand_argv(argv, &groups);
+    let args = Args::parse_from(argv);
 
     // --list-formats: print and exit before doing any source/terminal work.
     if args.list_formats {

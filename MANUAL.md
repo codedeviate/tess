@@ -318,9 +318,81 @@ nginx-combined: ip, user, time, method, url, protocol, status, size, referer, ag
 
 ---
 
+## Groups: command-line shortcuts
+
+Repeating long invocations gets tiresome. A `[group.NAME]` entry in `~/.config/tess/formats.toml` defines a shortcut: when you pass `--NAME` on the command line, `tess` expands it into a fixed set of flags (format, file, follow, tail, head, dim, line numbers, chop, tab width, default filters). Bare positionals after the group token become **filters**.
+
+### Example
+
+```toml
+# ~/.config/tess/formats.toml
+
+[format.errorlog]
+regex = '^(?P<ts>\S+ \S+) (?P<level>\w+) \[(?P<reqid>[0-9a-f]+)\] (?P<msg>.*)$'
+
+[group.errorlog]
+format = "errorlog"
+file = "/var/log/apache2/SE.error"
+follow = true
+tail = 1000
+filter = ["level=ERROR"]   # optional: pre-applied filters
+
+[group.access5xx]
+format = "apache-combined"
+file = "/var/log/apache2/access.log"
+follow = true
+filter = ["status~^5"]
+```
+
+With this config:
+
+```sh
+# Watch ERRORs in the app log:
+tess --errorlog
+# Equivalent to:
+tess --format errorlog --follow --tail 1000 --filter 'level=ERROR' /var/log/apache2/SE.error
+
+# Add an extra filter on the fly — positionals become --filter args:
+tess --errorlog 'msg~timeout'
+# Equivalent to the above plus --filter 'msg~timeout' (ANDed).
+
+# Multiple ad-hoc filters:
+tess --errorlog 'msg~timeout' 'reqid=deadbeefcafe'
+
+# Override a group flag with a CLI flag (the CLI value wins):
+tess --errorlog --tail 50 'msg~timeout'
+# Group has tail=1000 but you override to 50.
+```
+
+### Group fields
+
+All optional. Anything left out simply isn't passed.
+
+| Key | Type | Maps to CLI flag |
+|---|---|---|
+| `format` | string | `--format <name>` |
+| `file` | string | positional `FILE` |
+| `follow` | bool | `-f` / `--follow` |
+| `tail` | integer | `--tail N` |
+| `head` | integer | `--head N` |
+| `dim` | bool | `--dim` |
+| `line_numbers` | bool | `-N` |
+| `chop` | bool | `-S` |
+| `tab_width` | integer | `--tab-width N` |
+| `filter` | array of strings | `--filter X` (one entry per element) |
+
+### Override semantics
+
+When the group is expanded, its flags appear in argv before any flags you typed *after* the group token. For repeatable flags (`--filter`), CLI values **add** to the group's. For single-value flags (`--tail`, `--head`, `--tab-width`, `--format`), the **last occurrence wins**, so a CLI flag after the group token overrides the group's value.
+
+### Restrictions
+
+- A group cannot be named the same as a built-in flag (`format`, `filter`, `dim`, `head`, `tail`, `follow`, `LINE-NUMBERS`, `chop-long-lines`, `tab-width`, `list-formats`, `help`, `version`). Trying to load such a group prints an error and exits.
+- Once a group token is seen, every subsequent bare positional in argv (anything that doesn't start with `-`) becomes a `--filter` argument. To open a different file alongside an active group, edit the group or define a second one — there is no `--file` override flag yet.
+
 ## Files
 
-- **`~/.config/tess/formats.toml`** — user-defined log formats. See [Defining your own](#defining-your-own).
+- **`~/.config/tess/formats.toml`** — user-defined log formats and groups. See [Defining your own](#defining-your-own) and [Groups](#groups-command-line-shortcuts).
 
 ---
 
@@ -337,6 +409,7 @@ nginx-combined: ip, user, time, method, url, protocol, status, size, referer, ag
 ## Common pitfalls
 
 - **`bash: !=200: event not found`** (or `!~notice` etc.) — the `!` in negating filter operators triggers shell history expansion. Single-quote the filter: `--filter 'status!=200'`. See the note under `--filter` in [Command-line flags](#structured-logs).
+- **`tess --mygroup somefile.log` doesn't open `somefile.log`** — when a group is active, bare positionals are treated as filters, so `somefile.log` becomes `--filter somefile.log` and fails to parse (no operator). The group's `file = "..."` is the file. To view a different file, drop the group flag.
 - **`--filter` without `--format`** — errors out with `tess: --filter requires --format`. Pick a format first; use `--list-formats` if unsure.
 - **Filter field doesn't exist in the format** — errors out before entering the pager with the available field list, e.g. `field 'foo' is not in format 'apache-combined' (available: ip, user, time, method, url, protocol, status, size, referer, agent)`.
 - **Lines that don't parse against the chosen format** — treated as non-matches. Hidden by default; visible-but-dimmed with `--dim`. If many lines aren't parsing, your regex is probably too strict.
