@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use regex::Regex;
 
 use crate::filter::{CompiledFilter, FilterMatch};
@@ -5,15 +7,78 @@ use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
 
+/// Build the rendered text of a display row plus a `starts` table mapping
+/// each char index in that text back to its starting cell column. The last
+/// entry is a sentinel pointing one past the row's width, so a match's
+/// `[char_start, char_end)` translates to the cell range
+/// `starts[char_start]..starts[char_end]`.
+fn row_text_and_starts(row: &[Cell]) -> (String, Vec<usize>) {
+    let mut text = String::new();
+    let mut starts: Vec<usize> = Vec::with_capacity(row.len() + 1);
+    for (col, cell) in row.iter().enumerate() {
+        match cell {
+            Cell::Char { ch, .. } => {
+                starts.push(col);
+                text.push(*ch);
+            }
+            Cell::Empty => {
+                starts.push(col);
+                text.push(' ');
+            }
+            Cell::Continuation => {}
+        }
+    }
+    starts.push(row.len());
+    (text, starts)
+}
+
+/// Find every regex match in the rendered text of a row, translating each
+/// to a cell column range. Empty matches are dropped. Trailing-padding
+/// spaces on a row would otherwise satisfy patterns like `\s+`; we trim
+/// those by clamping match ends to where actual content stops.
+fn find_row_highlights(row: &[Cell], regex: &Regex) -> Vec<Range<usize>> {
+    if row.is_empty() {
+        return Vec::new();
+    }
+    let last_content_col = row
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(c, cell)| match cell {
+            Cell::Char { width, .. } => Some(c + *width as usize),
+            Cell::Continuation => Some(c + 1),
+            Cell::Empty => None,
+        })
+        .unwrap_or(0);
+    if last_content_col == 0 {
+        return Vec::new();
+    }
+    let (text, starts) = row_text_and_starts(row);
+    let mut out = Vec::new();
+    for m in regex.find_iter(&text) {
+        if m.start() == m.end() {
+            continue;
+        }
+        let char_start = text[..m.start()].chars().count();
+        let char_end = text[..m.end()].chars().count();
+        if char_start >= starts.len() - 1 || char_end <= char_start {
+            continue;
+        }
+        let col_start = starts[char_start];
+        let col_end = starts[char_end].min(last_content_col);
+        if col_end > col_start {
+            out.push(col_start..col_end);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowStyle {
     Normal,
     /// Render with a reduced-emphasis terminal attribute. Used by `--dim` to
     /// keep filtered-out lines visible as context.
     Dim,
-    /// Render with a high-emphasis terminal attribute (reverse video). Used
-    /// by `/` and `?` search to mark matching rows.
-    Highlight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +98,11 @@ pub struct SearchState {
 pub struct Frame {
     pub body: Vec<Vec<Cell>>,        // exactly (rows-1) entries
     pub row_styles: Vec<RowStyle>,   // parallel to body
+    /// Per-row column ranges to render with reverse-video. Used by `/`
+    /// search to highlight just the matched phrase rather than the whole row.
+    /// Indexed parallel to `body`; each inner Vec holds column ranges in
+    /// `[start, end)` form (cell columns).
+    pub highlights: Vec<Vec<std::ops::Range<usize>>>,
     pub status: String,
 }
 
@@ -253,6 +323,7 @@ impl Viewport {
 
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
+        let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
         // In hide mode we walk visible_lines; otherwise we walk logical lines.
         let hide = self.hide_mode();
         let total_lines = idx.line_count();
@@ -282,15 +353,14 @@ impl Viewport {
                 while row.len() < self.cols as usize { row.push(Cell::Empty); }
                 body.push(row);
                 row_styles.push(RowStyle::Normal);
+                highlights.push(Vec::new());
                 line_n += 1;
                 continue;
             }
             let range = idx.line_range(line_n, src);
             let bytes = src.bytes(range);
             let rows = render_line(&bytes, &r_opts);
-            // Compute style for this logical line. Search highlight overrides
-            // dim/normal so search hits stay visible even in dim mode.
-            let base_style = if let Some(f) = self.filter.as_ref() {
+            let style = if let Some(f) = self.filter.as_ref() {
                 if self.dim_mode {
                     match f.evaluate(&bytes) {
                         FilterMatch::Matched => RowStyle::Normal,
@@ -302,16 +372,6 @@ impl Viewport {
                 }
             } else {
                 RowStyle::Normal
-            };
-            let style = if let Some(s) = self.search.as_ref() {
-                let line_str = std::str::from_utf8(&bytes).unwrap_or("");
-                if !line_str.is_empty() && s.regex.is_match(line_str) {
-                    RowStyle::Highlight
-                } else {
-                    base_style
-                }
-            } else {
-                base_style
             };
 
             for (i, mut content_row) in rows.into_iter().enumerate() {
@@ -325,8 +385,17 @@ impl Viewport {
                     }
                 }
                 full.append(&mut content_row);
+                // Compute search highlights for this display row by running
+                // the regex against the row's rendered text. Each match's
+                // char range maps to a cell column range via `starts`.
+                let row_highlights = if let Some(s) = self.search.as_ref() {
+                    find_row_highlights(&full, &s.regex)
+                } else {
+                    Vec::new()
+                };
                 body.push(full);
                 row_styles.push(style);
+                highlights.push(row_highlights);
             }
             skip = 0;
             // Advance to next line — visible-space if hiding, logical-space otherwise.
@@ -339,7 +408,7 @@ impl Viewport {
         }
 
         let status = self.format_status(idx, src);
-        Frame { body, row_styles, status }
+        Frame { body, row_styles, highlights, status }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
@@ -810,31 +879,41 @@ mod tests {
     }
 
     #[test]
-    fn frame_marks_matching_row_as_highlight() {
+    fn frame_records_highlight_ranges_for_matches() {
         let (m, mut idx) = setup(b"alpha\nbeta\ngamma\ndelta\n");
         let mut v = Viewport::new(20, 5, "f".into());
         v.set_search("gamma".into(), SearchDirection::Forward).unwrap();
         let frame = v.frame(&m, &mut idx);
-        // Body has 4 rows (body_rows = 4); rows[2] is "gamma".
+        // Body has 4 rows; row 2 is "gamma" (5 chars at columns 0..5).
         assert_eq!(frame.row_styles[0], RowStyle::Normal);
-        assert_eq!(frame.row_styles[1], RowStyle::Normal);
-        assert_eq!(frame.row_styles[2], RowStyle::Highlight);
-        assert_eq!(frame.row_styles[3], RowStyle::Normal);
+        assert!(frame.highlights[0].is_empty());
+        assert!(frame.highlights[1].is_empty());
+        assert_eq!(frame.highlights[2], vec![0..5]);
+        assert!(frame.highlights[3].is_empty());
     }
 
     #[test]
-    fn search_highlight_overrides_dim() {
-        // Set up filter dim mode: alpha matches filter, beta doesn't.
-        // Then search for "beta": its row should be Highlight, not Dim.
+    fn frame_highlights_substring_inside_a_row() {
+        let (m, mut idx) = setup(b"the alpha and the beta\nfoo\n");
+        let mut v = Viewport::new(40, 5, "f".into());
+        v.set_search("beta".into(), SearchDirection::Forward).unwrap();
+        let frame = v.frame(&m, &mut idx);
+        // "beta" starts at column 18 in the first row.
+        assert_eq!(frame.highlights[0], vec![18..22]);
+        assert!(frame.highlights[1].is_empty());
+    }
+
+    #[test]
+    fn search_highlight_with_filter_dim_keeps_row_dim() {
+        // alpha matches filter → Normal. beta doesn't → Dim. Search for
+        // "beta" should leave row style Dim and mark the substring 0..4.
         let (m, mut idx) = setup(b"alpha\nbeta\n");
         let mut v = Viewport::new(20, 5, "f".into());
-        let formats = crate::format::load_all().unwrap();
         let fmt = crate::format::LogFormat::compile(
             "simple",
             r"^(?P<line>.+)$",
         )
         .unwrap();
-        let _ = formats;
         let f = crate::filter::CompiledFilter::compile(
             &fmt,
             vec![crate::filter::FilterSpec::parse("line=alpha").unwrap()],
@@ -844,9 +923,9 @@ mod tests {
         v.set_dim_mode(true);
         v.set_search("beta".into(), SearchDirection::Forward).unwrap();
         let frame = v.frame(&m, &mut idx);
-        // alpha matches filter → Normal; beta would be Dim, but search hits → Highlight.
         assert_eq!(frame.row_styles[0], RowStyle::Normal);
-        assert_eq!(frame.row_styles[1], RowStyle::Highlight);
+        assert_eq!(frame.row_styles[1], RowStyle::Dim);
+        assert_eq!(frame.highlights[1], vec![0..4]);
     }
 
     #[test]

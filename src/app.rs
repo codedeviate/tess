@@ -264,19 +264,25 @@ pub fn run(
 }
 
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io::Result<()> {
+    // Reset attributes once before clear so the cleared cells inherit a
+    // clean state (some terminals fill cleared cells with the current
+    // attribute, which caused reverse-video bleed in earlier versions).
+    out.queue(SetAttribute(Attribute::Reset))?;
+    out.queue(ResetColor)?;
     out.queue(Clear(ClearType::All))?;
     for (i, row) in frame.body.iter().enumerate() {
         out.queue(MoveTo(0, i as u16))?;
+        // Defensive: every row begins with a full attribute reset, so a
+        // mis-handled reset on the previous row can't bleed forward.
+        out.queue(SetAttribute(Attribute::Reset))?;
         let style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
-        match style {
-            RowStyle::Dim => { out.queue(SetAttribute(Attribute::Dim))?; }
-            RowStyle::Highlight => { out.queue(SetAttribute(Attribute::Reverse))?; }
-            RowStyle::Normal => {}
+        if matches!(style, RowStyle::Dim) {
+            out.queue(SetAttribute(Attribute::Dim))?;
         }
-        out.queue(Print(cells_to_string(row, cols)))?;
-        if !matches!(style, RowStyle::Normal) {
-            out.queue(SetAttribute(Attribute::Reset))?;
-        }
+        let no_highlights = Vec::new();
+        let highlights = frame.highlights.get(i).unwrap_or(&no_highlights);
+        write_row_with_highlights(out, row, cols, highlights)?;
+        out.queue(SetAttribute(Attribute::Reset))?;
     }
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
@@ -304,4 +310,69 @@ fn cells_to_string(row: &[Cell], cols: u16) -> String {
         }
     }
     s
+}
+
+/// Emit a single row with per-substring reverse-video highlights. Highlight
+/// ranges are in cell columns; any segment outside a highlight prints with
+/// the row's already-applied base attribute. Reverse is toggled on/off
+/// segment-by-segment with explicit `NoReverse` so a base attribute like
+/// `Dim` stays in effect for un-highlighted text.
+fn write_row_with_highlights(
+    out: &mut impl Write,
+    row: &[Cell],
+    cols: u16,
+    highlights: &[std::ops::Range<usize>],
+) -> io::Result<()> {
+    let cols_usize = cols as usize;
+    if highlights.is_empty() {
+        out.queue(Print(cells_to_string(row, cols)))?;
+        return Ok(());
+    }
+    // Sort and clamp; assume non-overlapping (viewport produces them this way).
+    let mut ranges: Vec<std::ops::Range<usize>> = highlights
+        .iter()
+        .filter_map(|r| {
+            let s = r.start.min(cols_usize);
+            let e = r.end.min(cols_usize);
+            if e > s { Some(s..e) } else { None }
+        })
+        .collect();
+    ranges.sort_by_key(|r| r.start);
+
+    let mut col = 0usize;
+    let mut i = 0usize;
+    while col < cols_usize && i < row.len() {
+        // Find which range (if any) covers this column.
+        let active = ranges.iter().find(|r| r.start <= col && col < r.end);
+        let (segment_end, reversed) = match active {
+            Some(r) => (r.end.min(cols_usize), true),
+            None => {
+                // Plain segment until the next highlight or row end.
+                let next = ranges.iter().find(|r| r.start > col).map(|r| r.start);
+                (next.unwrap_or(cols_usize), false)
+            }
+        };
+        if reversed { out.queue(SetAttribute(Attribute::Reverse))?; }
+        // Collect cells for this segment from `col` to `segment_end`.
+        let mut s = String::new();
+        while col < segment_end && i < row.len() {
+            match &row[i] {
+                Cell::Char { ch, width } => {
+                    s.push(*ch);
+                    col += *width as usize;
+                }
+                Cell::Continuation => {
+                    // Already accounted for by the preceding wide char's width.
+                }
+                Cell::Empty => {
+                    s.push(' ');
+                    col += 1;
+                }
+            }
+            i += 1;
+        }
+        out.queue(Print(s))?;
+        if reversed { out.queue(SetAttribute(Attribute::NoReverse))?; }
+    }
+    Ok(())
 }

@@ -98,9 +98,9 @@ In hide-mode filtering, scroll/page/goto operate on visible (matching) lines —
 
 ### Search
 
-Pressing `/` opens a search prompt at the bottom of the screen. Type a regex (the same flavor as `--filter` uses), then `Enter` to execute or `Esc` to cancel. `?` does the same backward. The matched logical line scrolls to the top of the viewport and gets a reverse-video highlight; subsequent matches retain the highlight as you scroll past them. `n` repeats the last search in its original direction; `N` repeats it the other way. Search wraps at the end of the source.
+Pressing `/` opens a search prompt at the bottom of the screen. Type a regex (the same flavor as `--filter` uses), then `Enter` to execute or `Esc` to cancel. `?` does the same backward. The matched logical line scrolls to the top of the viewport, and within every visible row the matched **phrase** itself is rendered in reverse-video (not the whole row). `n` repeats the last search in its original direction; `N` repeats it the other way. Search wraps at the end of the source.
 
-When a filter is active, search interacts with it predictably: in hide mode, only currently-visible (matching) lines are searched. In dim mode, search hits override the dim styling so they remain visible as you scroll, even if they wouldn't normally pass the filter.
+When a filter is active, search interacts with it predictably: in hide mode, only currently-visible (matching) lines are searched. In dim mode, lines stay dimmed but the matched phrase within each line is still highlighted so it pops out of the surrounding context.
 
 The status line picks up `[/<pattern>]` (or `[?<pattern>]`) while a search is set.
 
@@ -457,4 +457,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.3.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.3.1`. Run `tess --version` to confirm.
