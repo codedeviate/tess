@@ -54,6 +54,29 @@ input (KeyEvent → Command translation)                used by app
 - Errors via a small handwritten `enum Error` in `src/error.rs` — no `anyhow` for MVP. Exit codes: 0 clean, 1 startup error, 2 runtime error.
 - Don't write code comments unless they capture *why* (a hidden constraint, a workaround, a non-obvious invariant). The names should carry the *what*.
 
+## Versioning
+
+Use [Semantic Versioning](https://semver.org). The single source of truth is `version` in `Cargo.toml`.
+
+- **PATCH** (`0.2.0` → `0.2.1`): bug fixes, doc-only changes, internal refactors with no user-visible behavior change.
+- **MINOR** (`0.2.0` → `0.3.0`): new flags, new features, new config keys; backwards-compatible changes to existing behavior.
+- **MAJOR** (`0.x` → `1.0` once stable; afterwards `1.x` → `2.0`): incompatible CLI/config changes, removed flags, behavior breaks.
+
+Bump the version in `Cargo.toml` as part of the same commit that introduces the change. Pre-1.0 we permit small breakage at MINOR boundaries when called for, but flag it in the commit message.
+
+## Build / packaging discipline
+
+After every commit on this branch:
+
+1. **Build both profiles** to catch profile-specific issues early:
+   ```
+   cargo build
+   cargo build --release
+   ```
+2. **Generate a source tarball** of everything needed to compile `tess` on another machine, named `tess-<version>.tar.gz` (where `<version>` matches `Cargo.toml`), placed in the repo root next to this `CLAUDE.md`. Contents: `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `MANUAL.md`, `CLAUDE.md`, `OUT-OF-SCOPE.md`, `INSTALL.md`, `.gitignore`. Excluded: `target/`, `.git/`, `.claude/`, any `.DS_Store`. The tarball is `.gitignore`d (see `tess-*.tar.gz`).
+
+If a commit only touches docs and doesn't change the version, the tarball can be skipped — the previous one is still current. If the version bumped, regenerate.
+
 ## Where to put new work
 
 - New design specs → `~/Development/Starweb/superpowers/Test/specs/YYYY-MM-DD-<topic>-design.md`

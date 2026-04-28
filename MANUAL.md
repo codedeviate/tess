@@ -430,4 +430,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.1.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.2.0`. Run `tess --version` to confirm.

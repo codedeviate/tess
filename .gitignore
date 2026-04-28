@@ -3,3 +3,5 @@ Cargo.lock
 *.swp
 .DS_Store
 .claude/
+# Distribution tarballs generated post-commit (see CLAUDE.md "Build / packaging discipline").
+tess-*.tar.gz
