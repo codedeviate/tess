@@ -53,6 +53,15 @@ cmd | tess [OPTIONS]
   - `!=` — exact non-match. `--filter status!=200`
   - `~` — regex match. `--filter ip~^10\.`
   - `!~` — regex non-match. `--filter agent!~bot`
+
+  > **Shell quoting** (important): in interactive `bash` and `zsh`, the `!` in `!=` and `!~` triggers history expansion and you'll see `bash: !=200: event not found` or similar. Quote the filter argument with **single quotes** to disable expansion:
+  >
+  > ```sh
+  > tess --format apache-combined --filter 'status!=200' access.log
+  > tess --format app --filter 'level!~notice' app.log
+  > ```
+  >
+  > Single quotes are sufficient and prevent any other shell metacharacter (`\`, `$`, etc.) from being interpreted in your regex too. Inside scripts, history expansion is off by default; quoting is only needed at an interactive prompt. Alternatively `set +H` in bash disables history expansion for the session.
 - **`--dim`** — render non-matching lines visibly faded instead of hiding them. Requires `--filter`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
@@ -218,8 +227,8 @@ tess --format apache-combined --filter status~^5 access.log
 # Only 5xx errors on /api/* paths (multi-filter AND)
 tess --format apache-combined --filter status~^5 --filter url~^/api/ access.log
 
-# Everything except 200s
-tess --format apache-combined --filter status!=200 access.log
+# Everything except 200s (single-quote because of bash's history expansion on `!`)
+tess --format apache-combined --filter 'status!=200' access.log
 
 # Errors from a specific subnet
 tess --format apache-combined \
@@ -227,8 +236,8 @@ tess --format apache-combined \
   --filter ip~^10\.0\. \
   access.log
 
-# Exclude bot traffic
-tess --format apache-combined --filter agent!~bot access.log
+# Exclude bot traffic (single-quoted to escape the `!`)
+tess --format apache-combined --filter 'agent!~bot' access.log
 
 # Show errors with surrounding context (dim non-matches instead of hiding)
 tess --format apache-combined --filter status~^5 --dim access.log
@@ -327,6 +336,7 @@ nginx-combined: ip, user, time, method, url, protocol, status, size, referer, ag
 
 ## Common pitfalls
 
+- **`bash: !=200: event not found`** (or `!~notice` etc.) — the `!` in negating filter operators triggers shell history expansion. Single-quote the filter: `--filter 'status!=200'`. See the note under `--filter` in [Command-line flags](#structured-logs).
 - **`--filter` without `--format`** — errors out with `tess: --filter requires --format`. Pick a format first; use `--list-formats` if unsure.
 - **Filter field doesn't exist in the format** — errors out before entering the pager with the available field list, e.g. `field 'foo' is not in format 'apache-combined' (available: ip, user, time, method, url, protocol, status, size, referer, agent)`.
 - **Lines that don't parse against the chosen format** — treated as non-matches. Hidden by default; visible-but-dimmed with `--dim`. If many lines aren't parsing, your regex is probably too strict.
