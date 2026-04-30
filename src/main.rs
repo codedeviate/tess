@@ -7,10 +7,85 @@ use tess::error::{Error, Result};
 use tess::filter::{CompiledFilter, FilterSpec};
 use tess::format;
 use tess::line_index::LineIndex;
-use tess::source::{find_tail_offset, FileSource, Source, StdinSource};
+use tess::source::{find_tail_offset, FileSource, MockSource, Source, StdinSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
+
+const MANUAL_TEXT: &str = include_str!("../MANUAL.md");
+
+const EXAMPLES_TEXT: &str = "\
+tess — usage examples
+=====================
+
+Plain viewing
+-------------
+  tess Cargo.toml                       # open a file
+  tess -N -S src/main.rs                # line numbers, no wrap
+  tess --tab-width 4 Makefile           # custom tab stops
+
+Piped input
+-----------
+  git log | tess                        # page through git log
+  cargo build 2>&1 | tess               # keep build output on screen
+  ls --color=always | tess              # ANSI passes through
+
+Big files: --head / --tail
+--------------------------
+  tess --head 50 schema.sql             # first 50 lines
+  tess --tail 1000 huge.log             # last 1000 — opens instantly
+  tess -f --tail 1000 huge.log          # tail-follow last 1000
+
+Following live output
+---------------------
+  tess -f /var/log/syslog               # watch a log file
+  tail -F /var/log/access.log | tess -f # streaming pipe with -f
+
+Apache log analysis (built-in formats)
+--------------------------------------
+  tess --format apache-combined --filter status~^5 access.log
+  tess --format apache-combined --filter status~^5 --filter url~^/api/ access.log
+  tess --format apache-combined --filter 'status!=200' access.log
+  tess --format apache-combined --filter status~^5 --dim access.log
+  tess -f --tail 100 --format apache-combined --filter status~^5 access.log
+
+Note: single-quote filters that use `!` (`!=`, `!~`) — bash's history
+expansion will otherwise eat the `!`.
+
+Custom format (declare in ~/.config/tess/formats.toml)
+------------------------------------------------------
+  # ~/.config/tess/formats.toml
+  # [format.app]
+  # regex = '^(?P<ts>\\S+ \\S+) (?P<level>\\w+) \\[(?P<reqid>[0-9a-f]+)\\] (?P<msg>.*)$'
+
+  tess --list-formats                                  # confirm it loaded
+  tess --format app --filter level=ERROR app.log
+  tess --format app --filter 'level~^(ERROR|WARN)$' app.log
+  tess -f --tail 200 --format app --filter level=ERROR app.log
+
+Groups (shortcut bundles, also in formats.toml)
+-----------------------------------------------
+  # [group.errorlog]
+  # format = \"app\"
+  # file   = \"/var/log/myapp/app.log\"
+  # follow = true
+  # tail   = 1000
+  # filter = [\"level=ERROR\"]
+
+  tess --errorlog                       # expands to the full command above
+  tess --errorlog 'msg~timeout'         # bare positional becomes --filter
+  tess --errorlog --tail 50             # CLI flag overrides group's tail
+
+Interactive keys (inside tess)
+------------------------------
+  / pat <Enter>     forward regex search       n / N    repeat search
+  ? pat <Enter>     backward regex search      g / G    top / bottom
+  Space / b         page down / up             Shift-F  toggle follow
+  -N / -S / -F      toggle line numbers / chop / follow
+  q                 quit
+
+See `tess --manual` for the full reference, or `tess --help` for a flag list.
+";
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -41,6 +116,31 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Page an in-memory blob through tess itself. Used for `--manual` and
+/// `--examples` when stdout is a TTY: the user gets scroll/search instead of
+/// content scrolling off the top of their terminal.
+fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
+    let src = MockSource::new();
+    src.append(content);
+    src.finish();
+
+    // We need keyboard input on fd 0. If the user piped something into us
+    // (e.g. `cat x | tess --manual`), redirect fd 0 to /dev/tty first.
+    #[cfg(unix)]
+    if !io::stdin().is_terminal() {
+        let _ = redirect_stdin_to_tty();
+    }
+
+    let sigterm = install_signal_flag();
+    let _guard = TerminalGuard::enter()
+        .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
+    let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+    let viewport = Viewport::new(cols, rows, label.to_string());
+    let idx = LineIndex::new();
+    app::run(Box::new(src), viewport, idx, sigterm)?;
+    Ok(())
+}
+
 fn real_main() -> Result<()> {
     // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
     // parses. A `--<groupname>` token becomes the group's flags inline, and
@@ -50,7 +150,23 @@ fn real_main() -> Result<()> {
     let argv = format::expand_argv(argv, &groups);
     let args = Args::parse_from(argv);
 
-    // --list-formats: print and exit before doing any source/terminal work.
+    // Info-only flags. When stdout is a TTY, page through tess itself so the
+    // content doesn't fly past — the user gets scroll/search/quit. When stdout
+    // is redirected (`tess --manual | grep …`, `> out.txt`), print plain text.
+    if args.manual {
+        if io::stdout().is_terminal() {
+            return page_bytes("(manual)", MANUAL_TEXT.as_bytes());
+        }
+        print!("{}", MANUAL_TEXT);
+        return Ok(());
+    }
+    if args.examples {
+        if io::stdout().is_terminal() {
+            return page_bytes("(examples)", EXAMPLES_TEXT.as_bytes());
+        }
+        print!("{}", EXAMPLES_TEXT);
+        return Ok(());
+    }
     if args.list_formats {
         let formats = format::load_all().map_err(Error::Runtime)?;
         format::print_format_list(&formats);

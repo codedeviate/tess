@@ -4,53 +4,61 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tess", version, about = "A less-style terminal pager.")]
 pub struct Args {
-    /// Show line numbers.
-    #[arg(short = 'N', long = "LINE-NUMBERS")]
-    pub line_numbers: bool,
-
     /// Chop long lines instead of wrapping.
-    #[arg(short = 'S', long = "chop-long-lines")]
+    #[arg(short = 'S', long = "chop-long-lines", display_order = 1)]
     pub chop: bool,
 
-    /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8)]
-    pub tab_width: u8,
+    /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
+    /// surrounding context visible.
+    #[arg(long = "dim", display_order = 2)]
+    pub dim: bool,
 
-    /// Follow mode: keep watching the source for new bytes (like `tail -f`).
-    /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
-    #[arg(short = 'f', long = "follow")]
-    pub follow: bool,
-
-    /// Show only the first N lines of the source. Mutually exclusive with --tail.
-    #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
-    pub head: Option<usize>,
-
-    /// Show only the last N lines of the source. For files this skips most of
-    /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
-    /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
-    pub tail: Option<usize>,
-
-    /// Apply a named log format (built-in or user-defined in
-    /// ~/.config/tess/formats.toml). Required by `--filter`.
-    #[arg(long = "format", value_name = "NAME")]
-    pub format: Option<String>,
+    /// Print a curated list of usage examples and exit.
+    #[arg(long = "examples", display_order = 3)]
+    pub examples: bool,
 
     /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
     /// Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠).
     /// Examples: `--filter status=500`, `--filter ip~^10\.`.
     /// Requires `--format`.
-    #[arg(long = "filter", value_name = "FIELD<op>VALUE")]
+    #[arg(long = "filter", value_name = "FIELD<op>VALUE", display_order = 4)]
     pub filter: Vec<String>,
 
-    /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
-    /// surrounding context visible.
-    #[arg(long = "dim")]
-    pub dim: bool,
+    /// Follow mode: keep watching the source for new bytes (like `tail -f`).
+    /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
+    #[arg(short = 'f', long = "follow", display_order = 5)]
+    pub follow: bool,
+
+    /// Apply a named log format (built-in or user-defined in
+    /// ~/.config/tess/formats.toml). Required by `--filter`.
+    #[arg(long = "format", value_name = "NAME", display_order = 6)]
+    pub format: Option<String>,
+
+    /// Show only the first N lines of the source. Mutually exclusive with --tail.
+    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 7)]
+    pub head: Option<usize>,
+
+    /// Show line numbers.
+    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 8)]
+    pub line_numbers: bool,
 
     /// Print available log formats and their named fields, then exit.
-    #[arg(long = "list-formats")]
+    #[arg(long = "list-formats", display_order = 9)]
     pub list_formats: bool,
+
+    /// Print the full user manual and exit.
+    #[arg(long = "manual", display_order = 10)]
+    pub manual: bool,
+
+    /// Tab stop width (default 8).
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 11)]
+    pub tab_width: u8,
+
+    /// Show only the last N lines of the source. For files this skips most of
+    /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
+    /// Mutually exclusive with --head. Streaming stdin is not supported.
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 12)]
+    pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
     pub files: Vec<PathBuf>,
@@ -158,5 +166,52 @@ mod tests {
     fn parses_list_formats() {
         let a = Args::parse_from(["tess", "--list-formats"]);
         assert!(a.list_formats);
+    }
+
+    #[test]
+    fn parses_manual() {
+        let a = Args::parse_from(["tess", "--manual"]);
+        assert!(a.manual);
+    }
+
+    #[test]
+    fn parses_examples() {
+        let a = Args::parse_from(["tess", "--examples"]);
+        assert!(a.examples);
+    }
+
+    #[test]
+    fn help_lists_flags_in_alphabetical_order() {
+        use clap::CommandFactory;
+        let mut cmd = Args::command();
+        let help = cmd.render_help().to_string();
+
+        let expected = [
+            "--chop-long-lines",
+            "--dim",
+            "--examples",
+            "--filter",
+            "--follow",
+            "--format",
+            "--head",
+            "--LINE-NUMBERS",
+            "--list-formats",
+            "--manual",
+            "--tab-width",
+            "--tail",
+        ];
+        // Pick out only lines that *start* with a flag (after indentation),
+        // which is how clap renders the option list — avoids matching mentions
+        // of flag names inside other flags' descriptions.
+        let listed: Vec<&str> = help
+            .lines()
+            .map(str::trim_start)
+            .filter(|l| l.starts_with('-'))
+            .filter_map(|l| {
+                l.split(|c: char| c.is_whitespace() || c == ',')
+                    .find(|tok| expected.contains(tok))
+            })
+            .collect();
+        assert_eq!(listed, expected, "help long-flag order should be alphabetical");
     }
 }

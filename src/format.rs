@@ -107,6 +107,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "chop-long-lines",
     "tab-width",
     "list-formats",
+    "manual",
+    "examples",
     "help",
     "version",
 ];

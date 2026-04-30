@@ -67,7 +67,9 @@ cmd | tess [OPTIONS]
 
 ### Other
 
-- **`-h`, `--help`** — print help.
+- **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
+- **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
+- **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
 - **`-V`, `--version`** — print version.
 
 ---
@@ -457,4 +459,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.3.1`. Run `tess --version` to confirm.
+This manual targets `tess 0.4.0`. Run `tess --version` to confirm.
