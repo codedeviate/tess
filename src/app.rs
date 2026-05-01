@@ -13,8 +13,17 @@ use crate::error::Result;
 use crate::input::{translate, Command};
 use crate::line_index::LineIndex;
 use crate::render::Cell;
-use crate::source::Source;
+use crate::source::{find_tail_offset, Source};
 use crate::viewport::{Frame, RowStyle, SearchDirection, Viewport};
+
+/// Constraints to re-apply when the source content has been replaced wholesale
+/// (`--live`). The line index is rebuilt from scratch each time, so caps that
+/// were originally honored at startup need to be reasserted.
+#[derive(Default, Clone, Copy)]
+pub struct RebuildSpec {
+    pub head: Option<usize>,
+    pub tail: Option<usize>,
+}
 
 /// Per-keystroke modes the app event loop can be in.
 #[derive(Debug, Clone)]
@@ -38,12 +47,14 @@ pub fn run(
     mut viewport: Viewport,
     mut idx: LineIndex,
     sigterm: Arc<AtomicBool>,
+    rebuild_spec: RebuildSpec,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
 
     let mut stdout = io::stdout();
     let timeout = Duration::from_millis(250);
+    let mut last_revision = src.revision();
 
     // If a filter is active in hide mode, we need to scan the whole source
     // up front to find matching lines. Without a filter this is intentionally
@@ -179,6 +190,18 @@ pub fn run(
                     Command::Refresh => {
                         needs_redraw = true;
                     }
+                    Command::Reload => {
+                        // Force a stat+reread now (only meaningful for live
+                        // sources; static FileSource::pump() is a no-op).
+                        src.pump();
+                        if src.revision() != last_revision {
+                            rebuild_after_replace(
+                                src.as_ref(), &mut viewport, &mut idx, rebuild_spec,
+                            );
+                            last_revision = src.revision();
+                            needs_redraw = true;
+                        }
+                    }
                     Command::ToggleLineNumbers => {
                         viewport.toggle_line_numbers();
                         needs_redraw = true;
@@ -230,8 +253,21 @@ pub fn run(
                 }
             }
             Ok(false) => {
-                // Timeout — check whether the source has grown.
-                if viewport.follow_mode() {
+                // Timeout — check whether the source has grown or been rewritten.
+                if viewport.live_mode() {
+                    let was_at_bottom = viewport.is_at_bottom(&idx);
+                    src.pump();
+                    if src.revision() != last_revision {
+                        rebuild_after_replace(
+                            src.as_ref(), &mut viewport, &mut idx, rebuild_spec,
+                        );
+                        if was_at_bottom {
+                            viewport.goto_bottom(src.as_ref(), &mut idx);
+                        }
+                        last_revision = src.revision();
+                        needs_redraw = true;
+                    }
+                } else if viewport.follow_mode() {
                     let was_at_bottom = viewport.is_at_bottom(&idx);
                     src.pump();
                     let lines_before = idx.line_count();
@@ -261,6 +297,31 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+/// Rebuild line index and visible-line cache after the source content has
+/// been replaced wholesale (e.g. an editor saved over the file). Re-applies
+/// `--head`/`--tail` caps from the original CLI args; clamps `top_line` so the
+/// user stays roughly where they were rather than jumping. Auto snap-to-bottom
+/// (when the user *was* at the bottom) is the caller's responsibility.
+fn rebuild_after_replace(
+    src: &dyn Source,
+    viewport: &mut Viewport,
+    idx: &mut LineIndex,
+    spec: RebuildSpec,
+) {
+    let new_off = match spec.tail {
+        Some(n) => find_tail_offset(src, n),
+        None => 0,
+    };
+    *idx = LineIndex::new_starting_at(new_off);
+    if let Some(n) = spec.head {
+        idx.set_head_cap(n);
+    }
+    viewport.invalidate_filter_cache();
+    idx.notice_new_bytes(src);
+    viewport.extend_visible_lines(idx, src);
+    viewport.clamp_top_line(idx.line_count());
 }
 
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io::Result<()> {

@@ -1,13 +1,13 @@
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use tess::app;
+use tess::app::{self, RebuildSpec};
 use tess::cli::Args;
 use tess::error::{Error, Result};
 use tess::filter::{CompiledFilter, FilterSpec};
 use tess::format;
 use tess::line_index::LineIndex;
-use tess::source::{find_tail_offset, FileSource, MockSource, Source, StdinSource};
+use tess::source::{find_tail_offset, FileSource, LiveFileSource, MockSource, Source, StdinSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
@@ -38,8 +38,10 @@ Big files: --head / --tail
 
 Following live output
 ---------------------
-  tess -f /var/log/syslog               # watch a log file
+  tess -f /var/log/syslog               # watch a log file (appends)
   tail -F /var/log/access.log | tess -f # streaming pipe with -f
+  tess --live src/main.rs               # watch a file rewritten in place
+  tess --live notes.md                  # follow saves from your editor / agent
 
 Apache log analysis (built-in formats)
 --------------------------------------
@@ -82,6 +84,7 @@ Interactive keys (inside tess)
   ? pat <Enter>     backward regex search      g / G    top / bottom
   Space / b         page down / up             Shift-F  toggle follow
   -N / -S / -F      toggle line numbers / chop / follow
+  R                 force-reload from disk (with --live)
   q                 quit
 
 See `tess --manual` for the full reference, or `tess --help` for a flag list.
@@ -137,7 +140,7 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let viewport = Viewport::new(cols, rows, label.to_string());
     let idx = LineIndex::new();
-    app::run(Box::new(src), viewport, idx, sigterm)?;
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default())?;
     Ok(())
 }
 
@@ -185,6 +188,11 @@ fn real_main() -> Result<()> {
             "--dim has no effect without --filter".to_string(),
         ));
     }
+    if args.live && args.files.is_empty() {
+        return Err(Error::Runtime(
+            "--live requires a file path (stdin can't be re-stat'd)".to_string(),
+        ));
+    }
 
     // Resolve source. Track whether we actually consumed stdin — only then
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
@@ -199,14 +207,25 @@ fn real_main() -> Result<()> {
                 args.files.len() - 1
             );
         }
-        let fs = FileSource::open(path).map_err(|source| {
-            if let std::io::ErrorKind::InvalidInput = source.kind() {
-                Error::NotAFile { path: path.clone() }
-            } else {
-                Error::OpenFile { path: path.clone(), source }
-            }
-        })?;
-        (Box::new(fs), path.display().to_string())
+        if args.live {
+            let lfs = LiveFileSource::open(path).map_err(|source| {
+                if let std::io::ErrorKind::InvalidInput = source.kind() {
+                    Error::NotAFile { path: path.clone() }
+                } else {
+                    Error::OpenFile { path: path.clone(), source }
+                }
+            })?;
+            (Box::new(lfs), path.display().to_string())
+        } else {
+            let fs = FileSource::open(path).map_err(|source| {
+                if let std::io::ErrorKind::InvalidInput = source.kind() {
+                    Error::NotAFile { path: path.clone() }
+                } else {
+                    Error::OpenFile { path: path.clone(), source }
+                }
+            })?;
+            (Box::new(fs), path.display().to_string())
+        }
     } else if !io::stdin().is_terminal() {
         let ss = if args.follow {
             source_supports_tail = false;
@@ -278,11 +297,16 @@ fn real_main() -> Result<()> {
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
     viewport.set_follow_mode(args.follow);
+    viewport.set_live_mode(args.live);
     if let Some(f) = compiled_filter {
         viewport.set_filter(Some(f));
         viewport.set_dim_mode(args.dim);
     }
 
-    app::run(src, viewport, idx, sigterm)?;
+    let rebuild_spec = RebuildSpec {
+        head: args.head,
+        tail: if source_supports_tail { args.tail } else { None },
+    };
+    app::run(src, viewport, idx, sigterm, rebuild_spec)?;
     Ok(())
 }

@@ -26,6 +26,9 @@ pub enum Command {
     /// `-` — option-toggle prefix: the next key chooses an option to flip
     /// (`N` → line numbers, `S` → chop, `F` → follow).
     OptionPrefix,
+    /// `R` — force-reload the source from disk now (only meaningful with
+    /// `--live`; no-op for static file sources and append-streaming follow).
+    Reload,
     Noop,
 }
 
@@ -52,6 +55,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('g'), false) | (Char('<'), false) | (Home, _) => Command::GoTop,
         (Char('G'), false) | (Char('>'), false) | (End, _) => Command::GoBottom,
         (Char('r'), false) | (Char('l'), true) => Command::Refresh,
+        (Char('R'), false) => Command::Reload,
         (Char('-'), false) => Command::OptionPrefix,
         (Char('F'), false) => Command::ToggleFollow,
         (Char('/'), false) => Command::SearchForward,
@@ -128,6 +132,16 @@ mod tests {
     #[test]
     fn capital_n_repeats_match_backward() {
         assert_eq!(translate(key(KeyCode::Char('N'), KeyModifiers::SHIFT)), Command::PreviousMatch);
+    }
+
+    #[test]
+    fn capital_r_triggers_reload() {
+        assert_eq!(translate(key(KeyCode::Char('R'), KeyModifiers::SHIFT)), Command::Reload);
+    }
+
+    #[test]
+    fn lowercase_r_still_refreshes() {
+        assert_eq!(translate(key(KeyCode::Char('r'), KeyModifiers::NONE)), Command::Refresh);
     }
 
     #[test]

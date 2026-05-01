@@ -2,8 +2,9 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
-use std::path::Path;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicUsize, Ordering}};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
+use std::time::SystemTime;
 
 pub trait Source: Send + Sync {
     fn len(&self) -> usize;
@@ -12,6 +13,12 @@ pub trait Source: Send + Sync {
     /// Read any new bytes that have become available since the last call.
     /// Default no-op for static sources. Streaming sources override.
     fn pump(&self) {}
+    /// Monotonic counter that bumps whenever the source's *content* has been
+    /// replaced wholesale (as opposed to merely appended to). Append-style
+    /// sources keep this at 0; `LiveFileSource` increments it on each detected
+    /// rewrite so the event loop knows to rebuild the line index instead of
+    /// just folding in new bytes.
+    fn revision(&self) -> u64 { 0 }
 }
 
 /// Find the byte offset such that `bytes[offset..]` is exactly the last `n`
@@ -196,6 +203,115 @@ impl Source for MockSource {
         Cow::Owned(self.buf.lock().unwrap()[range].to_vec())
     }
     fn is_complete(&self) -> bool { self.complete.load(Ordering::SeqCst) }
+}
+
+/// A file source that watches for *whole-file* rewrites. Unlike `FileSource`
+/// (which only picks up appended bytes via a streaming handle), `LiveFileSource`
+/// re-reads the entire file when its `(mtime, size, ino)` signature changes,
+/// swaps the buffer in place, and bumps a revision counter so callers know to
+/// rebuild any per-line state. Intended for source-file-sized inputs being
+/// rewritten by an editor or AI agent.
+pub struct LiveFileSource {
+    path: PathBuf,
+    state: Mutex<LiveState>,
+    revision: AtomicU64,
+}
+
+struct LiveState {
+    bytes: Vec<u8>,
+    signature: FileSignature,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct FileSignature {
+    mtime: Option<SystemTime>,
+    size: u64,
+    ino: u64,
+}
+
+impl FileSignature {
+    fn read(path: &Path) -> std::io::Result<Self> {
+        let md = std::fs::metadata(path)?;
+        Ok(Self {
+            mtime: md.modified().ok(),
+            size: md.len(),
+            #[cfg(unix)]
+            ino: {
+                use std::os::unix::fs::MetadataExt;
+                md.ino()
+            },
+            #[cfg(not(unix))]
+            ino: 0,
+        })
+    }
+}
+
+impl std::fmt::Debug for LiveFileSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveFileSource").field("path", &self.path).finish()
+    }
+}
+
+impl LiveFileSource {
+    pub fn open(path: &Path) -> std::io::Result<Self> {
+        let md = std::fs::metadata(path)?;
+        if !md.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a regular file",
+            ));
+        }
+        let bytes = std::fs::read(path)?;
+        // Re-stat after read so the signature reflects the bytes we actually
+        // captured (concurrent writers won't tear our buffer, but the mtime/size
+        // we record should match what we read).
+        let signature = FileSignature::read(path)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            state: Mutex::new(LiveState { bytes, signature }),
+            revision: AtomicU64::new(0),
+        })
+    }
+}
+
+impl Source for LiveFileSource {
+    fn len(&self) -> usize { self.state.lock().unwrap().bytes.len() }
+
+    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> {
+        let s = self.state.lock().unwrap();
+        let end = range.end.min(s.bytes.len());
+        let start = range.start.min(end);
+        Cow::Owned(s.bytes[start..end].to_vec())
+    }
+
+    /// Live sources are never "complete" — the file may be rewritten at any
+    /// time. The status line picks this up as the `+` suffix on totals.
+    fn is_complete(&self) -> bool { false }
+
+    fn pump(&self) {
+        // Cheap stat to detect a change. If the file vanished, leave the
+        // current buffer in place and try again next tick.
+        let new_sig = match FileSignature::read(&self.path) {
+            Ok(sig) => sig,
+            Err(_) => return,
+        };
+        let mut s = self.state.lock().unwrap();
+        if new_sig == s.signature {
+            return;
+        }
+        let new_bytes = match std::fs::read(&self.path) {
+            Ok(b) => b,
+            Err(_) => return,
+        };
+        // Re-read signature after the read so we reflect what was actually loaded.
+        let post_sig = FileSignature::read(&self.path).unwrap_or(new_sig);
+        s.bytes = new_bytes;
+        s.signature = post_sig;
+        drop(s);
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn revision(&self) -> u64 { self.revision.load(Ordering::Acquire) }
 }
 
 pub struct StdinSource {
@@ -383,6 +499,115 @@ mod tests {
         let m = MockSource::new();
         m.append(b"a\nb\nc\n");  // 3 lines exactly
         assert_eq!(find_tail_offset(&m, 3), 0);
+    }
+
+    #[test]
+    fn live_source_reads_initial_content() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        tmp.write_all(b"alpha\nbeta\n").unwrap();
+        tmp.flush().unwrap();
+        let src = LiveFileSource::open(tmp.path()).unwrap();
+        assert_eq!(src.len(), 11);
+        assert_eq!(&*src.bytes(0..11), b"alpha\nbeta\n");
+        assert_eq!(src.revision(), 0);
+        assert!(!src.is_complete()); // live sources are always "growing"
+    }
+
+    #[test]
+    fn live_source_pump_picks_up_rewritten_content() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"first\n").unwrap();
+        let src = LiveFileSource::open(tmp.path()).unwrap();
+        assert_eq!(src.len(), 6);
+        assert_eq!(src.revision(), 0);
+
+        // Rewrite the file with different (longer) content. mtime should
+        // bump; signatures differ; pump() picks it up.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(tmp.path(), b"second longer line\n").unwrap();
+        src.pump();
+        assert_eq!(src.len(), 19);
+        assert_eq!(&*src.bytes(0..19), b"second longer line\n");
+        assert_eq!(src.revision(), 1);
+    }
+
+    #[test]
+    fn live_source_pump_no_change_does_not_bump_revision() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"stable\n").unwrap();
+        let src = LiveFileSource::open(tmp.path()).unwrap();
+        let r0 = src.revision();
+        src.pump();
+        src.pump();
+        src.pump();
+        assert_eq!(src.revision(), r0);
+    }
+
+    #[test]
+    fn live_source_handles_file_shrink() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"longer initial content\n").unwrap();
+        let src = LiveFileSource::open(tmp.path()).unwrap();
+        assert!(src.len() > 5);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(tmp.path(), b"x\n").unwrap();
+        src.pump();
+        assert_eq!(src.len(), 2);
+        assert_eq!(&*src.bytes(0..2), b"x\n");
+        assert_eq!(src.revision(), 1);
+    }
+
+    #[test]
+    fn live_source_handles_atomic_rename() {
+        // Most editors write atomically: write tmp file, rename over original.
+        // The inode changes; mtime/size likely change. pump() must follow.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("file.txt");
+        std::fs::write(&target, b"original\n").unwrap();
+        let src = LiveFileSource::open(&target).unwrap();
+        assert_eq!(&*src.bytes(0..9), b"original\n");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let staging = dir.path().join("file.txt.tmp");
+        std::fs::write(&staging, b"renamed in\n").unwrap();
+        std::fs::rename(&staging, &target).unwrap();
+        src.pump();
+        assert_eq!(src.len(), 11);
+        assert_eq!(&*src.bytes(0..11), b"renamed in\n");
+        assert_eq!(src.revision(), 1);
+    }
+
+    #[test]
+    fn live_source_rebuild_flow_against_line_index() {
+        use crate::line_index::LineIndex;
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"a\nb\nc\n").unwrap();
+        let src = LiveFileSource::open(tmp.path()).unwrap();
+
+        let mut idx = LineIndex::new();
+        idx.notice_new_bytes(&src);
+        assert_eq!(idx.line_count(), 3);
+        let r0 = src.revision();
+
+        // Rewrite to a 5-line file.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(tmp.path(), b"one\ntwo\nthree\nfour\nfive\n").unwrap();
+        src.pump();
+        assert_ne!(src.revision(), r0, "revision must bump on rewrite");
+
+        // Caller's job to rebuild the index — mirror what app::rebuild_after_replace does.
+        idx = LineIndex::new();
+        idx.notice_new_bytes(&src);
+        assert_eq!(idx.line_count(), 5);
+        assert_eq!(&*src.bytes(idx.line_range(2, &src)), b"three");
+    }
+
+    #[test]
+    fn live_source_directory_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = LiveFileSource::open(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

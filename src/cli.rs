@@ -46,18 +46,26 @@ pub struct Args {
     #[arg(long = "list-formats", display_order = 9)]
     pub list_formats: bool,
 
+    /// Live mode: re-read the file when its on-disk content changes (mtime,
+    /// size, or inode). Use this for files rewritten in place — source files
+    /// being edited, files saved by an editor or AI agent. Different from
+    /// `--follow` (which watches for *appended* bytes); the two are mutually
+    /// exclusive. Press `R` inside the pager to force a reload.
+    #[arg(long = "live", conflicts_with = "follow", display_order = 10)]
+    pub live: bool,
+
     /// Print the full user manual and exit.
-    #[arg(long = "manual", display_order = 10)]
+    #[arg(long = "manual", display_order = 11)]
     pub manual: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 11)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 12)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 12)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 13)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -181,6 +189,19 @@ mod tests {
     }
 
     #[test]
+    fn parses_live() {
+        let a = Args::parse_from(["tess", "--live", "f"]);
+        assert!(a.live);
+        assert!(!a.follow);
+    }
+
+    #[test]
+    fn live_and_follow_are_mutually_exclusive() {
+        let r = Args::try_parse_from(["tess", "--live", "--follow", "f"]);
+        assert!(r.is_err(), "clap should reject combining --live and --follow");
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -196,6 +217,7 @@ mod tests {
             "--head",
             "--LINE-NUMBERS",
             "--list-formats",
+            "--live",
             "--manual",
             "--tab-width",
             "--tail",

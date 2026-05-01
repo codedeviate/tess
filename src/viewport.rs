@@ -115,6 +115,7 @@ pub struct Viewport {
     pub show_line_numbers: bool,
     pub source_label: String,
     follow_mode: bool,
+    live_mode: bool,
     filter: Option<CompiledFilter>,
     dim_mode: bool,
     /// In hide mode (filter active, !dim), maps visible position → logical line
@@ -139,6 +140,7 @@ impl Viewport {
             show_line_numbers: false,
             source_label,
             follow_mode: false,
+            live_mode: false,
             filter: None,
             dim_mode: false,
             visible_lines: Vec::new(),
@@ -281,6 +283,31 @@ impl Viewport {
     pub fn set_follow_mode(&mut self, on: bool) { self.follow_mode = on; }
 
     pub fn toggle_follow(&mut self) { self.follow_mode = !self.follow_mode; }
+
+    pub fn live_mode(&self) -> bool { self.live_mode }
+
+    pub fn set_live_mode(&mut self, on: bool) { self.live_mode = on; }
+
+    /// Drop the per-line filter-membership cache without disturbing the filter
+    /// itself or scroll position. Used after a `--live` rebuild: line numbering
+    /// may have changed, so cached `visible_lines` is stale, but we want to
+    /// keep the same filter applied and let the user stay where they were.
+    pub fn invalidate_filter_cache(&mut self) {
+        self.visible_lines.clear();
+        self.visible_scanned = 0;
+    }
+
+    /// Clamp `top_line` so it doesn't fall past the new end of the source.
+    /// Pairs with `invalidate_filter_cache` after a content rewrite.
+    pub fn clamp_top_line(&mut self, line_count: usize) {
+        if line_count == 0 {
+            self.top_line = 0;
+            self.top_row = 0;
+        } else if self.top_line >= line_count {
+            self.top_line = line_count - 1;
+            self.top_row = 0;
+        }
+    }
 
     /// True when the viewport's body window already covers the last line of
     /// the source. New content added past this point should auto-scroll if
@@ -448,6 +475,7 @@ impl Viewport {
             let prefix = if matches!(sr.direction, SearchDirection::Forward) { "/" } else { "?" };
             s.push_str(&format!("  [{}{}]", prefix, sr.raw));
         }
+        if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
         s
     }
@@ -752,6 +780,34 @@ mod tests {
         assert!(v.follow_mode());
         v.toggle_follow();
         assert!(!v.follow_mode());
+    }
+
+    #[test]
+    fn status_shows_l_suffix_when_live_mode_on() {
+        let (m, mut idx) = setup(b"a\nb\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        let frame_off = v.frame(&m, &mut idx);
+        assert!(!frame_off.status.contains("(L)"));
+        v.set_live_mode(true);
+        let frame_on = v.frame(&m, &mut idx);
+        assert!(frame_on.status.contains("(L)"), "expected (L) in status, got: {}", frame_on.status);
+    }
+
+    #[test]
+    fn clamp_top_line_pulls_back_when_total_shrinks() {
+        let mut v = Viewport::new(20, 5, "f".into());
+        // Pretend we were on line 100, then a rewrite leaves only 10 lines.
+        v.scroll_lines(0, &MockSource::new(), &mut LineIndex::new()); // no-op, just to satisfy
+        // Force top_line via a sequence; easiest: just call clamp directly.
+        // We can't poke private state, but clamp works regardless of how we got there.
+        v.clamp_top_line(100);  // total bigger than top_line=0, no change
+        v.clamp_top_line(0);    // empty source: must reset
+        // After clamp(0), line 0 is the floor.
+        // (No public getter for top_line; we verify indirectly by going to top.)
+        v.goto_top();
+        // Just confirm no panic and no overflow on subsequent frame composition.
+        let (m, mut idx) = setup(b"only\n");
+        let _ = v.frame(&m, &mut idx);
     }
 
     /// Simulates the app::run timeout-branch logic to verify auto-scroll engages

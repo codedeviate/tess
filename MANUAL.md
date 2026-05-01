@@ -22,6 +22,7 @@ cmd | tess [OPTIONS]
 | View a file | `tess Cargo.toml` |
 | View piped output | `git log \| tess` |
 | Watch a log live | `tess -f /var/log/syslog` |
+| Watch a file get rewritten (e.g. by an editor) | `tess --live src/main.rs` |
 | Show line numbers | `tess -N script.sh` |
 | Don't wrap long lines | `tess -S /etc/hosts` |
 | Show last 1000 lines | `tess --tail 1000 huge.log` |
@@ -41,9 +42,14 @@ cmd | tess [OPTIONS]
 
 ### Source
 
-- **`-f`, `--follow`** — keep watching the source for new bytes (`tail -f`-style). Jumps to the bottom on startup. Toggle interactively with `Shift-F`. With piped stdin, runs a background reader thread.
-- **`--tail N`** — show only the last `N` logical lines. For files, reverse-scans for the byte offset and only indexes from there forward, so a 10 GB log stays cheap. Mutually exclusive with `--head`. Streaming stdin (`-f` without a file) is not supported.
-- **`--head N`** — cap the visible content to the first `N` logical lines. Mutually exclusive with `--tail`.
+- **`-f`, `--follow`** — keep watching the source for new bytes (`tail -f`-style). Jumps to the bottom on startup. Toggle interactively with `Shift-F`. With piped stdin, runs a background reader thread. **For appending writers** (log files); see `--live` for files rewritten in place.
+- **`--live`** — watch a file for *whole-file* rewrites: when the file's `(mtime, size, inode)` changes, re-read the entire file, rebuild the line index, and re-render. Use for source files being edited or saved by an AI agent. Different from `--follow` (the two are mutually exclusive). Polling is at the same 250 ms cadence as the rest of the event loop, so saves land within ~¼ second. Press `R` inside the pager to force an immediate reload. Status line shows `(L)` while active. Caveats:
+  - Best for source-file-sized inputs — the whole file is re-read on each change.
+  - Atomic-rename writers (`vim`, `code`, most editors) work cleanly. Truncate-and-stream writers may briefly flicker if you catch them mid-write; saves typically settle on the next tick.
+  - Scroll position is preserved (clamped to the new total). If you were at the very bottom, the viewport snaps to the new bottom.
+  - Requires a file path; not supported on stdin.
+- **`--tail N`** — show only the last `N` logical lines. For files, reverse-scans for the byte offset and only indexes from there forward, so a 10 GB log stays cheap. Mutually exclusive with `--head`. Streaming stdin (`-f` without a file) is not supported. Re-applied on every reload under `--live`.
+- **`--head N`** — cap the visible content to the first `N` logical lines. Mutually exclusive with `--tail`. Re-applied on every reload under `--live`.
 
 ### Structured logs
 
@@ -94,6 +100,7 @@ cmd | tess [OPTIONS]
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `r` `Ctrl-L` | Force redraw |
+| `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `q` `Q` `Ctrl-C` | Quit |
 
 In hide-mode filtering, scroll/page/goto operate on visible (matching) lines — the viewport skips past hidden ones.
@@ -125,7 +132,7 @@ Lowercase variants work too (`-n`, `-s`, `-f`). Any other key after `-` cancels 
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  (L)  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
@@ -134,8 +141,9 @@ The bottom row shows current state. Format:
 - **`[<format>]`** — present when `--format` is active (e.g. `[apache-combined]`).
 - **`[filter]` / `[dim]`** — present when filtering, indicating mode.
 - **`[/<search>]`** / **`[?<search>]`** — active search pattern (forward or backward). Cleared only when a new search is set or you exit.
+- **`(L)`** — present when `--live` is on. The file is being watched for whole-file rewrites; `R` forces an immediate reload.
 - **`(F)`** — present when follow mode is on. New bytes auto-scroll into view if you're at the bottom.
-- **`+`** suffix on `total` — the source may still grow (streaming stdin or follow mode).
+- **`+`** suffix on `total` — the source may still grow (streaming stdin, follow mode, or live mode).
 
 While a search prompt is open, the entire status row is replaced with `/<typed-so-far>` (or `?…`). `Enter` commits, `Esc` cancels, `Backspace` edits.
 
@@ -459,4 +467,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.4.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.5.0`. Run `tess --version` to confirm.
