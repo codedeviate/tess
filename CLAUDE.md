@@ -79,8 +79,8 @@ If a commit only touches docs and doesn't change the version, the tarball can be
 
 ## Where to put new work
 
-- New design specs → `~/Development/Starweb/superpowers/Test/specs/YYYY-MM-DD-<topic>-design.md`
-- Implementation plans → `~/Development/Starweb/superpowers/Test/plans/YYYY-MM-DD-<feature>.md`
-- Session reports (after a brainstorm → plan → implement cycle) → `~/Development/Starweb/superpowers/Test/reports/YYYY-MM-DD-<feature>.md`
+- New design specs → `~/Development/Starweb/superpowers/tess/specs/YYYY-MM-DD-<topic>-design.md`
+- Implementation plans → `~/Development/Starweb/superpowers/tess/plans/YYYY-MM-DD-<feature>.md`
+- Session reports (after a brainstorm → plan → implement cycle) → `~/Development/Starweb/superpowers/tess/reports/YYYY-MM-DD-<feature>.md`
 
 The MVP design lives in `specs/2026-04-27-rust-less-clone-design.md`; the implementation plan in `plans/2026-04-27-rust-less-clone-plan.md`; session report in `reports/2026-04-27-rust-less-clone.md`.
