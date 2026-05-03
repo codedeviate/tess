@@ -496,4 +496,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.6.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.6.1`. Run `tess --version` to confirm.

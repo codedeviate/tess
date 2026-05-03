@@ -83,11 +83,29 @@ Pick wherever your `$PATH` points. Common choices:
 ```sh
 # Per-user, no sudo needed (recommended):
 mkdir -p ~/.local/bin
-cp target/release/tess ~/.local/bin/
+install -m 755 target/release/tess ~/.local/bin/tess
 
 # Or system-wide:
-sudo cp target/release/tess /usr/local/bin/
+sudo install -m 755 target/release/tess /usr/local/bin/tess
 ```
+
+> **Why `install` instead of `cp`?** On macOS 14+ (and especially 26 /
+> Tahoe), the kernel may attach a `com.apple.provenance` extended attribute
+> to binaries copied into protected locations like `/usr/local/bin`. If
+> XProtect doesn't recognise the provenance, the kernel SIGKILLs the
+> process on exec and you'll see `zsh: killed tess` with no further
+> diagnostic. `install` avoids attaching the attribute.
+>
+> **If you already used `cp` and hit this**, both steps below are required
+> on macOS 26 — stripping the xattr alone isn't enough because the kernel
+> caches a "suspicious" verdict; re-signing produces a fresh `cdhash` that
+> gets re-evaluated:
+>
+> ```sh
+> sudo xattr -c /usr/local/bin/tess
+> sudo codesign --force --sign - /usr/local/bin/tess
+> tess --version    # should print 'tess <version>'
+> ```
 
 Make sure your chosen directory is on `$PATH`. For `~/.local/bin`, add this to
 `~/.zshrc` or `~/.bashrc` if it's not already:
