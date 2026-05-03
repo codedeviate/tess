@@ -110,6 +110,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "live",
     "manual",
     "examples",
+    "prettify",
+    "content-type",
     "help",
     "version",
 ];

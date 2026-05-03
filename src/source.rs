@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}};
 use std::time::SystemTime;
 
+use crate::prettify::{self, PrettifyMode};
+
 pub trait Source: Send + Sync {
     fn len(&self) -> usize;
     fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]>;
@@ -19,6 +21,29 @@ pub trait Source: Send + Sync {
     /// rewrite so the event loop knows to rebuild the line index instead of
     /// just folding in new bytes.
     fn revision(&self) -> u64 { 0 }
+
+    /// Current prettify mode if this source has a `TransformingSource` wrapper.
+    /// `None` means the source is not capable of prettification (e.g. a plain
+    /// `FileSource`). `Some(Off)` means wrapped but currently raw.
+    fn prettify_mode(&self) -> Option<PrettifyMode> { None }
+
+    /// Status-line label for the active prettify state, e.g. `"json"` or
+    /// `"json:err"`. `None` when there's no wrapper or the mode is `Off`
+    /// without an error.
+    fn prettify_label(&self) -> Option<String> { None }
+
+    /// Switch to a specific prettify mode. No-op for sources without a wrapper.
+    /// Bumps `revision()` so callers know to rebuild the line index.
+    fn set_prettify_mode(&self, _mode: PrettifyMode) {}
+
+    /// Flip between the current mode and the last active (non-Off) mode.
+    /// No-op if the source is not wrapped, or if it has never had an active
+    /// mode (i.e. only ever been raw).
+    fn toggle_prettify(&self) {}
+
+    /// Re-run byte-based content detection and apply the result. Used by the
+    /// interactive `-Pa` ("auto") sub-command. No-op without a wrapper.
+    fn redetect_prettify(&self) {}
 }
 
 /// Find the byte offset such that `bytes[offset..]` is exactly the last `n`
@@ -314,6 +339,153 @@ impl Source for LiveFileSource {
     fn revision(&self) -> u64 { self.revision.load(Ordering::Acquire) }
 }
 
+/// A source that wraps another source and applies a `PrettifyMode` transform
+/// to its bytes. Toggling the mode bumps `revision()` so the event loop
+/// rebuilds the line index. Falls back to passing through the inner bytes if
+/// the transform fails to parse, surfacing the error via `last_error()`.
+pub struct TransformingSource {
+    inner: Box<dyn Source>,
+    state: Mutex<TransformState>,
+    revision: AtomicU64,
+}
+
+struct TransformState {
+    mode: PrettifyMode,
+    /// Most recent non-Off mode. Used by `toggle_prettify` to flip back to
+    /// what the user was looking at most recently. Stays at the original
+    /// detected/explicit mode at startup, even if the user toggles to Off.
+    last_active: PrettifyMode,
+    /// Whatever the consumer should see — either the raw inner bytes or the
+    /// successfully transformed bytes. Always populated.
+    cached: Vec<u8>,
+    /// Set when the last attempted transform failed to parse. Cleared on a
+    /// successful transform or on switching to `Off`.
+    last_error: Option<String>,
+}
+
+impl std::fmt::Debug for TransformingSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TransformingSource").finish()
+    }
+}
+
+impl TransformingSource {
+    /// Build a wrapping source. The inner is read fully via its current bytes
+    /// view; the transform runs once. If the transform fails, the cache holds
+    /// the raw inner bytes and `last_error()` returns the parse error.
+    pub fn wrap(inner: Box<dyn Source>, mode: PrettifyMode) -> Self {
+        let raw = inner.bytes(0..inner.len()).to_vec();
+        let (cached, last_error) = run_transform(mode, &raw);
+        let last_active = if mode.is_active() { mode } else { PrettifyMode::Off };
+        Self {
+            inner,
+            state: Mutex::new(TransformState { mode, last_active, cached, last_error }),
+            revision: AtomicU64::new(0),
+        }
+    }
+
+    pub fn mode(&self) -> PrettifyMode {
+        self.state.lock().unwrap().mode
+    }
+
+    /// Currently surfaced parse error, if any. Cleared by a successful
+    /// `set_mode` or by switching to `Off`.
+    pub fn last_error(&self) -> Option<String> {
+        self.state.lock().unwrap().last_error.clone()
+    }
+
+    /// Internal apply-mode helper. Re-reads inner bytes, runs the transform,
+    /// updates the cache, bumps revision. Tracks `last_active` so toggle
+    /// can flip back to a non-Off mode.
+    fn apply_mode(&self, mode: PrettifyMode) {
+        let raw = self.inner.bytes(0..self.inner.len()).to_vec();
+        let (cached, last_error) = run_transform(mode, &raw);
+        let mut s = self.state.lock().unwrap();
+        s.mode = mode;
+        if mode.is_active() && last_error.is_none() {
+            s.last_active = mode;
+        }
+        s.cached = cached;
+        s.last_error = last_error;
+        drop(s);
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+fn run_transform(mode: PrettifyMode, raw: &[u8]) -> (Vec<u8>, Option<String>) {
+    match prettify::prettify(mode, raw) {
+        Ok(out) => (out, None),
+        Err(e) => (raw.to_vec(), Some(e)),
+    }
+}
+
+impl Source for TransformingSource {
+    fn len(&self) -> usize { self.state.lock().unwrap().cached.len() }
+
+    fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]> {
+        let s = self.state.lock().unwrap();
+        let end = range.end.min(s.cached.len());
+        let start = range.start.min(end);
+        Cow::Owned(s.cached[start..end].to_vec())
+    }
+
+    fn is_complete(&self) -> bool { self.inner.is_complete() }
+
+    fn pump(&self) { self.inner.pump(); }
+
+    fn revision(&self) -> u64 { self.revision.load(Ordering::Acquire) }
+
+    fn prettify_mode(&self) -> Option<PrettifyMode> {
+        Some(self.state.lock().unwrap().mode)
+    }
+
+    fn prettify_label(&self) -> Option<String> {
+        let s = self.state.lock().unwrap();
+        if s.last_error.is_some() {
+            // Whatever mode we tried last; show "<mode>:err".
+            let lbl = s.mode.label();
+            let lbl = if lbl.is_empty() { s.last_active.label() } else { lbl };
+            Some(format!("{lbl}:err"))
+        } else if s.mode.is_active() {
+            Some(s.mode.label().to_string())
+        } else {
+            None
+        }
+    }
+
+    fn set_prettify_mode(&self, mode: PrettifyMode) {
+        self.apply_mode(mode);
+    }
+
+    fn toggle_prettify(&self) {
+        let target = {
+            let s = self.state.lock().unwrap();
+            if s.mode.is_active() {
+                PrettifyMode::Off
+            } else if s.last_active.is_active() {
+                s.last_active
+            } else {
+                // Never had an active mode (started raw and never flipped on).
+                // Try a one-shot detection from the inner bytes; if nothing
+                // matches, leave state alone.
+                drop(s);
+                self.redetect_prettify();
+                return;
+            }
+        };
+        self.apply_mode(target);
+    }
+
+    fn redetect_prettify(&self) {
+        let raw = self.inner.bytes(0..self.inner.len()).to_vec();
+        let detected = crate::prettify::detect_from_bytes(&raw);
+        if let Some(mode) = detected {
+            self.apply_mode(mode);
+        }
+        // Undetected: leave state alone (caller will see same label).
+    }
+}
+
 pub struct StdinSource {
     inner: StdinInner,
 }
@@ -601,6 +773,89 @@ mod tests {
         idx.notice_new_bytes(&src);
         assert_eq!(idx.line_count(), 5);
         assert_eq!(&*src.bytes(idx.line_range(2, &src)), b"three");
+    }
+
+    #[test]
+    fn transforming_source_passes_through_when_off() {
+        let inner = MockSource::new();
+        inner.append(b"hello\nworld\n");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        assert_eq!(&*t.bytes(0..t.len()), b"hello\nworld\n");
+        assert!(t.last_error().is_none());
+        assert_eq!(t.revision(), 0);
+    }
+
+    #[test]
+    fn transforming_source_emits_pretty_bytes_when_on() {
+        let inner = MockSource::new();
+        inner.append(b"{\"a\":1,\"b\":2}");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        let out = t.bytes(0..t.len()).to_vec();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("\"a\": 1"));
+        assert!(s.contains("\"b\": 2"));
+        assert!(t.last_error().is_none());
+    }
+
+    #[test]
+    fn transforming_source_revision_bumps_on_mode_change() {
+        let inner = MockSource::new();
+        inner.append(b"{\"x\":1}");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        let r0 = t.revision();
+        t.set_prettify_mode(PrettifyMode::Json);
+        assert!(t.revision() > r0);
+        let r1 = t.revision();
+        t.set_prettify_mode(PrettifyMode::Off);
+        assert!(t.revision() > r1);
+    }
+
+    #[test]
+    fn transforming_source_falls_back_to_raw_on_parse_error() {
+        let inner = MockSource::new();
+        inner.append(b"not actually json");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        // Cache holds raw bytes since the transform failed.
+        assert_eq!(&*t.bytes(0..t.len()), b"not actually json");
+        let err = t.last_error().expect("expected parse error to be surfaced");
+        assert!(err.contains("json"), "expected json in error, got: {err}");
+        // Status label reflects the error.
+        let label = t.prettify_label().expect("error → label should be set");
+        assert!(label.ends_with(":err"), "expected :err label, got: {label}");
+    }
+
+    #[test]
+    fn transforming_source_set_mode_recovers_from_error() {
+        let inner = MockSource::new();
+        inner.append(b"plain content");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        assert!(t.last_error().is_some());
+        t.set_prettify_mode(PrettifyMode::Off);
+        assert!(t.last_error().is_none());
+        assert_eq!(&*t.bytes(0..t.len()), b"plain content");
+    }
+
+    #[test]
+    fn transforming_source_toggle_flips_between_active_and_off() {
+        let inner = MockSource::new();
+        inner.append(b"{\"x\":1}");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        assert_eq!(t.mode(), PrettifyMode::Json);
+        t.toggle_prettify();
+        assert_eq!(t.mode(), PrettifyMode::Off);
+        t.toggle_prettify();
+        // Flipped back to last active.
+        assert_eq!(t.mode(), PrettifyMode::Json);
+    }
+
+    #[test]
+    fn transforming_source_redetect_picks_up_format() {
+        let inner = MockSource::new();
+        inner.append(b"<?xml version=\"1.0\"?><root/>");
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        // Initially raw; after redetect, should be XML.
+        t.redetect_prettify();
+        assert_eq!(t.mode(), PrettifyMode::Xml);
     }
 
     #[test]

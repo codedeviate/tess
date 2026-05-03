@@ -7,7 +7,8 @@ use tess::error::{Error, Result};
 use tess::filter::{CompiledFilter, FilterSpec};
 use tess::format;
 use tess::line_index::LineIndex;
-use tess::source::{find_tail_offset, FileSource, LiveFileSource, MockSource, Source, StdinSource};
+use tess::prettify::{self, PrettifyMode, ResolvedType};
+use tess::source::{find_tail_offset, FileSource, LiveFileSource, MockSource, Source, StdinSource, TransformingSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
@@ -35,6 +36,16 @@ Big files: --head / --tail
   tess --head 50 schema.sql             # first 50 lines
   tess --tail 1000 huge.log             # last 1000 — opens instantly
   tess -f --tail 1000 huge.log          # tail-follow last 1000
+
+Pretty-printing structured files
+--------------------------------
+  tess --prettify config.json           # detect from extension
+  tess --prettify schema.yaml
+  tess --prettify Cargo.toml
+  tess --prettify page.html             # lenient HTML mode
+  tess --prettify rows.csv              # column-aligned table
+  tess --content-type=json data.bin     # force when extension lies
+  # Inside the pager: Shift-P toggles, -Pj/y/t/x/h/c/a/r switches type.
 
 Following live output
 ---------------------
@@ -194,6 +205,38 @@ fn real_main() -> Result<()> {
         ));
     }
 
+    // Resolve --content-type now (parse + validation) so errors land cleanly.
+    let explicit_content_type: Option<PrettifyMode> = match args.content_type.as_deref() {
+        Some(name) => prettify::parse_content_type(name).map_err(Error::Runtime)?,
+        None => None,
+    };
+    // Setting --content-type to a concrete (non-raw, non-auto) type implies
+    // --prettify is on. `raw` explicitly disables prettify even if --prettify
+    // is also passed.
+    let want_prettify = match explicit_content_type {
+        Some(PrettifyMode::Off) => false,
+        Some(_) => true,
+        None => args.prettify,
+    };
+    if want_prettify {
+        if args.follow {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --follow (streaming partial \
+documents can't be parsed)".to_string(),
+            ));
+        }
+        if args.live {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --live".to_string(),
+            ));
+        }
+        if !args.filter.is_empty() {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --filter".to_string(),
+            ));
+        }
+    }
+
     // Resolve source. Track whether we actually consumed stdin — only then
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
     // whether `--tail` is meaningful for this source (streaming stdin can't
@@ -239,6 +282,38 @@ fn real_main() -> Result<()> {
         (Box::new(ss), "(stdin)".to_string())
     } else {
         return Err(Error::NoInput);
+    };
+
+    // If the user wants prettification, resolve the mode against the inner
+    // source's first bytes + the path (if any) and wrap the source. Failure
+    // to detect under `--prettify` (no --content-type given) is a soft fall:
+    // print a stderr note and proceed with the raw view.
+    let (src, prettify_label): (Box<dyn Source>, Option<String>) = if want_prettify {
+        let head = src.bytes(0..src.len().min(512)).to_vec();
+        let path_for_detect = args.files.first().map(|p| p.as_path());
+        let resolved = prettify::resolve(explicit_content_type, path_for_detect, &head);
+        match resolved {
+            ResolvedType::Mode(PrettifyMode::Off) => (src, None),
+            ResolvedType::Mode(mode) => {
+                let label = mode.label().to_string();
+                let wrapped = TransformingSource::wrap(src, mode);
+                if let Some(err) = wrapped.last_error() {
+                    eprintln!("tess: prettify ({label}) failed: {err} \u{2014} showing raw");
+                    (Box::new(wrapped), Some(format!("{label}:err")))
+                } else {
+                    (Box::new(wrapped), Some(label))
+                }
+            }
+            ResolvedType::Undetected => {
+                eprintln!(
+                    "tess: --prettify requested but content type could not be detected; \
+showing raw (use --content-type=NAME to override)"
+                );
+                (src, None)
+            }
+        }
+    } else {
+        (src, None)
     };
 
     // Apply --tail by computing a starting byte offset for the LineIndex.
@@ -298,6 +373,7 @@ fn real_main() -> Result<()> {
     viewport.opts.tab_width = args.tab_width;
     viewport.set_follow_mode(args.follow);
     viewport.set_live_mode(args.live);
+    viewport.set_prettify_label(prettify_label);
     if let Some(f) = compiled_filter {
         viewport.set_filter(Some(f));
         viewport.set_dim_mode(args.dim);

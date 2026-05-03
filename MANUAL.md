@@ -23,6 +23,8 @@ cmd | tess [OPTIONS]
 | View piped output | `git log \| tess` |
 | Watch a log live | `tess -f /var/log/syslog` |
 | Watch a file get rewritten (e.g. by an editor) | `tess --live src/main.rs` |
+| Pretty-print a JSON / YAML / etc. file | `tess --prettify config.json` |
+| Force a content type when the extension is unhelpful | `tess --content-type=json data.bin` |
 | Show line numbers | `tess -N script.sh` |
 | Don't wrap long lines | `tess -S /etc/hosts` |
 | Show last 1000 lines | `tess --tail 1000 huge.log` |
@@ -71,6 +73,15 @@ cmd | tess [OPTIONS]
 - **`--dim`** — render non-matching lines visibly faded instead of hiding them. Requires `--filter`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
+### Pretty-printing
+
+- **`--prettify`** — reformat the file's content for human reading. Supports **JSON, YAML, TOML, XML, HTML, CSV**. Type is detected from the filename extension (`.json`, `.yaml`/`.yml`, `.toml`, `.xml`, `.html`/`.htm`, `.csv`) and falls back to a quick byte sniff for unextended files. **Static files only** — not allowed with `--follow`, `--live`, or `--filter` (which would all conflict with reshaping the byte stream). Layout only — no syntax highlighting, so search and `--filter` (when used separately) keep working byte-cleanly.
+- **`--content-type NAME`** — override detection. Values: `auto` (default — same as not passing this flag), `raw` (force prettify off, even if `--prettify` is also given), `json`, `yaml` (alias `yml`), `toml`, `xml`, `html` (alias `htm`), `csv`. Setting this implies `--prettify` unless the value is `auto` or `raw`.
+
+If a transform fails to parse, `tess` falls back to showing the raw content and the status line shows `[pretty:<type>:err]` so you know why nothing changed.
+
+CSV cells are aligned into a fixed-width table; cells longer than 60 characters are truncated with an ellipsis (`…`) so a single runaway free-text column doesn't blow up the layout.
+
 ### Other
 
 - **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
@@ -99,6 +110,7 @@ cmd | tess [OPTIONS]
 | `-N` (dash, then N) | Toggle line numbers |
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
+| `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `q` `Q` `Ctrl-C` | Quit |
@@ -122,8 +134,24 @@ Borrowed from real `less`: pressing `-` enters a one-shot option-prefix mode. Th
 | `N` | Toggle line numbers |
 | `S` | Toggle chop / wrap |
 | `F` | Toggle follow (also available as `Shift-F` directly) |
+| `P` | Enter the pretty-print sub-prefix (see below) |
 
-Lowercase variants work too (`-n`, `-s`, `-f`). Any other key after `-` cancels the prefix harmlessly.
+Lowercase variants work too (`-n`, `-s`, `-f`, `-p`). Any other key after `-` cancels the prefix harmlessly.
+
+After `-P`, one more keystroke sets the content type:
+
+| `-P` then… | Effect |
+|---|---|
+| `j` | Force JSON |
+| `y` | Force YAML |
+| `t` | Force TOML |
+| `x` | Force XML |
+| `h` | Force HTML |
+| `c` | Force CSV |
+| `a` | Auto-detect from current bytes |
+| `r` | Raw (turn prettify off) |
+
+Both `-P` letters are case-insensitive. Any other key cancels the sub-prefix.
 
 ---
 
@@ -132,7 +160,7 @@ Lowercase variants work too (`-n`, `-s`, `-f`). Any other key after `-` cancels 
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  (L)  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
@@ -141,6 +169,7 @@ The bottom row shows current state. Format:
 - **`[<format>]`** — present when `--format` is active (e.g. `[apache-combined]`).
 - **`[filter]` / `[dim]`** — present when filtering, indicating mode.
 - **`[/<search>]`** / **`[?<search>]`** — active search pattern (forward or backward). Cleared only when a new search is set or you exit.
+- **`[pretty:<type>]`** — present when `--prettify` is active. `<type>` is one of `json`/`yaml`/`toml`/`xml`/`html`/`csv`. Suffix `:err` indicates the last transform failed to parse; raw content is shown.
 - **`(L)`** — present when `--live` is on. The file is being watched for whole-file rewrites; `R` forces an immediate reload.
 - **`(F)`** — present when follow mode is on. New bytes auto-scroll into view if you're at the bottom.
 - **`+`** suffix on `total` — the source may still grow (streaming stdin, follow mode, or live mode).
@@ -467,4 +496,4 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 
 ## Versions
 
-This manual targets `tess 0.5.0`. Run `tess --version` to confirm.
+This manual targets `tess 0.6.0`. Run `tess --version` to confirm.

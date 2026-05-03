@@ -12,6 +12,7 @@ use crossterm::QueueableCommand;
 use crate::error::Result;
 use crate::input::{translate, Command};
 use crate::line_index::LineIndex;
+use crate::prettify::PrettifyMode;
 use crate::render::Cell;
 use crate::source::{find_tail_offset, Source};
 use crate::viewport::{Frame, RowStyle, SearchDirection, Viewport};
@@ -31,6 +32,9 @@ enum InputMode {
     Normal,
     /// User pressed `-`; the next keystroke selects an option to toggle.
     OptionPrefix,
+    /// User pressed `-P`; the next keystroke chooses a prettify mode
+    /// (`j`/`y`/`t`/`x`/`h`/`c`/`a`/`r`).
+    PrettifyPrefix,
     /// User pressed `/` or `?`; subsequent characters accumulate into a
     /// search pattern until Enter (commit) or Esc (cancel).
     SearchPrompt {
@@ -142,7 +146,41 @@ pub fn run(
                                 KeyCode::Char('N') | KeyCode::Char('n') => viewport.toggle_line_numbers(),
                                 KeyCode::Char('S') | KeyCode::Char('s') => viewport.toggle_chop(),
                                 KeyCode::Char('F') | KeyCode::Char('f') => viewport.toggle_follow(),
+                                KeyCode::Char('P') | KeyCode::Char('p') => {
+                                    // Two-key prefix: `-P` then a letter for the mode.
+                                    mode = InputMode::PrettifyPrefix;
+                                    needs_redraw = true;
+                                    continue;
+                                }
                                 _ => {}
+                            }
+                        }
+                        mode = InputMode::Normal;
+                        needs_redraw = true;
+                        continue;
+                    }
+                    InputMode::PrettifyPrefix => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            let target: Option<PrettifyTarget> = match code {
+                                KeyCode::Char('j') | KeyCode::Char('J') => Some(PrettifyTarget::Mode(PrettifyMode::Json)),
+                                KeyCode::Char('y') | KeyCode::Char('Y') => Some(PrettifyTarget::Mode(PrettifyMode::Yaml)),
+                                KeyCode::Char('t') | KeyCode::Char('T') => Some(PrettifyTarget::Mode(PrettifyMode::Toml)),
+                                KeyCode::Char('x') | KeyCode::Char('X') => Some(PrettifyTarget::Mode(PrettifyMode::Xml)),
+                                KeyCode::Char('h') | KeyCode::Char('H') => Some(PrettifyTarget::Mode(PrettifyMode::Html)),
+                                KeyCode::Char('c') | KeyCode::Char('C') => Some(PrettifyTarget::Mode(PrettifyMode::Csv)),
+                                KeyCode::Char('r') | KeyCode::Char('R') => Some(PrettifyTarget::Mode(PrettifyMode::Off)),
+                                KeyCode::Char('a') | KeyCode::Char('A') => Some(PrettifyTarget::Auto),
+                                _ => None,
+                            };
+                            if let Some(t) = target {
+                                apply_prettify(
+                                    src.as_ref(),
+                                    &mut viewport,
+                                    &mut idx,
+                                    rebuild_spec,
+                                    t,
+                                );
+                                last_revision = src.revision();
                             }
                         }
                         mode = InputMode::Normal;
@@ -201,6 +239,30 @@ pub fn run(
                             last_revision = src.revision();
                             needs_redraw = true;
                         }
+                    }
+                    Command::TogglePrettify => {
+                        apply_prettify(
+                            src.as_ref(), &mut viewport, &mut idx, rebuild_spec,
+                            PrettifyTarget::Toggle,
+                        );
+                        last_revision = src.revision();
+                        needs_redraw = true;
+                    }
+                    Command::SetPrettifyMode(m) => {
+                        apply_prettify(
+                            src.as_ref(), &mut viewport, &mut idx, rebuild_spec,
+                            PrettifyTarget::Mode(m),
+                        );
+                        last_revision = src.revision();
+                        needs_redraw = true;
+                    }
+                    Command::RedetectPrettify => {
+                        apply_prettify(
+                            src.as_ref(), &mut viewport, &mut idx, rebuild_spec,
+                            PrettifyTarget::Auto,
+                        );
+                        last_revision = src.revision();
+                        needs_redraw = true;
                     }
                     Command::ToggleLineNumbers => {
                         viewport.toggle_line_numbers();
@@ -297,6 +359,40 @@ pub fn run(
         }
     }
     Ok(())
+}
+
+/// What `apply_prettify` should do to the source's prettify state.
+#[derive(Debug, Clone, Copy)]
+enum PrettifyTarget {
+    /// Set a specific mode (including `Off` for "raw").
+    Mode(PrettifyMode),
+    /// Flip between current mode and last-active mode.
+    Toggle,
+    /// Re-run byte-based content detection and apply the result.
+    Auto,
+}
+
+/// Apply a prettify-state change to the source and propagate any visible
+/// effects (line index rebuild, viewport label, scroll clamp). No-op if the
+/// source isn't a `TransformingSource` (i.e. `prettify_mode()` is `None`).
+fn apply_prettify(
+    src: &dyn Source,
+    viewport: &mut Viewport,
+    idx: &mut LineIndex,
+    spec: RebuildSpec,
+    target: PrettifyTarget,
+) {
+    // Sources without a wrapper return None — nothing to do.
+    if src.prettify_mode().is_none() {
+        return;
+    }
+    match target {
+        PrettifyTarget::Mode(m) => src.set_prettify_mode(m),
+        PrettifyTarget::Toggle => src.toggle_prettify(),
+        PrettifyTarget::Auto => src.redetect_prettify(),
+    }
+    rebuild_after_replace(src, viewport, idx, spec);
+    viewport.set_prettify_label(src.prettify_label());
 }
 
 /// Rebuild line index and visible-line cache after the source content has

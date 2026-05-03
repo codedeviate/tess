@@ -9,3 +9,4 @@ pub mod app;
 pub mod cli;
 pub mod format;
 pub mod filter;
+pub mod prettify;

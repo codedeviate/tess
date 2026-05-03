@@ -116,6 +116,7 @@ pub struct Viewport {
     pub source_label: String,
     follow_mode: bool,
     live_mode: bool,
+    prettify_label: Option<String>,
     filter: Option<CompiledFilter>,
     dim_mode: bool,
     /// In hide mode (filter active, !dim), maps visible position → logical line
@@ -141,6 +142,7 @@ impl Viewport {
             source_label,
             follow_mode: false,
             live_mode: false,
+            prettify_label: None,
             filter: None,
             dim_mode: false,
             visible_lines: Vec::new(),
@@ -287,6 +289,12 @@ impl Viewport {
     pub fn live_mode(&self) -> bool { self.live_mode }
 
     pub fn set_live_mode(&mut self, on: bool) { self.live_mode = on; }
+
+    /// Status-line label for active pretty-print state, e.g. `"json"` or
+    /// `"json:err"`. `None` means no indicator is shown.
+    pub fn set_prettify_label(&mut self, label: Option<String>) {
+        self.prettify_label = label;
+    }
 
     /// Drop the per-line filter-membership cache without disturbing the filter
     /// itself or scroll position. Used after a `--live` rebuild: line numbering
@@ -474,6 +482,9 @@ impl Viewport {
         if let Some(sr) = self.search.as_ref() {
             let prefix = if matches!(sr.direction, SearchDirection::Forward) { "/" } else { "?" };
             s.push_str(&format!("  [{}{}]", prefix, sr.raw));
+        }
+        if let Some(label) = self.prettify_label.as_ref() {
+            s.push_str(&format!("  [pretty:{label}]"));
         }
         if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
@@ -780,6 +791,22 @@ mod tests {
         assert!(v.follow_mode());
         v.toggle_follow();
         assert!(!v.follow_mode());
+    }
+
+    #[test]
+    fn status_shows_prettify_label_when_set() {
+        let (m, mut idx) = setup(b"a\n");
+        let mut v = Viewport::new(40, 5, "f".into());
+        let frame_off = v.frame(&m, &mut idx);
+        assert!(!frame_off.status.contains("[pretty"));
+        v.set_prettify_label(Some("json".into()));
+        let frame_on = v.frame(&m, &mut idx);
+        assert!(frame_on.status.contains("[pretty:json]"),
+            "expected [pretty:json] in status, got: {}", frame_on.status);
+        v.set_prettify_label(Some("json:err".into()));
+        let frame_err = v.frame(&m, &mut idx);
+        assert!(frame_err.status.contains("[pretty:json:err]"),
+            "expected [pretty:json:err] in status, got: {}", frame_err.status);
     }
 
     #[test]

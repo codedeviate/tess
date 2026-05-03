@@ -1,5 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
+use crate::prettify::PrettifyMode;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     ScrollLines(i64),
@@ -29,6 +31,14 @@ pub enum Command {
     /// `R` — force-reload the source from disk now (only meaningful with
     /// `--live`; no-op for static file sources and append-streaming follow).
     Reload,
+    /// `Shift-P` — toggle pretty-printing on/off (cycles back to the last
+    /// active mode if currently off).
+    TogglePrettify,
+    /// Set a specific prettify mode (issued by the `-P<letter>` sub-prefix
+    /// after the user picks j/y/t/x/h/c).
+    SetPrettifyMode(PrettifyMode),
+    /// Re-run byte-based content detection and apply the result (`-Pa`).
+    RedetectPrettify,
     Noop,
 }
 
@@ -56,6 +66,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('G'), false) | (Char('>'), false) | (End, _) => Command::GoBottom,
         (Char('r'), false) | (Char('l'), true) => Command::Refresh,
         (Char('R'), false) => Command::Reload,
+        (Char('P'), false) => Command::TogglePrettify,
         (Char('-'), false) => Command::OptionPrefix,
         (Char('F'), false) => Command::ToggleFollow,
         (Char('/'), false) => Command::SearchForward,
@@ -142,6 +153,16 @@ mod tests {
     #[test]
     fn lowercase_r_still_refreshes() {
         assert_eq!(translate(key(KeyCode::Char('r'), KeyModifiers::NONE)), Command::Refresh);
+    }
+
+    #[test]
+    fn capital_p_toggles_prettify() {
+        assert_eq!(translate(key(KeyCode::Char('P'), KeyModifiers::SHIFT)), Command::TogglePrettify);
+    }
+
+    #[test]
+    fn lowercase_p_remains_unbound() {
+        assert_eq!(translate(key(KeyCode::Char('p'), KeyModifiers::NONE)), Command::Noop);
     }
 
     #[test]
