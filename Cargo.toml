@@ -1,12 +1,22 @@
 [package]
 name = "tess"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
-description = "A less-style terminal pager."
+rust-version = "1.85"
+description = "A less-style terminal pager with structured-log filtering, pretty-printing (JSON/YAML/TOML/XML/HTML/CSV), and wrap-aware long-line scrolling."
 license = "MIT"
 authors = ["Thomas Björk <codedv8@gmail.com>"]
+homepage = "https://github.com/codedeviate/tess"
 repository = "https://github.com/codedeviate/tess"
+documentation = "https://github.com/codedeviate/tess/blob/master/MANUAL.md"
 readme = "README.md"
+keywords = ["pager", "less", "log", "tail", "terminal"]
+categories = ["command-line-utilities", "text-processing"]
+exclude = [
+    "tess-*.tar.gz",
+    ".claude/",
+    "OUT-OF-SCOPE.md",
+]
 
 [dependencies]
 crossterm = { version = "0.27", features = ["use-dev-tty"] }
@@ -34,3 +44,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "tess"
 path = "src/main.rs"
+
+# Tuned for distribution (Homebrew, crates.io binary installs).
+# Trades ~20-30s build time for a smaller, faster single-file binary.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

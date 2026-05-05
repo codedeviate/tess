@@ -11,7 +11,7 @@ supported (the stdin / `/dev/tty` plumbing is Unix-specific).
 
 ## 1. Prerequisites
 
-- **Rust 1.74 or newer** (edition 2021, recent `clap`). Install via
+- **Rust 1.85 or newer** (transitive dep `clap_lex` requires edition 2024). Install via
   [rustup](https://rustup.rs):
 
   ```sh
@@ -27,7 +27,7 @@ supported (the stdin / `/dev/tty` plumbing is Unix-specific).
 Verify:
 
 ```sh
-rustc --version    # rustc 1.74.0 or newer
+rustc --version    # rustc 1.85.0 or newer
 cargo --version
 ```
 
