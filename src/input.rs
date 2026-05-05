@@ -5,6 +5,10 @@ use crate::prettify::PrettifyMode;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     ScrollLines(i64),
+    /// `J` / `K` — jump forward or backward by one whole logical line,
+    /// skipping any remaining wrap rows of the current line. Useful for
+    /// long lines that wrap many screen rows.
+    ScrollLogicalLines(i64),
     PageDown,
     PageUp,
     HalfPageDown,
@@ -58,6 +62,8 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('c'), true) => Command::Quit,
         (Down, _) | (Char('j'), false) | (Char('e'), false) | (Char('e'), true) | (Enter, _) => Command::ScrollLines(1),
         (Char('y'), false) | (Char('y'), true) | (Up, _) | (Char('k'), false) => Command::ScrollLines(-1),
+        (Char('J'), false) => Command::ScrollLogicalLines(1),
+        (Char('K'), false) => Command::ScrollLogicalLines(-1),
         (Char(' '), false) | (Char('f'), false) | (Char('f'), true) | (PageDown, _) => Command::PageDown,
         (Char('b'), false) | (Char('b'), true) | (PageUp, _) => Command::PageUp,
         (Char('d'), false) | (Char('d'), true) => Command::HalfPageDown,
@@ -112,6 +118,16 @@ mod tests {
     #[test]
     fn capital_g_goes_to_bottom() {
         assert_eq!(translate(key(KeyCode::Char('G'), KeyModifiers::SHIFT)), Command::GoBottom);
+    }
+
+    #[test]
+    fn capital_j_jumps_one_logical_line_forward() {
+        assert_eq!(translate(key(KeyCode::Char('J'), KeyModifiers::SHIFT)), Command::ScrollLogicalLines(1));
+    }
+
+    #[test]
+    fn capital_k_jumps_one_logical_line_backward() {
+        assert_eq!(translate(key(KeyCode::Char('K'), KeyModifiers::SHIFT)), Command::ScrollLogicalLines(-1));
     }
 
     #[test]

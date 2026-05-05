@@ -479,6 +479,18 @@ impl Viewport {
         };
         let pct = if total_for_pct == 0 { 0 } else { (bottom * 100) / total_for_pct };
         let mut s = format!("{}  {}-{}/{}  {}%", self.source_label, top, bottom, total_str, pct);
+        // Wrap-row offset: when scrolled inside a long wrapping line, surface
+        // the offset so the user knows scrolling is happening at sub-line
+        // granularity. Without this the line range above stays static while
+        // pressing `j` and the scroll is invisible on repeating content.
+        if !self.hide_mode() && self.top_row > 0 {
+            let line_rows = if total > 0 {
+                let range = idx.line_range(self.top_line, src);
+                let bytes = src.bytes(range);
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+            } else { 1 };
+            s.push_str(&format!("  +{}/{}", self.top_row, line_rows));
+        }
         if let Some(f) = self.filter.as_ref() {
             s.push_str(&format!("  [{}]", f.format_name));
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [filter]" });
@@ -493,6 +505,36 @@ impl Viewport {
         if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
         s
+    }
+
+    /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
+    /// reset to 0 so the start of the destination line is at the top of
+    /// the viewport. In hide mode this is equivalent to `scroll_lines`
+    /// (which already moves by visible/logical lines).
+    pub fn scroll_logical_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
+        if delta == 0 { return; }
+        if self.hide_mode() {
+            self.scroll_lines(delta, src, idx);
+            return;
+        }
+        if delta > 0 {
+            idx.extend_to_line(self.top_line + delta as usize + 1, src);
+            let total = idx.line_count();
+            if total == 0 { return; }
+            let target = (self.top_line as i64 + delta).min(total as i64 - 1) as usize;
+            self.top_line = target;
+            self.top_row = 0;
+        } else {
+            let back = (-delta) as usize;
+            // If we're inside a wrapped line (top_row > 0), `K` first snaps to
+            // the start of the current line; only the remaining count goes to
+            // previous lines. This matches the user's mental model of "jump
+            // to the start of the previous line".
+            let consumed_for_snap = if self.top_row > 0 { 1 } else { 0 };
+            let extra_back = back.saturating_sub(consumed_for_snap);
+            self.top_line = self.top_line.saturating_sub(extra_back);
+            self.top_row = 0;
+        }
     }
 
     pub fn scroll_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
@@ -659,6 +701,39 @@ mod tests {
         let mut v = Viewport::new(10, 5, "test".into());
         v.scroll_lines(50, &m, &mut idx);
         assert_eq!(v.top_line, 2);
+    }
+
+    #[test]
+    fn scroll_logical_lines_skips_wrap_rows() {
+        // Line 0 has 50 wraps in a 10-col viewport. J should jump straight to line 1.
+        let mut content = vec![b'X'; 500];
+        content.push(b'\n');
+        content.extend_from_slice(b"second\n");
+        content.extend_from_slice(b"third\n");
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(10, 8, "f".into());
+        v.scroll_logical_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 0));
+        v.scroll_logical_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (2, 0));
+    }
+
+    #[test]
+    fn scroll_logical_lines_back_snaps_to_line_start() {
+        // Mid-wrap K should snap to start of current line first, then go back.
+        let mut content = vec![b'A'; 50];
+        content.push(b'\n');
+        content.extend_from_slice(&vec![b'B'; 50]);
+        content.push(b'\n');
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(10, 8, "f".into());
+        v.scroll_lines(7, &m, &mut idx);
+        assert_eq!(v.top_line, 1, "should be on line 1");
+        assert!(v.top_row > 0, "should be inside line 1's wraps");
+        v.scroll_logical_lines(-1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 0), "K snaps to start of current line");
+        v.scroll_logical_lines(-1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (0, 0), "K then goes to previous line");
     }
 
     #[test]

@@ -212,6 +212,10 @@ pub fn run(
                         viewport.scroll_lines(n, src.as_ref(), &mut idx);
                         needs_redraw = true;
                     }
+                    Command::ScrollLogicalLines(n) => {
+                        viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
+                        needs_redraw = true;
+                    }
                     Command::PageDown => {
                         viewport.page_down(src.as_ref(), &mut idx);
                         needs_redraw = true;

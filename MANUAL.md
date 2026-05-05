@@ -95,8 +95,10 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 
 | Key(s) | Action |
 |---|---|
-| `↓` `j` `e` `Ctrl-E` `Return` | Scroll down 1 line |
-| `↑` `k` `y` `Ctrl-Y` | Scroll up 1 line |
+| `↓` `j` `e` `Ctrl-E` `Return` | Scroll down 1 screen line (walks through wrap rows of long lines) |
+| `↑` `k` `y` `Ctrl-Y` | Scroll up 1 screen line |
+| `J` | Jump to start of next *logical* line, skipping any remaining wrap rows |
+| `K` | Jump to start of current/previous *logical* line |
 | `Space` `f` `Ctrl-F` `PgDn` | Page down |
 | `b` `Ctrl-B` `PgUp` | Page up |
 | `d` `Ctrl-D` | Half-page down |
@@ -160,12 +162,13 @@ Both `-P` letters are case-insensitive. Any other key cancels the sub-prefix.
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  [<format>]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
 - **`<top>-<bottom>/<total>`** — currently visible line range over total. With `--filter` (hide mode) this is `top-bottom/<matched>/<total>`.
 - **`<pct>%`** — position percentage.
+- **`+<wrap>/<wraps>`** — only shown when scrolled inside a wrapped line. Tells you which wrap row of the current logical line is at the top of the viewport (e.g. `+12/50` means wrap row 12 of a 50-row line). Lets you see that `j` is making progress through a long line; goes away when you reach the next logical line.
 - **`[<format>]`** — present when `--format` is active (e.g. `[apache-combined]`).
 - **`[filter]` / `[dim]`** — present when filtering, indicating mode.
 - **`[/<search>]`** / **`[?<search>]`** — active search pattern (forward or backward). Cleared only when a new search is set or you exit.
