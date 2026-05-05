@@ -164,6 +164,10 @@ impl Viewport {
 
     pub fn search_active(&self) -> bool { self.search.is_some() }
 
+    pub fn search_direction(&self) -> SearchDirection {
+        self.search.as_ref().map(|s| s.direction).unwrap_or(SearchDirection::Forward)
+    }
+
     /// Jump to the next match of the active search, in `direction` (or its
     /// reverse if `reverse` is true). Wraps at the end of the source.
     /// Returns true iff a match was found and the viewport moved.
@@ -519,15 +523,17 @@ impl Viewport {
             while remaining > 0 {
                 idx.extend_to_line(self.top_line + 1, src);
                 let total = idx.line_count();
-                if self.top_line >= total.saturating_sub(1) { break; }
+                if total == 0 { break; }
                 let range = idx.line_range(self.top_line, src);
                 let bytes = src.bytes(range);
                 let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
                 if self.top_row + 1 < line_rows {
                     self.top_row += 1;
-                } else {
+                } else if self.top_line + 1 < total {
                     self.top_row = 0;
                     self.top_line += 1;
+                } else {
+                    break;
                 }
                 remaining -= 1;
             }
@@ -653,6 +659,38 @@ mod tests {
         let mut v = Viewport::new(10, 5, "test".into());
         v.scroll_lines(50, &m, &mut idx);
         assert_eq!(v.top_line, 2);
+    }
+
+    #[test]
+    fn scroll_down_walks_wraps_of_last_line() {
+        // Last line is 30 chars in a 10-col viewport → 3 wrap rows.
+        let mut content = b"first\n".to_vec();
+        content.extend_from_slice(&vec![b'X'; 30]);
+        content.push(b'\n');
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 0));
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 1), "should advance into wraps of last line");
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 2), "should reach last wrap row");
+    }
+
+    #[test]
+    fn scroll_down_walks_wrap_rows_within_long_line() {
+        // Line 0 is 30 chars in a 10-col viewport → 3 wrap rows. Body = 4.
+        let mut content = vec![b'X'; 30];
+        content.push(b'\n');
+        content.extend_from_slice(b"second\n");
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (0, 1), "first j → wrap row 1");
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (0, 2), "second j → wrap row 2");
+        v.scroll_lines(1, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 0), "third j → next logical line");
     }
 
     #[test]
@@ -1018,6 +1056,18 @@ mod tests {
         v.set_search("foo".into(), SearchDirection::Forward).unwrap();
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.contains("[/foo]"), "status: {}", frame.status);
+    }
+
+    #[test]
+    fn repeat_search_after_first_match_advances() {
+        let (m, mut idx) = setup(b"alpha\nfoo one\nbeta\nfoo two\ngamma\nfoo three\n");
+        let mut v = Viewport::new(40, 5, "f".into());
+        v.set_search("foo".into(), SearchDirection::Forward).unwrap();
+        assert!(v.search_repeat(&m, &mut idx, false));
+        assert_eq!(v.top_line, 1, "first foo");
+        v.set_search("foo".into(), SearchDirection::Forward).unwrap();
+        assert!(v.search_repeat(&m, &mut idx, false), "second search should still match");
+        assert_eq!(v.top_line, 3, "should advance to next foo");
     }
 
     #[test]

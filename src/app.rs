@@ -113,6 +113,17 @@ pub fn run(
                                 KeyCode::Esc => { mode = InputMode::Normal; needs_redraw = true; }
                                 KeyCode::Enter => {
                                     if buffer.is_empty() {
+                                        // Empty buffer: repeat the last search in the
+                                        // newly-typed direction (less compat). If no
+                                        // prior search exists, just dismiss.
+                                        if viewport.search_active() {
+                                            let reverse = !matches!(
+                                                (viewport.search_direction(), *direction),
+                                                (SearchDirection::Forward, SearchDirection::Forward)
+                                                | (SearchDirection::Backward, SearchDirection::Backward)
+                                            );
+                                            viewport.search_repeat(src.as_ref(), &mut idx, reverse);
+                                        }
                                         mode = InputMode::Normal;
                                     } else {
                                         match viewport.set_search(buffer.clone(), *direction) {
