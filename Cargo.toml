@@ -15,7 +15,12 @@ categories = ["command-line-utilities", "text-processing"]
 exclude = [
     "tess-*.tar.gz",
     ".claude/",
+    "homebrew/",
+    ".github/",
+    "/.gitignore",
     "OUT-OF-SCOPE.md",
+    "CLAUDE.md",
+    "BREW.md",
 ]
 
 [dependencies]
