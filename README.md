@@ -133,3 +133,9 @@ cargo test                     # unit + integration tests
 cargo run -- Cargo.toml        # quick interactive run
 ls -la | cargo run --release   # piped stdin
 ```
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
