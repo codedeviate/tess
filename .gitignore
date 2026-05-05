@@ -5,3 +5,5 @@ Cargo.lock
 .claude/
 # Distribution tarballs generated post-commit (see CLAUDE.md "Build / packaging discipline").
 tess-*.tar.gz
+# Local operational notes for Homebrew releases — keep off the public repo.
+BREW.md
