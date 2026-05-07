@@ -215,6 +215,32 @@ regex = '^(?P<ip>\S+) - - \[(?P<time>[^\]]+)\] "(?P<request>[^"]+)" (?P<status>\
 
 Each format is one regex with named capture groups (`(?P<name>…)`). Field names become filterable. The regex must be anchored / specific enough that it matches only valid lines — non-matching lines are treated as "not parsed" and behave like filter mismatches.
 
+#### Nested capture groups
+
+Capture groups can be nested. The outer group captures the whole substring, the inner groups capture sub-parts, and **every named group becomes its own filterable field**. This is the cleanest way to expose a composite value (a timestamp, a URL, a version string) as both the full string *and* its parts:
+
+```toml
+# Apache CLF timestamp like "06/May/2026:16:13:44 +0200" — exposed both as
+# `time` (the full bracketed string) and as discrete `year` / `month` / `day` /
+# `hour` / `minute` / `second` / `tz` fields.
+[format.apache-with-time-parts]
+regex = '''^(?P<ip>\S+) \S+ \S+ \[(?P<time>(?P<day>\d{2})/(?P<month>[A-Za-z]{3})/(?P<year>\d{4}):(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})\s+(?P<tz>[+\-]\d{4}))\] "(?P<method>\S+) (?P<url>\S+) (?P<protocol>[^"]+)" (?P<status>\d+) (?P<size>\S+)$'''
+```
+
+Then any of the parts can drive a filter:
+
+```sh
+tess --format apache-with-time-parts --filter year=2026 --filter 'hour~^1[0-2]$' access.log
+tess --format apache-with-time-parts --filter month=May access.log
+```
+
+Caveats:
+
+- **Group names share one namespace** — every named group across the whole regex must be unique, even when nested.
+- **The outer group still captures the literal substring**, including any delimiters inside it. Don't put characters outside the outer group that you want included in `time`.
+- **No post-processing** — the captured value is exactly what the regex matched. If a format has `May` you can't filter on `05`; either filter on `May` or use a regex predicate (`--filter 'month~^(May|05)$'`).
+- For optional sub-parts (e.g. fractional seconds that may or may not be present), wrap the optional segment in a non-capturing group with `?`: `(?:\.(?P<micro>\d+))?`. When the segment isn't there, the `micro` field simply won't appear in the field map and any `--filter micro=…` won't match — exactly what you want.
+
 ### How filtering works
 
 `tess` runs the format's regex once per line. The named captures form a field map. Each `--filter` predicate looks up its field in that map and applies its operator. **All** predicates must match (AND). Lines that don't match the format regex at all are treated as non-matching.
