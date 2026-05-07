@@ -61,11 +61,13 @@ cmd | tess [OPTIONS]
   - `!=` — exact non-match. `--filter status!=200`
   - `~` — regex match. `--filter ip~^10\.`
   - `!~` — regex non-match. `--filter agent!~bot`
+  - `<`, `<=`, `>`, `>=` — comparison. Numeric if both the captured value and the predicate value parse as numbers (`f64`), otherwise lexicographic byte order. `--filter 'status>=500'`, `--filter 'hour>=10' --filter 'hour<=12'`, `--filter 'level>warn'` (lex). When the captured value is non-numeric (e.g. CLF's `-` for "missing size"), comparison falls back to lex and effectively rejects.
 
-  > **Shell quoting** (important): in interactive `bash` and `zsh`, the `!` in `!=` and `!~` triggers history expansion and you'll see `bash: !=200: event not found` or similar. Quote the filter argument with **single quotes** to disable expansion:
+  > **Shell quoting** (important): in interactive `bash` and `zsh`, the `!` in `!=` / `!~` triggers history expansion (`bash: !=200: event not found`), and the `<` / `>` in `<`, `<=`, `>`, `>=` are treated as input/output redirection. Quote the filter argument with **single quotes** to disable both:
   >
   > ```sh
   > tess --format apache-combined --filter 'status!=200' access.log
+  > tess --format apache-combined --filter 'status>=500' access.log
   > tess --format app --filter 'level!~notice' app.log
   > ```
   >

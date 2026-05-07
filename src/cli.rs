@@ -25,8 +25,10 @@ pub struct Args {
     pub examples: bool,
 
     /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
-    /// Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠).
-    /// Examples: `--filter status=500`, `--filter ip~^10\.`.
+    /// Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠),
+    /// `<`, `<=`, `>`, `>=` (numeric if both sides parse as numbers, else
+    /// lexicographic). Examples: `--filter status=500`, `--filter ip~^10\.`,
+    /// `--filter 'status>=500'` (quote `<` and `>` to avoid shell redirection).
     /// Requires `--format`.
     #[arg(long = "filter", value_name = "FIELD<op>VALUE", display_order = 5)]
     pub filter: Vec<String>,

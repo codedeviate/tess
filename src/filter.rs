@@ -13,6 +13,14 @@ pub enum FilterOp {
     Re,
     /// `field!~regex` — regex non-match.
     NotRe,
+    /// `field<value` — less than (numeric if both sides parse as f64, else lex).
+    Lt,
+    /// `field<=value` — less-than-or-equal.
+    Le,
+    /// `field>value` — greater than.
+    Gt,
+    /// `field>=value` — greater-than-or-equal.
+    Ge,
 }
 
 /// A parsed filter spec, before being bound to a format.
@@ -25,14 +33,19 @@ pub struct FilterSpec {
 
 impl FilterSpec {
     /// Parse a filter spec like `status=500`, `ip~^10\.`, `status!=200`,
-    /// `agent!~bot`. Operator detection scans for the longest match first so
-    /// `!=` and `!~` aren't confused with `=` or `~`.
+    /// `agent!~bot`, `status>=500`, `hour<12`. Operator detection scans for
+    /// the longest match first so multi-char operators (`!=`, `!~`, `<=`,
+    /// `>=`) aren't confused with their single-char prefixes.
     pub fn parse(input: &str) -> Result<Self, String> {
         for (op, sep) in &[
             (FilterOp::NotRe, "!~"),
             (FilterOp::Ne, "!="),
+            (FilterOp::Le, "<="),
+            (FilterOp::Ge, ">="),
             (FilterOp::Re, "~"),
             (FilterOp::Eq, "="),
+            (FilterOp::Lt, "<"),
+            (FilterOp::Gt, ">"),
         ] {
             if let Some((field, value)) = input.split_once(sep) {
                 if field.is_empty() {
@@ -46,7 +59,7 @@ impl FilterSpec {
             }
         }
         Err(format!(
-            "filter `{input}`: missing operator (expected =, !=, ~, or !~)"
+            "filter `{input}`: missing operator (expected =, !=, ~, !~, <, <=, >, or >=)"
         ))
     }
 }
@@ -101,7 +114,12 @@ impl CompiledFilter {
                 ));
             }
             let (literal, regex) = match spec.op {
-                FilterOp::Eq | FilterOp::Ne => (Some(spec.value.clone()), None),
+                FilterOp::Eq
+                | FilterOp::Ne
+                | FilterOp::Lt
+                | FilterOp::Le
+                | FilterOp::Gt
+                | FilterOp::Ge => (Some(spec.value.clone()), None),
                 FilterOp::Re | FilterOp::NotRe => {
                     let r = Regex::new(&spec.value)
                         .map_err(|e| format!("filter `{}`: invalid regex `{}`: {e}", spec.field, spec.value))?;
@@ -143,12 +161,38 @@ impl CompiledFilter {
                 FilterOp::Ne => p.literal.as_deref() != Some(captured),
                 FilterOp::Re => p.regex.as_ref().map_or(false, |r| r.is_match(captured)),
                 FilterOp::NotRe => p.regex.as_ref().map_or(false, |r| !r.is_match(captured)),
+                FilterOp::Lt | FilterOp::Le | FilterOp::Gt | FilterOp::Ge => {
+                    let rhs = p.literal.as_deref().unwrap_or("");
+                    compare(&p.op, captured, rhs)
+                }
             };
             if !ok {
                 return FilterMatch::NotMatched;
             }
         }
         FilterMatch::Matched
+    }
+}
+
+/// Compare `lhs` against `rhs` under the given ordering operator.
+///
+/// Tries numeric comparison first (both sides parse as f64); falls back to
+/// lexicographic byte order. Numeric is intentionally lossy on integer
+/// overflow — log fields are typically small numbers (status codes, sizes,
+/// hours), and f64 covers the practical range.
+fn compare(op: &FilterOp, lhs: &str, rhs: &str) -> bool {
+    let order = match (lhs.parse::<f64>(), rhs.parse::<f64>()) {
+        (Ok(a), Ok(b)) => a.partial_cmp(&b),
+        _ => Some(lhs.cmp(rhs)),
+    };
+    let Some(order) = order else { return false; };
+    use std::cmp::Ordering::*;
+    match (op, order) {
+        (FilterOp::Lt, Less) => true,
+        (FilterOp::Le, Less | Equal) => true,
+        (FilterOp::Gt, Greater) => true,
+        (FilterOp::Ge, Greater | Equal) => true,
+        _ => false,
     }
 }
 
@@ -261,5 +305,75 @@ mod tests {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=200").unwrap()]).unwrap();
         assert_eq!(f.evaluate(NON_PARSING), FilterMatch::NotParsed);
+    }
+
+    // ----- Comparison operators -----
+
+    #[test]
+    fn parse_le_before_lt() {
+        let s = FilterSpec::parse("status<=200").unwrap();
+        assert_eq!(s.op, FilterOp::Le);
+        assert_eq!(s.value, "200");
+    }
+
+    #[test]
+    fn parse_ge_before_gt() {
+        let s = FilterSpec::parse("status>=500").unwrap();
+        assert_eq!(s.op, FilterOp::Ge);
+        assert_eq!(s.value, "500");
+    }
+
+    #[test]
+    fn parse_lt() {
+        let s = FilterSpec::parse("size<1000").unwrap();
+        assert_eq!(s.op, FilterOp::Lt);
+        assert_eq!(s.value, "1000");
+    }
+
+    #[test]
+    fn parse_gt() {
+        let s = FilterSpec::parse("size>0").unwrap();
+        assert_eq!(s.op, FilterOp::Gt);
+        assert_eq!(s.value, "0");
+    }
+
+    #[test]
+    fn evaluate_ge_numeric() {
+        let fmt = apache_combined();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status>=500").unwrap()]).unwrap();
+        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+    }
+
+    #[test]
+    fn evaluate_lt_numeric() {
+        let fmt = apache_combined();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status<400").unwrap()]).unwrap();
+        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::NotMatched);
+    }
+
+    #[test]
+    fn evaluate_lex_fallback() {
+        // `size` of "-" means missing in CLF. Numeric parse fails, lex compare
+        // applies: "-" vs "100". Verify lex semantics produce the right answer.
+        // ASCII: '-' (0x2D) < '0' (0x30), so "-" < "100" lexicographically.
+        assert!(compare(&FilterOp::Lt, "-", "100"));
+        assert!(!compare(&FilterOp::Gt, "-", "100"));
+    }
+
+    #[test]
+    fn evaluate_lex_string_compare() {
+        // `level>warn` — both sides are strings, neither numeric.
+        assert!(compare(&FilterOp::Gt, "warning", "warn"));
+        assert!(!compare(&FilterOp::Gt, "info", "warn"));
+        assert!(compare(&FilterOp::Ge, "warn", "warn"));
+        assert!(compare(&FilterOp::Le, "warn", "warn"));
+    }
+
+    #[test]
+    fn parse_rejects_no_op_mentions_new_ops() {
+        let err = FilterSpec::parse("status").unwrap_err();
+        assert!(err.contains(">=") && err.contains("<="), "{err}");
     }
 }
