@@ -1,7 +1,10 @@
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
+use std::path::PathBuf;
+
 use tess::app::{self, RebuildSpec};
+use tess::batch::{self, BatchDestination, BatchSpec};
 use tess::cli::Args;
 use tess::error::{Error, Result};
 use tess::filter::{CompiledFilter, FilterSpec};
@@ -59,11 +62,19 @@ Apache log analysis (built-in formats)
   tess --format apache-combined --filter status~^5 access.log
   tess --format apache-combined --filter status~^5 --filter url~^/api/ access.log
   tess --format apache-combined --filter 'status!=200' access.log
+  tess --format apache-combined --filter 'status>=500' access.log
   tess --format apache-combined --filter status~^5 --dim access.log
   tess -f --tail 100 --format apache-combined --filter status~^5 access.log
 
-Note: single-quote filters that use `!` (`!=`, `!~`) — bash's history
-expansion will otherwise eat the `!`.
+Note: single-quote filters that use `!` or `<`/`>` — bash's history
+expansion eats `!`, and `<`/`>` are I/O redirection without quotes.
+
+Batch (non-interactive) output
+------------------------------
+  tess --filter status~^5 --format apache-combined -o errors.log access.log
+  tess --head 1000 --stdout huge.log | grep -c something
+  tess --prettify --stdout config.json > pretty.json
+  tess -f --format app --filter level=ERROR -o /tmp/live-errors.log app.log
 
 Custom format (declare in ~/.config/tess/formats.toml)
 ------------------------------------------------------
@@ -202,6 +213,23 @@ fn real_main() -> Result<()> {
     if args.live && args.files.is_empty() {
         return Err(Error::Runtime(
             "--live requires a file path (stdin can't be re-stat'd)".to_string(),
+        ));
+    }
+
+    // Batch (`--output` / `--stdout`) is incompatible with `--live`: live mode
+    // is "watch a file rewrite, render the new view" — there's no view to
+    // render in batch.
+    let batch_destination: Option<BatchDestination> = if args.stdout {
+        Some(BatchDestination::Stdout)
+    } else if let Some(path) = args.output.as_deref() {
+        if path == "-" { Some(BatchDestination::Stdout) }
+        else { Some(BatchDestination::File(PathBuf::from(path))) }
+    } else {
+        None
+    };
+    if batch_destination.is_some() && args.live {
+        return Err(Error::Runtime(
+            "--output / --stdout is not compatible with --live".to_string(),
         ));
     }
 
@@ -363,6 +391,19 @@ showing raw (use --content-type=NAME to override)"
     };
 
     let sigterm = install_signal_flag();
+
+    // Batch mode: skip the terminal guard entirely and route through
+    // `batch::run` instead of the interactive event loop.
+    if let Some(destination) = batch_destination {
+        let _ = prettify_label; // batch keeps the prettified bytes; label unused
+        let spec = BatchSpec {
+            destination,
+            follow: args.follow,
+            poll_interval: std::time::Duration::from_millis(250),
+        };
+        return batch::run(src, idx, compiled_filter, spec, sigterm);
+    }
+
     let _guard = TerminalGuard::enter()
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
 

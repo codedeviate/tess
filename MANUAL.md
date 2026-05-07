@@ -31,6 +31,8 @@ cmd | tess [OPTIONS]
 | Tail-follow last 1000 | `tess -f --tail 1000 huge.log` |
 | Show only first 50 | `tess --head 50 file.txt` |
 | Apache 5xx errors | `tess --format apache-combined --filter status~^5 access.log` |
+| Filter to a file (non-interactive) | `tess --format apache-combined --filter status~^5 -o errors.log access.log` |
+| Pretty-print a file to stdout | `tess --prettify --stdout config.json` |
 
 ---
 
@@ -83,6 +85,14 @@ cmd | tess [OPTIONS]
 If a transform fails to parse, `tess` falls back to showing the raw content and the status line shows `[pretty:<type>:err]` so you know why nothing changed.
 
 CSV cells are aligned into a fixed-width table; cells longer than 60 characters are truncated with an ellipsis (`…`) so a single runaway free-text column doesn't blow up the layout.
+
+### Batch (non-interactive) output
+
+- **`-o FILE`, `--output FILE`** — apply `--filter` / `--head` / `--tail` / `--prettify` to the source, write the surviving logical lines as **raw bytes** (one per line, separated by `\n`) to `FILE`, and exit. Use `FILE = -` to write to stdout. The terminal alt-screen and raw mode are not entered, so this is safe to run from scripts and CI.
+- **`--stdout`** — synonym for `-o -`.
+- With **`--follow`**, the run doesn't exit after the initial pass: it keeps polling the source and appending matching new lines as they arrive (`Ctrl-C` cleanly closes the file). Useful for `tess -f --filter status~^5 -o errors.log` to harvest only error lines from a live log.
+- Incompatible with **`--live`** (which is a "watch a file rewrite, render the new view" feature — there's no view in batch).
+- **`--dim`**, **`-N`** (line numbers), and **`-S`** (chop) are viewport-only concerns and are silently ignored in batch mode. The output is always the raw bytes of matching lines, exactly as they appear in the source (or in the prettified stream when `--prettify` is on), so the file stays grep-/awk-/diff-able.
 
 ### Other
 

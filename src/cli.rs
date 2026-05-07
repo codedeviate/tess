@@ -67,22 +67,35 @@ pub struct Args {
     #[arg(long = "manual", display_order = 12)]
     pub manual: bool,
 
+    /// Non-interactive batch mode: apply --filter / --head / --tail / --prettify
+    /// to the source and write the resulting raw bytes to FILE, then exit.
+    /// Use `-` for stdout (`--stdout` is a synonym). Skips the alt-screen and
+    /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
+    /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
+    /// compatible with `--live`.
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 13)]
+    pub output: Option<String>,
+
     /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
     /// Detects the type from the filename extension or the first bytes; use
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 13)]
+    #[arg(long = "prettify", display_order = 14)]
     pub prettify: bool,
 
+    /// Synonym for `--output -`: write the batch-mode output to stdout.
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 15)]
+    pub stdout: bool,
+
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 14)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 16)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 15)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 17)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -232,6 +245,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_output_long_and_short() {
+        let a = Args::parse_from(["tess", "-o", "/tmp/out.txt", "f"]);
+        assert_eq!(a.output.as_deref(), Some("/tmp/out.txt"));
+        let b = Args::parse_from(["tess", "--output", "/tmp/out.txt", "f"]);
+        assert_eq!(b.output.as_deref(), Some("/tmp/out.txt"));
+    }
+
+    #[test]
+    fn parses_stdout_flag() {
+        let a = Args::parse_from(["tess", "--stdout", "f"]);
+        assert!(a.stdout);
+        assert_eq!(a.output, None);
+    }
+
+    #[test]
+    fn output_and_stdout_are_mutually_exclusive() {
+        let r = Args::try_parse_from(["tess", "-o", "x", "--stdout", "f"]);
+        assert!(r.is_err(), "clap should reject combining --output and --stdout");
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -250,7 +284,9 @@ mod tests {
             "--list-formats",
             "--live",
             "--manual",
+            "--output",
             "--prettify",
+            "--stdout",
             "--tab-width",
             "--tail",
         ];

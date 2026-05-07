@@ -10,3 +10,4 @@ pub mod cli;
 pub mod format;
 pub mod filter;
 pub mod prettify;
+pub mod batch;
