@@ -44,6 +44,40 @@ Jump to a tag (ctags-style). Requires parsing a tags file.
 
 When the file looks binary, show a hex dump instead of byte-faithful text. Could be a `--hex` flag.
 
+### Multi-line log records (`record_start` in formats.toml)  — **M**
+
+Some log formats (notably PHP's default error log, Java stack traces, multi-line debug payloads) emit records that span many physical newlines. Today every `\n` is a hard logical-line boundary, so a record like
+
+```
+[2026-05-06 10:23:11] ERROR Failed to render template
+  #0 /var/www/app/Renderer.php(214): App\Tpl::render()
+  #1 /var/www/app/Controller.php(88): App\Renderer->show()
+  #2 {main}
+```
+
+is four searchable units, none of which contain the full message. A regex search for `Renderer.php.*ERROR` would never match.
+
+Proposed shape (kept compatible with the existing format system):
+
+```toml
+[format.php-app]
+# A new record begins on any line whose start matches this regex.
+# Lines that don't match are appended to the previous record.
+record_start = '^\['
+# `pattern` then runs against the FULL multi-line record string with
+# embedded \n's, so multi-line capture groups Just Work.
+pattern = '^\[(?P<ts>[^\]]+)\]\s+(?P<level>\w+)\s+(?P<msg>[\s\S]+)$'
+```
+
+Display model: preserve physical newlines as-is (a 5-line record renders as 5 visible rows), but treat the record as one searchable unit:
+- **Indexing**: `LineIndex` (or a new `RecordIndex` wrapper) tracks record-start byte offsets, computed in the same scan pass as newline offsets.
+- **Search/filter/highlight**: operate on whole records. `n` jumps to the next record with a match; hide-mode shows all physical lines of a matching record; the matched phrase is reverse-video'd on whichever physical row carries it.
+- **Status line**: `<top>-<bottom>/<total>` becomes record counts (or gains a record/line dual readout).
+
+Touches: `format` (schema extension), `line_index` (record offsets), `viewport` (search/filter/status all currently key off line-N), and `filter` (matches against the full record, not the first line). Wrap-row scrolling continues to work inside records — record boundaries are higher-level than wrap rows.
+
+Alternative considered: collapse `\n` → `␊` on render. Trivial (only `LineIndex` needs to know about records) but defeats the readability point for stack traces. Don't go this way.
+
 ### Long tail of `less` flags  — **L (cumulative)**
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some are non-trivial behavior. Add as needed; document each in its own commit.
