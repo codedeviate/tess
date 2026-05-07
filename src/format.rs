@@ -13,10 +13,22 @@ pub struct LogFormat {
     /// Capture group names declared in the regex, in declaration order.
     /// Used by `--list-formats` to show users what fields are available.
     pub field_names: Vec<String>,
+    /// Optional default display template (`display` key in formats.toml).
+    /// When set and no CLI override is given, the viewer / batch output
+    /// renders each parsed line through this template instead of the raw line.
+    pub display: Option<DisplayTemplate>,
 }
 
 impl LogFormat {
     pub fn compile(name: &str, pattern: &str) -> Result<Self, String> {
+        Self::compile_with_display(name, pattern, None)
+    }
+
+    pub fn compile_with_display(
+        name: &str,
+        pattern: &str,
+        display: Option<&str>,
+    ) -> Result<Self, String> {
         let regex = Regex::new(pattern).map_err(|e| format!("format `{name}`: {e}"))?;
         // capture_names() includes all groups (including the implicit whole-match
         // group as None at index 0); skip those.
@@ -30,7 +42,139 @@ impl LogFormat {
                 "format `{name}`: regex must declare at least one named capture group"
             ));
         }
-        Ok(Self { name: name.to_string(), regex, field_names })
+        let display = display
+            .map(|s| {
+                DisplayTemplate::compile(s, &field_names)
+                    .map_err(|e| format!("format `{name}`: display: {e}"))
+            })
+            .transpose()?;
+        Ok(Self {
+            name: name.to_string(),
+            regex,
+            field_names,
+            display,
+        })
+    }
+}
+
+/// Parsed display template (`display = '[<ts>] <level> <msg>'`).
+///
+/// Syntax:
+/// - `<fieldname>` — replaced with the field's captured value (empty if
+///   the regex didn't capture it on this line).
+/// - `\<` — literal `<`.
+/// - `\\` — literal `\`.
+/// - Anything else — literal.
+#[derive(Debug, Clone)]
+pub struct DisplayTemplate {
+    segments: Vec<DisplaySegment>,
+    source: String,
+}
+
+#[derive(Debug, Clone)]
+enum DisplaySegment {
+    Literal(String),
+    Field(String),
+}
+
+impl DisplayTemplate {
+    pub fn compile(source: &str, field_names: &[String]) -> Result<Self, String> {
+        if source.is_empty() {
+            return Err("template is empty (would render every line as nothing)".to_string());
+        }
+        let mut segments: Vec<DisplaySegment> = Vec::new();
+        let mut buf = String::new();
+        let mut chars = source.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => match chars.next() {
+                    Some('<') => buf.push('<'),
+                    Some('\\') => buf.push('\\'),
+                    Some(other) => {
+                        // Unknown escape: keep both bytes literally so users
+                        // don't have to escape every backslash in regex-like
+                        // strings.
+                        buf.push('\\');
+                        buf.push(other);
+                    }
+                    None => return Err("template ends with a lone `\\`".to_string()),
+                },
+                '<' => {
+                    if !buf.is_empty() {
+                        segments.push(DisplaySegment::Literal(std::mem::take(&mut buf)));
+                    }
+                    let mut name = String::new();
+                    let mut closed = false;
+                    while let Some(&nc) = chars.peek() {
+                        chars.next();
+                        if nc == '>' { closed = true; break; }
+                        name.push(nc);
+                    }
+                    if !closed {
+                        return Err(format!("unterminated `<` (expected `<{name}>`)"));
+                    }
+                    if name.is_empty() {
+                        return Err("empty field reference `<>`".to_string());
+                    }
+                    if !field_names.iter().any(|n| n == &name) {
+                        return Err(format!(
+                            "unknown field `{name}` (available: {})",
+                            field_names.join(", ")
+                        ));
+                    }
+                    segments.push(DisplaySegment::Field(name));
+                }
+                _ => buf.push(c),
+            }
+        }
+        if !buf.is_empty() {
+            segments.push(DisplaySegment::Literal(buf));
+        }
+        Ok(Self { segments, source: source.to_string() })
+    }
+
+    /// Render the template against a captures-lookup closure. Returns the
+    /// rendered string. Missing fields render as empty.
+    pub fn render(&self, lookup: impl Fn(&str) -> Option<String>) -> String {
+        let mut out = String::new();
+        for seg in &self.segments {
+            match seg {
+                DisplaySegment::Literal(s) => out.push_str(s),
+                DisplaySegment::Field(name) => {
+                    if let Some(v) = lookup(name) { out.push_str(&v); }
+                }
+            }
+        }
+        out
+    }
+
+    pub fn source(&self) -> &str { &self.source }
+}
+
+/// Pairs a `DisplayTemplate` with the format's regex so callers can render
+/// any single line in one call. Owns its inputs so it's `Send`-friendly.
+#[derive(Debug, Clone)]
+pub struct DisplayRenderer {
+    template: DisplayTemplate,
+    regex: Regex,
+}
+
+impl DisplayRenderer {
+    pub fn new(template: DisplayTemplate, regex: Regex) -> Self {
+        Self { template, regex }
+    }
+
+    pub fn template(&self) -> &DisplayTemplate { &self.template }
+
+    /// Render `line` (raw bytes) through the template. If the line doesn't
+    /// parse against the format regex, returns `None` — the caller decides
+    /// whether to fall back to the raw line, skip it, or show an error.
+    pub fn render_line(&self, line: &[u8]) -> Option<String> {
+        let s = std::str::from_utf8(line).ok()?;
+        let caps = self.regex.captures(s)?;
+        Some(self.template.render(|name| {
+            caps.name(name).map(|m| m.as_str().to_string())
+        }))
     }
 }
 
@@ -57,6 +201,8 @@ struct UserConfig {
 #[derive(Debug, Deserialize)]
 struct FormatEntry {
     regex: String,
+    #[serde(default)]
+    display: Option<String>,
 }
 
 /// Raw group entry as deserialized from TOML. Promoted to `Group` after
@@ -155,9 +301,9 @@ fn load_user_config() -> Result<UserConfig, String> {
     toml::from_str(&text).map_err(|e| format!("parsing {}: {e}", path.display()))
 }
 
-fn load_user_formats() -> Result<HashMap<String, String>, String> {
+fn load_user_formats() -> Result<HashMap<String, (String, Option<String>)>, String> {
     let cfg = load_user_config()?;
-    Ok(cfg.format.into_iter().map(|(k, v)| (k, v.regex)).collect())
+    Ok(cfg.format.into_iter().map(|(k, v)| (k, (v.regex, v.display))).collect())
 }
 
 /// Load all user-defined groups from `~/.config/tess/formats.toml`. Built-ins
@@ -196,17 +342,17 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
 /// (which override built-ins of the same name). Returns the compiled map keyed
 /// by format name.
 pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
-    let mut sources: HashMap<String, String> = HashMap::new();
+    let mut sources: HashMap<String, (String, Option<String>)> = HashMap::new();
     for (name, pat) in BUILTINS {
-        sources.insert(name.to_string(), pat.to_string());
+        sources.insert(name.to_string(), (pat.to_string(), None));
     }
     let user = load_user_formats()?;
-    for (name, pat) in user {
-        sources.insert(name, pat);
+    for (name, src) in user {
+        sources.insert(name, src);
     }
     let mut compiled = HashMap::new();
-    for (name, pat) in sources {
-        let fmt = LogFormat::compile(&name, &pat)?;
+    for (name, (pat, display)) in sources {
+        let fmt = LogFormat::compile_with_display(&name, &pat, display.as_deref())?;
         compiled.insert(name, fmt);
     }
     Ok(compiled)
@@ -340,6 +486,82 @@ mod tests {
             LogFormat::compile(name, pat)
                 .unwrap_or_else(|e| panic!("built-in {name} should compile: {e}"));
         }
+    }
+
+    // ----- DisplayTemplate -----
+
+    fn fields() -> Vec<String> {
+        vec!["ts".into(), "level".into(), "msg".into()]
+    }
+
+    #[test]
+    fn display_template_compiles_basic() {
+        let t = DisplayTemplate::compile("[<ts>] <level> <msg>", &fields()).unwrap();
+        assert_eq!(t.source(), "[<ts>] <level> <msg>");
+    }
+
+    #[test]
+    fn display_template_renders_substitutions() {
+        let t = DisplayTemplate::compile("<level>: <msg>", &fields()).unwrap();
+        let mut map = std::collections::HashMap::new();
+        map.insert("level".to_string(), "ERROR".to_string());
+        map.insert("msg".to_string(), "boom".to_string());
+        let out = t.render(|n| map.get(n).cloned());
+        assert_eq!(out, "ERROR: boom");
+    }
+
+    #[test]
+    fn display_template_missing_field_renders_empty() {
+        let t = DisplayTemplate::compile("<level>:<msg>", &fields()).unwrap();
+        let mut map = std::collections::HashMap::new();
+        map.insert("level".to_string(), "ERROR".to_string());
+        // msg is absent
+        let out = t.render(|n| map.get(n).cloned());
+        assert_eq!(out, "ERROR:");
+    }
+
+    #[test]
+    fn display_template_escape_sequences() {
+        // Only `\<` and `\\` are recognized escapes; `>` is always literal
+        // (a stray `>` outside `<...>` is fine).
+        let t = DisplayTemplate::compile(r"\<not a field> <level>", &fields()).unwrap();
+        let mut map = std::collections::HashMap::new();
+        map.insert("level".to_string(), "X".to_string());
+        let out = t.render(|n| map.get(n).cloned());
+        assert_eq!(out, "<not a field> X");
+    }
+
+    #[test]
+    fn display_template_escape_backslash() {
+        let t = DisplayTemplate::compile(r"a\\b <level>", &fields()).unwrap();
+        let mut map = std::collections::HashMap::new();
+        map.insert("level".to_string(), "X".to_string());
+        let out = t.render(|n| map.get(n).cloned());
+        assert_eq!(out, r"a\b X");
+    }
+
+    #[test]
+    fn display_template_rejects_empty() {
+        let err = DisplayTemplate::compile("", &fields()).unwrap_err();
+        assert!(err.contains("empty"), "{err}");
+    }
+
+    #[test]
+    fn display_template_rejects_unknown_field() {
+        let err = DisplayTemplate::compile("<bogus>", &fields()).unwrap_err();
+        assert!(err.contains("unknown field"), "{err}");
+    }
+
+    #[test]
+    fn display_template_rejects_unterminated() {
+        let err = DisplayTemplate::compile("<level", &fields()).unwrap_err();
+        assert!(err.contains("unterminated"), "{err}");
+    }
+
+    #[test]
+    fn display_template_rejects_empty_ref() {
+        let err = DisplayTemplate::compile("<>", &fields()).unwrap_err();
+        assert!(err.contains("empty field reference"), "{err}");
     }
 
     #[test]

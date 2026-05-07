@@ -76,6 +76,18 @@ Batch (non-interactive) output
   tess --prettify --stdout config.json > pretty.json
   tess -f --format app --filter level=ERROR -o /tmp/live-errors.log app.log
 
+Display templates (reformat each line)
+--------------------------------------
+  tess --format apache-combined --display '[<status>] <method> <url>' access.log
+  tess --format app --display '[<ts>] <level> <msg>' --filter 'level>=WARN' app.log
+  tess --format apache-combined --display '<status>: <url>' \
+       --filter 'status>=500' -o errors.log access.log
+
+Or set the default per format in ~/.config/tess/formats.toml:
+  # [format.app]
+  # regex   = '...'
+  # display = '[<ts>] <level> <msg>'
+
 Custom format (declare in ~/.config/tess/formats.toml)
 ------------------------------------------------------
   # ~/.config/tess/formats.toml
@@ -205,6 +217,11 @@ fn real_main() -> Result<()> {
             "--filter requires --format".to_string(),
         ));
     }
+    if args.display.is_some() && args.format.is_none() {
+        return Err(Error::Runtime(
+            "--display requires --format".to_string(),
+        ));
+    }
     if args.dim && args.filter.is_empty() {
         return Err(Error::Runtime(
             "--dim has no effect without --filter".to_string(),
@@ -261,6 +278,11 @@ documents can't be parsed)".to_string(),
         if !args.filter.is_empty() {
             return Err(Error::Runtime(
                 "--prettify is not supported with --filter".to_string(),
+            ));
+        }
+        if args.display.is_some() {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --display".to_string(),
             ));
         }
     }
@@ -369,25 +391,39 @@ showing raw (use --content-type=NAME to override)"
         let _ = redirect_stdin_to_tty();
     }
 
-    // Compile filter specs against the chosen format BEFORE entering raw mode
-    // so errors print cleanly.
-    let compiled_filter = if let Some(name) = args.format.as_deref() {
+    // Compile filter specs and resolve the display template against the chosen
+    // format BEFORE entering raw mode so errors print cleanly. The
+    // `DisplayRenderer` bundles the (CLI-overridable) template with the
+    // format's regex so rendering is a single call later.
+    let (compiled_filter, display_renderer) = if let Some(name) = args.format.as_deref() {
         let formats = format::load_all().map_err(Error::Runtime)?;
         let fmt = formats.get(name).ok_or_else(|| {
             Error::Runtime(format!(
                 "unknown format `{name}` (run --list-formats to see available)"
             ))
         })?;
-        if !args.filter.is_empty() {
+        let filter = if !args.filter.is_empty() {
             let specs: Vec<FilterSpec> = args.filter.iter()
                 .map(|s| FilterSpec::parse(s).map_err(Error::Runtime))
                 .collect::<Result<_>>()?;
             Some(CompiledFilter::compile(fmt, specs).map_err(Error::Runtime)?)
         } else {
             None
-        }
+        };
+        // CLI --display overrides the format's default; otherwise use the
+        // format's default (if any).
+        let template = if let Some(cli_tmpl) = args.display.as_deref() {
+            Some(
+                format::DisplayTemplate::compile(cli_tmpl, &fmt.field_names)
+                    .map_err(|e| Error::Runtime(format!("--display: {e}")))?,
+            )
+        } else {
+            fmt.display.clone()
+        };
+        let renderer = template.map(|t| format::DisplayRenderer::new(t, fmt.regex.clone()));
+        (filter, renderer)
     } else {
-        None
+        (None, None)
     };
 
     let sigterm = install_signal_flag();
@@ -401,7 +437,7 @@ showing raw (use --content-type=NAME to override)"
             follow: args.follow,
             poll_interval: std::time::Duration::from_millis(250),
         };
-        return batch::run(src, idx, compiled_filter, spec, sigterm);
+        return batch::run(src, idx, compiled_filter, display_renderer, spec, sigterm);
     }
 
     let _guard = TerminalGuard::enter()
@@ -418,6 +454,9 @@ showing raw (use --content-type=NAME to override)"
     if let Some(f) = compiled_filter {
         viewport.set_filter(Some(f));
         viewport.set_dim_mode(args.dim);
+    }
+    if let Some(d) = display_renderer {
+        viewport.set_display(Some(d));
     }
 
     let rebuild_spec = RebuildSpec {

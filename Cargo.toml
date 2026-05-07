@@ -1,6 +1,6 @@
 [package]
 name = "tess"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 rust-version = "1.85"
 description = "A less-style terminal pager with structured-log filtering, pretty-printing (JSON/YAML/TOML/XML/HTML/CSV), and wrap-aware long-line scrolling."

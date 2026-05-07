@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::filter::{CompiledFilter, FilterMatch};
+use crate::format::DisplayRenderer;
 use crate::line_index::LineIndex;
 use crate::source::Source;
 
@@ -50,6 +51,7 @@ pub fn run(
     src: Box<dyn Source>,
     mut idx: LineIndex,
     filter: Option<CompiledFilter>,
+    display: Option<DisplayRenderer>,
     spec: BatchSpec,
     sigterm: Arc<AtomicBool>,
 ) -> Result<()> {
@@ -71,7 +73,7 @@ pub fn run(
     // streaming stdin sources whose initial bytes are present do too.
     idx.extend_to_end(src.as_ref());
     let mut next_line = 0usize;
-    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), &mut *out, next_line)?;
+    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), display.as_ref(), &mut *out, next_line)?;
     out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
 
     if !spec.follow {
@@ -89,7 +91,7 @@ pub fn run(
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src.as_ref());
         if idx.line_count() != lines_before {
-            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), &mut *out, next_line)?;
+            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), display.as_ref(), &mut *out, next_line)?;
             out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
         }
         // For static sources, nothing more will ever arrive — break out so
@@ -108,11 +110,15 @@ pub fn run(
 }
 
 /// Emit lines `[next_line, idx.line_count())` that pass the filter (or all of
-/// them if no filter is bound). Returns the new `next_line` cursor.
+/// them if no filter is bound). Returns the new `next_line` cursor. When a
+/// `DisplayRenderer` is supplied, parsed lines are written through the
+/// template; lines that don't parse fall back to the raw bytes so no data is
+/// silently lost.
 fn emit_pending(
     src: &dyn Source,
     idx: &mut LineIndex,
     filter: Option<&CompiledFilter>,
+    display: Option<&DisplayRenderer>,
     out: &mut dyn Write,
     mut next_line: usize,
 ) -> Result<usize> {
@@ -125,7 +131,14 @@ fn emit_pending(
             Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
         };
         if keep {
-            out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+            match display.and_then(|r| r.render_line(&bytes)) {
+                Some(rendered) => {
+                    out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+                }
+                None => {
+                    out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+                }
+            }
             out.write_all(b"\n").map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }
         next_line += 1;
@@ -145,6 +158,7 @@ mod tests {
         src: Box<dyn Source>,
         idx: LineIndex,
         filter: Option<CompiledFilter>,
+        display: Option<crate::format::DisplayRenderer>,
     ) -> Vec<u8> {
         // Use a tempfile destination since BatchDestination::Stdout would
         // capture the test runner's stdout. Easier and more honest.
@@ -154,6 +168,7 @@ mod tests {
             src,
             idx,
             filter,
+            display,
             BatchSpec {
                 destination: BatchDestination::File(path.clone()),
                 follow: false,
@@ -171,8 +186,46 @@ mod tests {
         let m = MockSource::new();
         m.append(b"alpha\nbeta\ngamma\n");
         m.finish();
-        let out = run_to_vec(Box::new(m), LineIndex::new(), None);
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, None);
         assert_eq!(out, b"alpha\nbeta\ngamma\n");
+    }
+
+    #[test]
+    fn display_template_rewrites_lines() {
+        let m = MockSource::new();
+        m.append(b"127.0.0.1 - alice [10/Oct/2023:13:55:36 +0000] \"GET /a HTTP/1.1\" 200 1024 \"-\" \"-\"\n");
+        m.append(b"127.0.0.1 - alice [10/Oct/2023:13:55:36 +0000] \"GET /b HTTP/1.1\" 500 64 \"-\" \"-\"\n");
+        m.finish();
+
+        let fmt = LogFormat::compile(
+            "apache-combined",
+            r#"^(?P<ip>\S+) \S+ (?P<user>\S+) \[(?P<time>[^\]]+)\] "(?P<method>\S+) (?P<url>\S+) (?P<protocol>[^"]+)" (?P<status>\d+) (?P<size>\S+) "(?P<referer>[^"]*)" "(?P<agent>[^"]*)"$"#,
+        ).unwrap();
+        let template = crate::format::DisplayTemplate::compile("<status> <method> <url>", &fmt.field_names).unwrap();
+        let renderer = crate::format::DisplayRenderer::new(template, fmt.regex.clone());
+
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(renderer));
+        let s = std::str::from_utf8(&out).unwrap();
+        assert_eq!(s, "200 GET /a\n500 GET /b\n");
+    }
+
+    #[test]
+    fn display_falls_back_to_raw_when_line_doesnt_parse() {
+        let m = MockSource::new();
+        // A single word with no space — won't match `\w+ .+`.
+        m.append(b"singleword\n");
+        m.finish();
+
+        let fmt = LogFormat::compile(
+            "simple",
+            r"^(?P<level>\w+) (?P<msg>.+)$",
+        ).unwrap();
+        let template = crate::format::DisplayTemplate::compile("<level>: <msg>", &fmt.field_names).unwrap();
+        let renderer = crate::format::DisplayRenderer::new(template, fmt.regex.clone());
+
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(renderer));
+        // Falls back to the raw line so data isn't lost.
+        assert_eq!(out, b"singleword\n");
     }
 
     #[test]
@@ -192,7 +245,7 @@ mod tests {
             vec![FilterSpec::parse("status>=500").unwrap()],
         ).unwrap();
 
-        let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f));
+        let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), None);
         let s = std::str::from_utf8(&out).unwrap();
         assert_eq!(s.lines().count(), 1);
         assert!(s.contains("/api"), "expected the 500 line, got {:?}", s);
@@ -205,7 +258,7 @@ mod tests {
         m.finish();
         let mut idx = LineIndex::new();
         idx.set_head_cap(3);
-        let out = run_to_vec(Box::new(m), idx, None);
+        let out = run_to_vec(Box::new(m), idx, None, None);
         assert_eq!(out, b"1\n2\n3\n");
     }
 }

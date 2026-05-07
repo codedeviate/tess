@@ -20,8 +20,16 @@ pub struct Args {
     #[arg(long = "dim", display_order = 3)]
     pub dim: bool,
 
+    /// Render each parsed line through this template instead of showing the
+    /// raw line. Syntax: `<fieldname>` placeholders, `\<` for literal `<`,
+    /// `\\` for literal `\`. Example: `--display '[<time>] <status> <msg>'`.
+    /// Overrides the format's `display` key (if set). Requires `--format`.
+    /// Search still matches against the raw line.
+    #[arg(long = "display", value_name = "TEMPLATE", display_order = 4)]
+    pub display: Option<String>,
+
     /// Print a curated list of usage examples and exit.
-    #[arg(long = "examples", display_order = 4)]
+    #[arg(long = "examples", display_order = 5)]
     pub examples: bool,
 
     /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
@@ -30,29 +38,29 @@ pub struct Args {
     /// lexicographic). Examples: `--filter status=500`, `--filter ip~^10\.`,
     /// `--filter 'status>=500'` (quote `<` and `>` to avoid shell redirection).
     /// Requires `--format`.
-    #[arg(long = "filter", value_name = "FIELD<op>VALUE", display_order = 5)]
+    #[arg(long = "filter", value_name = "FIELD<op>VALUE", display_order = 6)]
     pub filter: Vec<String>,
 
     /// Follow mode: keep watching the source for new bytes (like `tail -f`).
     /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
-    #[arg(short = 'f', long = "follow", display_order = 6)]
+    #[arg(short = 'f', long = "follow", display_order = 7)]
     pub follow: bool,
 
     /// Apply a named log format (built-in or user-defined in
     /// ~/.config/tess/formats.toml). Required by `--filter`.
-    #[arg(long = "format", value_name = "NAME", display_order = 7)]
+    #[arg(long = "format", value_name = "NAME", display_order = 8)]
     pub format: Option<String>,
 
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
-    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 8)]
+    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 9)]
     pub head: Option<usize>,
 
     /// Show line numbers.
-    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 9)]
+    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 10)]
     pub line_numbers: bool,
 
     /// Print available log formats and their named fields, then exit.
-    #[arg(long = "list-formats", display_order = 10)]
+    #[arg(long = "list-formats", display_order = 11)]
     pub list_formats: bool,
 
     /// Live mode: re-read the file when its on-disk content changes (mtime,
@@ -60,11 +68,11 @@ pub struct Args {
     /// being edited, files saved by an editor or AI agent. Different from
     /// `--follow` (which watches for *appended* bytes); the two are mutually
     /// exclusive. Press `R` inside the pager to force a reload.
-    #[arg(long = "live", conflicts_with = "follow", display_order = 11)]
+    #[arg(long = "live", conflicts_with = "follow", display_order = 12)]
     pub live: bool,
 
     /// Print the full user manual and exit.
-    #[arg(long = "manual", display_order = 12)]
+    #[arg(long = "manual", display_order = 13)]
     pub manual: bool,
 
     /// Non-interactive batch mode: apply --filter / --head / --tail / --prettify
@@ -73,7 +81,7 @@ pub struct Args {
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 13)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 14)]
     pub output: Option<String>,
 
     /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
@@ -81,21 +89,21 @@ pub struct Args {
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 14)]
+    #[arg(long = "prettify", display_order = 15)]
     pub prettify: bool,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 15)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 16)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 16)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 17)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 17)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 18)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -275,6 +283,7 @@ mod tests {
             "--chop-long-lines",
             "--content-type",
             "--dim",
+            "--display",
             "--examples",
             "--filter",
             "--follow",

@@ -33,6 +33,7 @@ cmd | tess [OPTIONS]
 | Apache 5xx errors | `tess --format apache-combined --filter status~^5 access.log` |
 | Filter to a file (non-interactive) | `tess --format apache-combined --filter status~^5 -o errors.log access.log` |
 | Pretty-print a file to stdout | `tess --prettify --stdout config.json` |
+| Reformat each line through a template | `tess --format apache-combined --display '[<status>] <method> <url>' access.log` |
 
 ---
 
@@ -75,6 +76,7 @@ cmd | tess [OPTIONS]
   >
   > Single quotes are sufficient and prevent any other shell metacharacter (`\`, `$`, etc.) from being interpreted in your regex too. Inside scripts, history expansion is off by default; quoting is only needed at an interactive prompt. Alternatively `set +H` in bash disables history expansion for the session.
 - **`--dim`** — render non-matching lines visibly faded instead of hiding them. Requires `--filter`.
+- **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (so what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
 ### Pretty-printing
@@ -219,6 +221,8 @@ regex = '^(?P<level>\w+) (?P<msg>.*)$'
 # A custom application log: timestamp, level, request id, message.
 [format.app]
 regex = '^(?P<ts>\S+ \S+) (?P<level>\w+) \[(?P<reqid>[0-9a-f]+)\] (?P<msg>.*)$'
+# Optional default display template. CLI --display overrides.
+display = '[<ts>] <level> <msg>'
 
 # Override a built-in (here, a simplified apache-common variant).
 [format.apache-common]
@@ -252,6 +256,34 @@ Caveats:
 - **The outer group still captures the literal substring**, including any delimiters inside it. Don't put characters outside the outer group that you want included in `time`.
 - **No post-processing** — the captured value is exactly what the regex matched. If a format has `May` you can't filter on `05`; either filter on `May` or use a regex predicate (`--filter 'month~^(May|05)$'`).
 - For optional sub-parts (e.g. fractional seconds that may or may not be present), wrap the optional segment in a non-capturing group with `?`: `(?:\.(?P<micro>\d+))?`. When the segment isn't there, the `micro` field simply won't appear in the field map and any `--filter micro=…` won't match — exactly what you want.
+
+### Display templates
+
+A format can specify a default `display` template that reformats each parsed line into a chosen subset and order of fields. `--display TEMPLATE` on the command line overrides the format's default. Either way, the syntax is the same:
+
+| Syntax | Meaning |
+|---|---|
+| `<fieldname>` | Replaced with the field's captured value. Empty string if the regex didn't capture the field on this line. |
+| `\<` | Literal `<`. |
+| `\\` | Literal `\`. |
+| `\X` (any other) | Left as `\X` (so you don't have to escape backslashes inside regex-like literals). |
+| anything else | Literal. |
+
+Examples:
+
+```sh
+tess --format apache-combined --display '[<status>] <method> <url>' access.log
+tess --format app --display '[<ts>] <level> <msg>' --filter 'level>=WARN' app.log
+tess --format apache-combined --display '<status>: <url>' --filter 'status>=500' -o errors.log access.log
+```
+
+Behavior notes:
+
+- **Search runs against the rendered template**, so the highlight you see is the substring you typed. If you removed `<msg>` from the template, `/Renderer.php` won't find anything — that's intentional. Drop the template if you want raw-line search.
+- **Filtering still operates on the raw captures**, not the rendered output. `--filter status>=500` works regardless of whether `<status>` is in the template.
+- **Lines that don't parse** against the format regex fall back to the raw line (no data is silently dropped), both in the interactive view and in `--output`.
+- **Wrap-row scrolling** measures the rendered line length, so `j` walks the rendered wrap rows, not the raw line's.
+- **Mutually exclusive with `--prettify`** (which already reshapes the byte stream).
 
 ### How filtering works
 

@@ -126,6 +126,10 @@ pub struct Viewport {
     /// `extend_visible_lines` to avoid re-scanning lines on every tick.
     visible_scanned: usize,
     search: Option<SearchState>,
+    /// Active display template + format regex. When set, lines are rendered
+    /// through the template before being shown, searched, or counted for wraps.
+    /// Filtering still operates on the raw line (it uses captures, not text).
+    display: Option<crate::format::DisplayRenderer>,
 }
 
 impl Viewport {
@@ -148,7 +152,27 @@ impl Viewport {
             visible_lines: Vec::new(),
             visible_scanned: 0,
             search: None,
+            display: None,
         }
+    }
+
+    pub fn set_display(&mut self, renderer: Option<crate::format::DisplayRenderer>) {
+        self.display = renderer;
+    }
+
+    /// Fetch a logical line's display bytes — rendered through the active
+    /// display template if one is set and the line parses against the format
+    /// regex, otherwise the raw bytes. Used everywhere the *visible* form of
+    /// the line matters: rendering, search, wrap-row counting.
+    fn line_display_bytes<'a>(&self, src: &'a dyn Source, idx: &LineIndex, line_n: usize) -> std::borrow::Cow<'a, [u8]> {
+        let range = idx.line_range(line_n, src);
+        let raw = src.bytes(range);
+        if let Some(r) = self.display.as_ref() {
+            if let Some(rendered) = r.render_line(&raw) {
+                return std::borrow::Cow::Owned(rendered.into_bytes());
+            }
+        }
+        raw
     }
 
     /// Compile and store a search pattern. Returns the parse error from the
@@ -188,8 +212,10 @@ impl Viewport {
     }
 
     fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
-        let range = idx.line_range(line_n, src);
-        let bytes = src.bytes(range);
+        // Search runs against the *displayed* bytes so what the user sees is
+        // what they can find. With a template active, that's the rendered form;
+        // otherwise the raw line.
+        let bytes = self.line_display_bytes(src, idx, line_n);
         match std::str::from_utf8(&bytes) {
             Ok(s) => pattern.is_match(s),
             Err(_) => false,
@@ -396,12 +422,21 @@ impl Viewport {
                 line_n += 1;
                 continue;
             }
-            let range = idx.line_range(line_n, src);
-            let bytes = src.bytes(range);
-            let rows = render_line(&bytes, &r_opts);
+            // Filter evaluation runs on the raw line (it uses captures, not
+            // text), but rendering goes through the template if one is set.
+            let raw = src.bytes(idx.line_range(line_n, src));
+            let display_bytes = if let Some(r) = self.display.as_ref() {
+                match r.render_line(&raw) {
+                    Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
+                    None => raw.clone(),
+                }
+            } else {
+                raw.clone()
+            };
+            let rows = render_line(&display_bytes, &r_opts);
             let style = if let Some(f) = self.filter.as_ref() {
                 if self.dim_mode {
-                    match f.evaluate(&bytes) {
+                    match f.evaluate(&raw) {
                         FilterMatch::Matched => RowStyle::Normal,
                         _ => RowStyle::Dim,
                     }
@@ -485,8 +520,7 @@ impl Viewport {
         // pressing `j` and the scroll is invisible on repeating content.
         if !self.hide_mode() && self.top_row > 0 {
             let line_rows = if total > 0 {
-                let range = idx.line_range(self.top_line, src);
-                let bytes = src.bytes(range);
+                let bytes = self.line_display_bytes(src, idx, self.top_line);
                 count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
             } else { 1 };
             s.push_str(&format!("  +{}/{}", self.top_row, line_rows));
@@ -566,8 +600,7 @@ impl Viewport {
                 idx.extend_to_line(self.top_line + 1, src);
                 let total = idx.line_count();
                 if total == 0 { break; }
-                let range = idx.line_range(self.top_line, src);
-                let bytes = src.bytes(range);
+                let bytes = self.line_display_bytes(src, idx, self.top_line);
                 let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
                 if self.top_row + 1 < line_rows {
                     self.top_row += 1;
@@ -586,8 +619,7 @@ impl Viewport {
                     self.top_row -= 1;
                 } else if self.top_line > 0 {
                     self.top_line -= 1;
-                    let range = idx.line_range(self.top_line, src);
-                    let bytes = src.bytes(range);
+                    let bytes = self.line_display_bytes(src, idx, self.top_line);
                     let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
                     self.top_row = line_rows.saturating_sub(1);
                 } else {
