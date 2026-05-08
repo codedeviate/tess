@@ -1,15 +1,58 @@
 # Installing `tess`
 
-`tess` is distributed as a source tarball. Building it requires a working Rust
-toolchain; the resulting binary is a single static-ish executable you can drop
-anywhere on `$PATH`.
-
 Supported platforms: **macOS** and **Linux**. Windows is not currently
 supported (the stdin / `/dev/tty` plumbing is Unix-specific).
 
+There are three install routes, in order of convenience:
+
+1. **Homebrew tap** — one command, builds from source under the hood.
+2. **`cargo install`** from crates.io — needs a Rust toolchain, no tarball
+   handling.
+3. **Source tarball** — full manual flow; documented below.
+
 ---
 
-## 1. Prerequisites
+## Homebrew tap
+
+```sh
+brew install codedeviate/cli/tess
+```
+
+The formula lives in the [`codedeviate/homebrew-cli`](https://github.com/codedeviate/homebrew-cli)
+tap (`brew tap codedeviate/cli` if you want the explicit two-step). Source-build
+formula — first install compiles `tess` and pulls in `rust` as a build
+dependency. To track `master` instead of the latest tagged release, add `--HEAD`.
+
+To upgrade later:
+
+```sh
+brew update && brew upgrade tess
+```
+
+---
+
+## crates.io
+
+```sh
+cargo install tess-cli
+```
+
+The crate is published as **`tess-cli`** (the bare `tess` name on crates.io is
+an unrelated parked crate). The installed binary is still `tess`, in
+`~/.cargo/bin/tess` — make sure that's on `$PATH`. Same Rust prerequisite as
+the source build below.
+
+To upgrade: `cargo install --force tess-cli` (or `cargo install-update -a` if
+you use [`cargo-update`](https://github.com/nabijaczleweli/cargo-update)).
+
+---
+
+## From source
+
+The rest of this document covers the manual source-tarball flow. The resulting
+binary is a single static-ish executable you can drop anywhere on `$PATH`.
+
+### 1. Prerequisites
 
 - **Rust 1.85 or newer** (transitive dep `clap_lex` requires edition 2024). Install via
   [rustup](https://rustup.rs):
@@ -33,7 +76,7 @@ cargo --version
 
 ---
 
-## 2. Unpack
+### 2. Unpack
 
 ```sh
 tar -xzf tess-<version>.tar.gz
@@ -55,7 +98,7 @@ file.
 
 ---
 
-## 3. Build
+### 3. Build
 
 Release build (optimised, what you want for daily use):
 
@@ -76,7 +119,7 @@ You should see all tests pass (~140 across unit, integration, and doc tests).
 
 ---
 
-## 4. Install
+### 4. Install
 
 Pick wherever your `$PATH` points. Common choices:
 
@@ -118,12 +161,12 @@ Verify:
 
 ```sh
 which tess
-tess --version          # tess 0.4.0
+tess --version          # tess <version>
 ```
 
 ---
 
-## 5. First run
+## First run
 
 ```sh
 tess --help             # flag list (alphabetical by long name)
@@ -139,7 +182,7 @@ terminal, and print plain text when piped (`tess --manual | grep foo`,
 
 ---
 
-## 6. Optional: user config
+## Optional: user config
 
 `tess` reads optional log formats and command-line groups from
 `~/.config/tess/formats.toml`. See the **Log formats** and **Groups** sections
@@ -151,14 +194,24 @@ work without any config.
 
 ## Updating
 
-To upgrade, repeat the unpack → build → copy steps with the newer tarball.
-`cargo build --release` reuses cached dependencies, so updates are quick.
+| Install method | Upgrade command                              |
+| -------------- | -------------------------------------------- |
+| Homebrew       | `brew update && brew upgrade tess`           |
+| crates.io      | `cargo install --force tess-cli`             |
+| Source tarball | Re-run unpack → build → install with the newer tarball. `cargo build --release` reuses cached dependencies, so updates are quick. |
 
 ---
 
 ## Uninstall
 
+| Install method | Remove command                                    |
+| -------------- | ------------------------------------------------- |
+| Homebrew       | `brew uninstall tess` (and `brew untap codedeviate/cli` to drop the tap entirely) |
+| crates.io      | `cargo uninstall tess-cli`                        |
+| Source tarball | `rm -f ~/.local/bin/tess` (or wherever you put it) |
+
+Drop user config separately if you want a fully clean removal:
+
 ```sh
-rm -f ~/.local/bin/tess          # or wherever you installed it
-rm -rf ~/.config/tess            # optional: drop user config too
+rm -rf ~/.config/tess
 ```

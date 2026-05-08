@@ -1,9 +1,9 @@
 [package]
-name = "tess"
-version = "0.9.0"
+name = "tess-cli"
+version = "0.9.1"
 edition = "2021"
 rust-version = "1.85"
-description = "A less-style terminal pager with structured-log filtering, pretty-printing (JSON/YAML/TOML/XML/HTML/CSV), and wrap-aware long-line scrolling."
+description = "Less-style terminal pager with structured-log filtering and pretty-printing."
 license = "MIT"
 authors = ["Thomas Björk <codedv8@gmail.com>"]
 homepage = "https://github.com/codedeviate/tess"
@@ -15,12 +15,12 @@ categories = ["command-line-utilities", "text-processing"]
 exclude = [
     "tess-*.tar.gz",
     ".claude/",
-    "homebrew/",
     ".github/",
+    ".git/",
+    ".idea/",
     "/.gitignore",
     "OUT-OF-SCOPE.md",
     "CLAUDE.md",
-    "BREW.md",
 ]
 
 [dependencies]

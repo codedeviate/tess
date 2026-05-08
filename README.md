@@ -28,7 +28,23 @@ It is **not** a log search/correlation tool, structured query engine, or replace
 
 ## Install
 
-Source-only for now (no prebuilt binaries):
+### Homebrew (macOS / Linuxbrew)
+
+```sh
+brew install codedeviate/cli/tess
+```
+
+The formula lives in the [`codedeviate/homebrew-cli`](https://github.com/codedeviate/homebrew-cli) tap and builds from source on first install.
+
+### crates.io
+
+```sh
+cargo install tess-cli
+```
+
+The crate is published as **`tess-cli`** because the bare `tess` name was already taken (an unrelated parked crate). The installed binary is still `tess`.
+
+### From source
 
 ```sh
 tar -xzf tess-<version>.tar.gz
@@ -37,7 +53,7 @@ cargo build --release
 install -m 755 target/release/tess ~/.local/bin/tess
 ```
 
-Requires **Rust 1.74+**. See [INSTALL.md](INSTALL.md) for full instructions, including a macOS 26 (Tahoe) gotcha where `cp` into `/usr/local/bin` can get a binary SIGKILLed by the kernel — `install` avoids it.
+Requires **Rust 1.85+**. See [INSTALL.md](INSTALL.md) for full instructions, including a macOS 26 (Tahoe) gotcha where `cp` into `/usr/local/bin` can get a binary SIGKILLed by the kernel — `install` avoids it.
 
 ---
 
