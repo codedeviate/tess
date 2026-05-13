@@ -101,6 +101,25 @@ Pressing `/<Enter>` (or `?<Enter>`) with an empty pattern repeats the last searc
 
 ---
 
+## Plain-text grep
+
+If you don't have (or don't need) a parsed format, `--grep PATTERN` filters
+by regex against the raw line. Repeatable, AND-combined.
+
+```sh
+tess --grep error app.log
+tess --grep error --grep '^\[' app.log    # both patterns must match
+tess --grep error --dim app.log           # show all, dim non-matches
+```
+
+`--grep` composes with `--filter` when both are set (line must match both):
+
+```sh
+tess --format apache-combined --filter status=500 --grep timeout access.log
+```
+
+---
+
 ## Structured log filtering
 
 Three formats ship built-in: `apache-common`, `apache-combined`, `nginx-combined`. Drop a TOML file at `~/.config/tess/formats.toml` to define your own:

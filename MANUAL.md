@@ -75,7 +75,19 @@ cmd | tess [OPTIONS]
   > ```
   >
   > Single quotes are sufficient and prevent any other shell metacharacter (`\`, `$`, etc.) from being interpreted in your regex too. Inside scripts, history expansion is off by default; quoting is only needed at an interactive prompt. Alternatively `set +H` in bash disables history expansion for the session.
-- **`--dim`** — render non-matching lines visibly faded instead of hiding them. Requires `--filter`.
+- **`--grep PATTERN`** — filter visible lines by regex against the raw line.
+  Repeatable; multiple `--grep` arguments AND. Works on any input — no
+  `--format` required. Composes with `--filter` (both must match) and with
+  `--dim` (non-matches stay visible but faded).
+
+  ````sh
+  tess --grep error access.log
+  tess --grep error --grep '^\[' access.log         # both must match
+  tess --grep error --dim access.log                # dim non-matches
+  tess --format apache-combined --filter status=500 --grep timeout access.log
+  ````
+- **`--dim`** — render non-matching lines visibly faded instead of hiding them.
+  Works with `--filter`, `--grep`, or both. Keeps surrounding context visible.
 - **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (so what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
@@ -176,7 +188,7 @@ Both `-P` letters are case-insensitive. Any other key cancels the sub-prefix.
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [grep]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
@@ -184,7 +196,8 @@ The bottom row shows current state. Format:
 - **`<pct>%`** — position percentage.
 - **`+<wrap>/<wraps>`** — only shown when scrolled inside a wrapped line. Tells you which wrap row of the current logical line is at the top of the viewport (e.g. `+12/50` means wrap row 12 of a 50-row line). Lets you see that `j` is making progress through a long line; goes away when you reach the next logical line.
 - **`[<format>]`** — present when `--format` is active (e.g. `[apache-combined]`).
-- **`[filter]` / `[dim]`** — present when filtering, indicating mode.
+- **`[filter]` / `[dim]`** — present when filtering, indicating mode. With
+  `--grep` active, an additional `[grep]` token appears.
 - **`[/<search>]`** / **`[?<search>]`** — active search pattern (forward or backward). Cleared only when a new search is set or you exit.
 - **`[pretty:<type>]`** — present when `--prettify` is active. `<type>` is one of `json`/`yaml`/`toml`/`xml`/`html`/`csv`. Suffix `:err` indicates the last transform failed to parse; raw content is shown.
 - **`(L)`** — present when `--live` is on. The file is being watched for whole-file rewrites; `R` forces an immediate reload.
@@ -563,7 +576,7 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 - **Logical line** — one newline-bounded record. The line numbering used by `--head`, `--tail`, `goto`, scroll, etc.
 - **Display row** — one row on the terminal. A long logical line wraps into several display rows when wrap is on.
 - **Source** — a `tess` byte source: a file (mmap-backed with a streaming companion handle), synchronous stdin, or streaming stdin.
-- **Hide mode / dim mode** — what `--filter` does to non-matching lines. Hide is the default.
+- **Hide mode / dim mode** — what `--filter` / `--grep` does to non-matching lines. Hide is the default.
 
 ---
 

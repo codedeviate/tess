@@ -8,6 +8,7 @@ use tess::batch::{self, BatchDestination, BatchSpec};
 use tess::cli::Args;
 use tess::error::{Error, Result};
 use tess::filter::{CompiledFilter, FilterSpec};
+use tess::grep::GrepPredicate;
 use tess::format;
 use tess::line_index::LineIndex;
 use tess::prettify::{self, PrettifyMode, ResolvedType};
@@ -57,6 +58,11 @@ Following live output
   tess --live src/main.rs               # watch a file rewritten in place
   tess --live notes.md                  # follow saves from your editor / agent
 
+Plain-text grep (no format needed)
+----------------------------------
+  tess --grep error access.log                        # plain regex filter, no format needed
+  tess --grep error --grep '^\\[' access.log          # AND multiple --grep patterns
+
 Apache log analysis (built-in formats)
 --------------------------------------
   tess --format apache-combined --filter status~^5 access.log
@@ -65,6 +71,7 @@ Apache log analysis (built-in formats)
   tess --format apache-combined --filter 'status>=500' access.log
   tess --format apache-combined --filter status~^5 --dim access.log
   tess -f --tail 100 --format apache-combined --filter status~^5 access.log
+  tess --format apache-combined --filter status=500 --grep timeout access.log
 
 Note: single-quote filters that use `!` or `<`/`>` — bash's history
 expansion eats `!`, and `<`/`>` are I/O redirection without quotes.
@@ -222,9 +229,9 @@ fn real_main() -> Result<()> {
             "--display requires --format".to_string(),
         ));
     }
-    if args.dim && args.filter.is_empty() {
+    if args.dim && args.filter.is_empty() && args.grep.is_empty() {
         return Err(Error::Runtime(
-            "--dim has no effect without --filter".to_string(),
+            "--dim has no effect without --filter or --grep".to_string(),
         ));
     }
     if args.live && args.files.is_empty() {
@@ -278,6 +285,11 @@ documents can't be parsed)".to_string(),
         if !args.filter.is_empty() {
             return Err(Error::Runtime(
                 "--prettify is not supported with --filter".to_string(),
+            ));
+        }
+        if !args.grep.is_empty() {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --grep".to_string(),
             ));
         }
         if args.display.is_some() {
@@ -391,6 +403,17 @@ showing raw (use --content-type=NAME to override)"
         let _ = redirect_stdin_to_tty();
     }
 
+    // Compile --grep patterns up front (no --format required). A failing
+    // pattern errors cleanly to stderr without entering raw mode.
+    let compiled_grep = if !args.grep.is_empty() {
+        Some(
+            GrepPredicate::compile(&args.grep)
+                .map_err(Error::Runtime)?,
+        )
+    } else {
+        None
+    };
+
     // Compile filter specs and resolve the display template against the chosen
     // format BEFORE entering raw mode so errors print cleanly. The
     // `DisplayRenderer` bundles the (CLI-overridable) template with the
@@ -437,7 +460,7 @@ showing raw (use --content-type=NAME to override)"
             follow: args.follow,
             poll_interval: std::time::Duration::from_millis(250),
         };
-        return batch::run(src, idx, compiled_filter, display_renderer, spec, sigterm);
+        return batch::run(src, idx, compiled_filter, compiled_grep, display_renderer, spec, sigterm);
     }
 
     let _guard = TerminalGuard::enter()
@@ -453,7 +476,12 @@ showing raw (use --content-type=NAME to override)"
     viewport.set_prettify_label(prettify_label);
     if let Some(f) = compiled_filter {
         viewport.set_filter(Some(f));
-        viewport.set_dim_mode(args.dim);
+    }
+    if let Some(g) = compiled_grep {
+        viewport.set_grep(Some(g));
+    }
+    if args.dim {
+        viewport.set_dim_mode(true);
     }
     if let Some(d) = display_renderer {
         viewport.set_display(Some(d));

@@ -245,6 +245,7 @@ pub struct Group {
 const RESERVED_LONG_FLAGS: &[&str] = &[
     "format",
     "filter",
+    "grep",
     "dim",
     "head",
     "tail",
@@ -373,6 +374,7 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
 const VALUE_TAKING_LONG_FLAGS: &[&str] = &[
     "--format",
     "--filter",
+    "--grep",
     "--head",
     "--tail",
     "--tab-width",
@@ -750,6 +752,21 @@ file = "/tmp/x.log"
         let pos_1000 = out.iter().position(|x| x == "1000").unwrap();
         let pos_50 = out.iter().position(|x| x == "50").unwrap();
         assert!(pos_1000 < pos_50, "user's value must come after group's");
+    }
+
+    #[test]
+    fn expand_argv_treats_grep_value_as_flag_arg_not_filter() {
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert("errorlog".into(), group("errorlog"));
+        let out = expand_argv(
+            argv(&["tess", "--errorlog", "--grep", "timeout", "msg=hi"]),
+            &groups,
+        );
+        // `timeout` is --grep's value, not a positional → not converted to --filter.
+        assert_eq!(
+            out,
+            argv(&["tess", "--grep", "timeout", "--filter", "msg=hi"])
+        );
     }
 
     #[test]

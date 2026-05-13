@@ -51,16 +51,24 @@ pub struct Args {
     #[arg(long = "format", value_name = "NAME", display_order = 8)]
     pub format: Option<String>,
 
+    /// Filter visible lines by regex against the raw line. Repeatable;
+    /// multiple `--grep` arguments AND. Works on any input — no `--format`
+    /// required. Composes with `--filter` (both must match) and with
+    /// `--dim` (non-matches stay visible but faded).
+    /// Example: `--grep error --grep '^\['`.
+    #[arg(long = "grep", value_name = "PATTERN", display_order = 9)]
+    pub grep: Vec<String>,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
-    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 9)]
+    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 10)]
     pub head: Option<usize>,
 
     /// Show line numbers.
-    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 10)]
+    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 11)]
     pub line_numbers: bool,
 
     /// Print available log formats and their named fields, then exit.
-    #[arg(long = "list-formats", display_order = 11)]
+    #[arg(long = "list-formats", display_order = 12)]
     pub list_formats: bool,
 
     /// Live mode: re-read the file when its on-disk content changes (mtime,
@@ -68,20 +76,20 @@ pub struct Args {
     /// being edited, files saved by an editor or AI agent. Different from
     /// `--follow` (which watches for *appended* bytes); the two are mutually
     /// exclusive. Press `R` inside the pager to force a reload.
-    #[arg(long = "live", conflicts_with = "follow", display_order = 12)]
+    #[arg(long = "live", conflicts_with = "follow", display_order = 13)]
     pub live: bool,
 
     /// Print the full user manual and exit.
-    #[arg(long = "manual", display_order = 13)]
+    #[arg(long = "manual", display_order = 14)]
     pub manual: bool,
 
-    /// Non-interactive batch mode: apply --filter / --head / --tail / --prettify
+    /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
     /// to the source and write the resulting raw bytes to FILE, then exit.
     /// Use `-` for stdout (`--stdout` is a synonym). Skips the alt-screen and
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 14)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 15)]
     pub output: Option<String>,
 
     /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
@@ -89,21 +97,21 @@ pub struct Args {
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 15)]
+    #[arg(long = "prettify", display_order = 16)]
     pub prettify: bool,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 16)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 17)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 17)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 18)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 18)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 19)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -187,6 +195,20 @@ mod tests {
         let a = Args::parse_from(["tess", "x"]);
         assert!(a.head.is_none());
         assert!(a.tail.is_none());
+    }
+
+    #[test]
+    fn parses_grep_repeatable_and_no_format_required() {
+        let a = Args::parse_from([
+            "tess",
+            "--grep", "error",
+            "--grep", r"^\[",
+            "log",
+        ]);
+        assert_eq!(a.grep.len(), 2);
+        assert_eq!(a.grep[0], "error");
+        assert_eq!(a.grep[1], r"^\[");
+        assert_eq!(a.format, None);
     }
 
     #[test]
@@ -288,6 +310,7 @@ mod tests {
             "--filter",
             "--follow",
             "--format",
+            "--grep",
             "--head",
             "--LINE-NUMBERS",
             "--list-formats",
