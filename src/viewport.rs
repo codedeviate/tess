@@ -3,6 +3,7 @@ use std::ops::Range;
 use regex::Regex;
 
 use crate::filter::{CompiledFilter, FilterMatch};
+use crate::grep::GrepPredicate;
 use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
@@ -118,6 +119,7 @@ pub struct Viewport {
     live_mode: bool,
     prettify_label: Option<String>,
     filter: Option<CompiledFilter>,
+    grep: Option<GrepPredicate>,
     dim_mode: bool,
     /// In hide mode (filter active, !dim), maps visible position → logical line
     /// index. Empty otherwise.
@@ -148,6 +150,7 @@ impl Viewport {
             live_mode: false,
             prettify_label: None,
             filter: None,
+            grep: None,
             dim_mode: false,
             visible_lines: Vec::new(),
             visible_scanned: 0,
@@ -273,6 +276,16 @@ impl Viewport {
         self.top_row = 0;
     }
 
+    pub fn set_grep(&mut self, grep: Option<GrepPredicate>) {
+        self.grep = grep;
+        self.visible_lines.clear();
+        self.visible_scanned = 0;
+        self.top_line = 0;
+        self.top_row = 0;
+    }
+
+    pub fn grep_active(&self) -> bool { self.grep.is_some() }
+
     pub fn set_dim_mode(&mut self, on: bool) {
         self.dim_mode = on;
         // Hide mode is the only mode that needs visible_lines; clear when
@@ -286,7 +299,9 @@ impl Viewport {
 
     pub fn dim_mode(&self) -> bool { self.dim_mode }
 
-    fn hide_mode(&self) -> bool { self.filter.is_some() && !self.dim_mode }
+    fn hide_mode(&self) -> bool {
+        (self.filter.is_some() || self.grep.is_some()) && !self.dim_mode
+    }
 
     /// Walk any newly indexed logical lines and append matching ones to
     /// `visible_lines` if we're in hide mode. No-op otherwise. Cheap to call
@@ -295,17 +310,30 @@ impl Viewport {
         if !self.hide_mode() {
             return;
         }
-        let Some(filter) = self.filter.as_ref() else { return };
         let total = idx.line_count();
         while self.visible_scanned < total {
             let line_n = self.visible_scanned;
             let range = idx.line_range(line_n, src);
             let bytes = src.bytes(range);
-            if matches!(filter.evaluate(&bytes), FilterMatch::Matched) {
+            if self.line_passes(&bytes) {
                 self.visible_lines.push(line_n);
             }
             self.visible_scanned += 1;
         }
+    }
+
+    /// Combined predicate: a line passes iff the (optional) filter matches
+    /// AND the (optional) grep matches. Missing predicates vacuously pass.
+    fn line_passes(&self, line: &[u8]) -> bool {
+        let filter_ok = match self.filter.as_ref() {
+            Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
+            None => true,
+        };
+        let grep_ok = match self.grep.as_ref() {
+            Some(g) => g.matches(line),
+            None => true,
+        };
+        filter_ok && grep_ok
     }
 
     pub fn body_rows(&self) -> u16 { self.rows.saturating_sub(1).max(1) }
@@ -434,12 +462,9 @@ impl Viewport {
                 raw.clone()
             };
             let rows = render_line(&display_bytes, &r_opts);
-            let style = if let Some(f) = self.filter.as_ref() {
+            let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
-                    match f.evaluate(&raw) {
-                        FilterMatch::Matched => RowStyle::Normal,
-                        _ => RowStyle::Dim,
-                    }
+                    if self.line_passes(&raw) { RowStyle::Normal } else { RowStyle::Dim }
                 } else {
                     // hide mode: only matching lines reach here
                     RowStyle::Normal
@@ -527,6 +552,11 @@ impl Viewport {
         }
         if let Some(f) = self.filter.as_ref() {
             s.push_str(&format!("  [{}]", f.format_name));
+        }
+        if self.grep.is_some() {
+            s.push_str("  [grep]");
+        }
+        if self.filter.is_some() || self.grep.is_some() {
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [filter]" });
         }
         if let Some(sr) = self.search.as_ref() {
@@ -684,6 +714,9 @@ impl Viewport {
     pub fn toggle_chop(&mut self) {
         self.opts.wrap = !self.opts.wrap;
     }
+
+    #[cfg(test)]
+    pub fn visible_lines_for_test(&self) -> &[usize] { &self.visible_lines }
 }
 
 #[cfg(test)]
@@ -1154,6 +1187,63 @@ mod tests {
         assert_eq!(frame.row_styles[0], RowStyle::Normal);
         assert_eq!(frame.row_styles[1], RowStyle::Dim);
         assert_eq!(frame.highlights[1], vec![0..4]);
+    }
+
+    #[test]
+    fn grep_only_hides_non_matching_lines() {
+        use crate::grep::GrepPredicate;
+        let src = crate::source::MockSource::new();
+        src.append(b"keep this error\n");
+        src.append(b"drop this one\n");
+        src.append(b"another error line\n");
+        src.finish();
+        let mut idx = crate::line_index::LineIndex::new();
+        idx.extend_to_end(&src);
+
+        let mut v = Viewport::new(40, 5, "test".into());
+        v.set_grep(Some(GrepPredicate::compile(&["error".to_string()]).unwrap()));
+        v.extend_visible_lines(&idx, &src);
+
+        // Only the two "error" lines should be visible.
+        let frame = v.frame(&src, &mut idx);
+        let body_text: Vec<String> = frame.body.iter()
+            .map(|row| row.iter().filter_map(|c| match c {
+                crate::render::Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            }).collect())
+            .collect();
+        assert!(body_text[0].contains("keep this error"));
+        assert!(body_text[1].contains("another error line"));
+        assert!(frame.status.contains("[grep]"));
+    }
+
+    #[test]
+    fn filter_and_grep_combine_with_and() {
+        use crate::grep::GrepPredicate;
+        let fmt = crate::format::LogFormat::compile(
+            "simple",
+            r"^(?P<level>\w+) (?P<msg>.+)$",
+        ).unwrap();
+        let f = crate::filter::CompiledFilter::compile(
+            &fmt,
+            vec![crate::filter::FilterSpec::parse("level=ERROR").unwrap()],
+        ).unwrap();
+        let g = GrepPredicate::compile(&["timeout".to_string()]).unwrap();
+
+        let src = crate::source::MockSource::new();
+        src.append(b"ERROR timeout connecting\n");      // matches both → keep
+        src.append(b"ERROR file not found\n");          // matches filter only → drop
+        src.append(b"WARN timeout retrying\n");         // matches grep only → drop
+        src.append(b"INFO all good\n");                 // matches neither → drop
+        src.finish();
+        let mut idx = crate::line_index::LineIndex::new();
+        idx.extend_to_end(&src);
+
+        let mut v = Viewport::new(80, 5, "test".into());
+        v.set_filter(Some(f));
+        v.set_grep(Some(g));
+        v.extend_visible_lines(&idx, &src);
+        assert_eq!(v.visible_lines_for_test(), &[0usize]);
     }
 
     #[test]
