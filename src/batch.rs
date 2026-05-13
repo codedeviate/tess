@@ -19,6 +19,7 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::filter::{CompiledFilter, FilterMatch};
 use crate::format::DisplayRenderer;
+use crate::grep::GrepPredicate;
 use crate::line_index::LineIndex;
 use crate::source::Source;
 
@@ -51,6 +52,7 @@ pub fn run(
     src: Box<dyn Source>,
     mut idx: LineIndex,
     filter: Option<CompiledFilter>,
+    grep: Option<GrepPredicate>,
     display: Option<DisplayRenderer>,
     spec: BatchSpec,
     sigterm: Arc<AtomicBool>,
@@ -73,7 +75,7 @@ pub fn run(
     // streaming stdin sources whose initial bytes are present do too.
     idx.extend_to_end(src.as_ref());
     let mut next_line = 0usize;
-    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), display.as_ref(), &mut *out, next_line)?;
+    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), display.as_ref(), &mut *out, next_line)?;
     out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
 
     if !spec.follow {
@@ -91,7 +93,7 @@ pub fn run(
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src.as_ref());
         if idx.line_count() != lines_before {
-            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), display.as_ref(), &mut *out, next_line)?;
+            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), display.as_ref(), &mut *out, next_line)?;
             out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
         }
         // For static sources, nothing more will ever arrive — break out so
@@ -118,6 +120,7 @@ fn emit_pending(
     src: &dyn Source,
     idx: &mut LineIndex,
     filter: Option<&CompiledFilter>,
+    grep: Option<&GrepPredicate>,
     display: Option<&DisplayRenderer>,
     out: &mut dyn Write,
     mut next_line: usize,
@@ -126,11 +129,15 @@ fn emit_pending(
     while next_line < total {
         let range = idx.line_range(next_line, src);
         let bytes = src.bytes(range);
-        let keep = match filter {
+        let filter_ok = match filter {
             None => true,
             Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
         };
-        if keep {
+        let grep_ok = match grep {
+            None => true,
+            Some(g) => g.matches(&bytes),
+        };
+        if filter_ok && grep_ok {
             match display.and_then(|r| r.render_line(&bytes)) {
                 Some(rendered) => {
                     out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
@@ -158,6 +165,7 @@ mod tests {
         src: Box<dyn Source>,
         idx: LineIndex,
         filter: Option<CompiledFilter>,
+        grep: Option<crate::grep::GrepPredicate>,
         display: Option<crate::format::DisplayRenderer>,
     ) -> Vec<u8> {
         // Use a tempfile destination since BatchDestination::Stdout would
@@ -168,6 +176,7 @@ mod tests {
             src,
             idx,
             filter,
+            grep,
             display,
             BatchSpec {
                 destination: BatchDestination::File(path.clone()),
@@ -186,7 +195,7 @@ mod tests {
         let m = MockSource::new();
         m.append(b"alpha\nbeta\ngamma\n");
         m.finish();
-        let out = run_to_vec(Box::new(m), LineIndex::new(), None, None);
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, None, None);
         assert_eq!(out, b"alpha\nbeta\ngamma\n");
     }
 
@@ -204,7 +213,7 @@ mod tests {
         let template = crate::format::DisplayTemplate::compile("<status> <method> <url>", &fmt.field_names).unwrap();
         let renderer = crate::format::DisplayRenderer::new(template, fmt.regex.clone());
 
-        let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(renderer));
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, None, Some(renderer));
         let s = std::str::from_utf8(&out).unwrap();
         assert_eq!(s, "200 GET /a\n500 GET /b\n");
     }
@@ -223,7 +232,7 @@ mod tests {
         let template = crate::format::DisplayTemplate::compile("<level>: <msg>", &fmt.field_names).unwrap();
         let renderer = crate::format::DisplayRenderer::new(template, fmt.regex.clone());
 
-        let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(renderer));
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, None, Some(renderer));
         // Falls back to the raw line so data isn't lost.
         assert_eq!(out, b"singleword\n");
     }
@@ -245,7 +254,7 @@ mod tests {
             vec![FilterSpec::parse("status>=500").unwrap()],
         ).unwrap();
 
-        let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), None);
+        let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), None, None);
         let s = std::str::from_utf8(&out).unwrap();
         assert_eq!(s.lines().count(), 1);
         assert!(s.contains("/api"), "expected the 500 line, got {:?}", s);
@@ -258,7 +267,38 @@ mod tests {
         m.finish();
         let mut idx = LineIndex::new();
         idx.set_head_cap(3);
-        let out = run_to_vec(Box::new(m), idx, None, None);
+        let out = run_to_vec(Box::new(m), idx, None, None, None);
         assert_eq!(out, b"1\n2\n3\n");
+    }
+
+    #[test]
+    fn grep_filters_in_batch_mode() {
+        use crate::grep::GrepPredicate;
+        let m = MockSource::new();
+        m.append(b"keep error one\n");
+        m.append(b"drop me\n");
+        m.append(b"keep error two\n");
+        m.finish();
+        let g = GrepPredicate::compile(&["error".to_string()]).unwrap();
+        let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(g), None);
+        assert_eq!(out, b"keep error one\nkeep error two\n");
+    }
+
+    #[test]
+    fn filter_and_grep_combine_in_batch_mode() {
+        use crate::grep::GrepPredicate;
+        let m = MockSource::new();
+        m.append(b"ERROR timeout one\n");
+        m.append(b"ERROR not this\n");
+        m.append(b"WARN timeout other\n");
+        m.finish();
+        let fmt = LogFormat::compile("simple", r"^(?P<level>\w+) (?P<msg>.+)$").unwrap();
+        let f = CompiledFilter::compile(
+            &fmt,
+            vec![FilterSpec::parse("level=ERROR").unwrap()],
+        ).unwrap();
+        let g = GrepPredicate::compile(&["timeout".to_string()]).unwrap();
+        let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), Some(g), None);
+        assert_eq!(out, b"ERROR timeout one\n");
     }
 }
