@@ -188,7 +188,7 @@ Both `-P` letters are case-insensitive. Any other key cancels the sub-prefix.
 The bottom row shows current state. Format:
 
 ```
-<source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
+<source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [grep]  [filter]/[dim]  [/<search>]  [pretty:<type>]  (L)  (F)
 ```
 
 - **`<source>`** — file path or `(stdin)`.
@@ -576,7 +576,7 @@ When the group is expanded, its flags appear in argv before any flags you typed 
 - **Logical line** — one newline-bounded record. The line numbering used by `--head`, `--tail`, `goto`, scroll, etc.
 - **Display row** — one row on the terminal. A long logical line wraps into several display rows when wrap is on.
 - **Source** — a `tess` byte source: a file (mmap-backed with a streaming companion handle), synchronous stdin, or streaming stdin.
-- **Hide mode / dim mode** — what `--filter` does to non-matching lines. Hide is the default.
+- **Hide mode / dim mode** — what `--filter` / `--grep` does to non-matching lines. Hide is the default.
 
 ---
 
