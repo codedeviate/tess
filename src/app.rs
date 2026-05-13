@@ -60,10 +60,11 @@ pub fn run(
     let timeout = Duration::from_millis(250);
     let mut last_revision = src.revision();
 
-    // If a filter is active in hide mode, we need to scan the whole source
-    // up front to find matching lines. Without a filter this is intentionally
-    // skipped — lazy indexing keeps `tess` fast on huge files.
-    if viewport.filter_active() && !viewport.dim_mode() {
+    // If hide-mode filtering is active (--filter or --grep without --dim),
+    // we need to scan the whole source up front to find matching lines.
+    // Without any predicate this is intentionally skipped — lazy indexing
+    // keeps `tess` fast on huge files.
+    if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
         idx.extend_to_end(src.as_ref());
         viewport.extend_visible_lines(&idx, src.as_ref());
     }
