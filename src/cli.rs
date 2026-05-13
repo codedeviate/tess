@@ -83,7 +83,7 @@ pub struct Args {
     #[arg(long = "manual", display_order = 14)]
     pub manual: bool,
 
-    /// Non-interactive batch mode: apply --filter / --head / --tail / --prettify
+    /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
     /// to the source and write the resulting raw bytes to FILE, then exit.
     /// Use `-` for stdout (`--stdout` is a synonym). Skips the alt-screen and
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
