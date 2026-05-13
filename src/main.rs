@@ -58,6 +58,11 @@ Following live output
   tess --live src/main.rs               # watch a file rewritten in place
   tess --live notes.md                  # follow saves from your editor / agent
 
+Plain-text grep (no format needed)
+----------------------------------
+  tess --grep error access.log                        # plain regex filter, no format needed
+  tess --grep error --grep '^\\[' access.log          # AND multiple --grep patterns
+
 Apache log analysis (built-in formats)
 --------------------------------------
   tess --format apache-combined --filter status~^5 access.log
@@ -66,6 +71,7 @@ Apache log analysis (built-in formats)
   tess --format apache-combined --filter 'status>=500' access.log
   tess --format apache-combined --filter status~^5 --dim access.log
   tess -f --tail 100 --format apache-combined --filter status~^5 access.log
+  tess --format apache-combined --filter status=500 --grep timeout access.log
 
 Note: single-quote filters that use `!` or `<`/`>` — bash's history
 expansion eats `!`, and `<`/`>` are I/O redirection without quotes.
