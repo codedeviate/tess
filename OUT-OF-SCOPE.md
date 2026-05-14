@@ -119,6 +119,11 @@ Alternative considered: collapse `\n` → `␊` on render. Trivial (only `LineIn
 - **No-content idle hint**: when in follow mode and nothing has arrived for a while, an indicator like `(F idle)` could be useful. Trivially derivable from "ticks since last growth".
 - **Press-any-key suspends follow** (real `less +F` semantics): right now `Shift-F` is the explicit toggle and movement keys leave follow on (auto-scroll just doesn't fire because user isn't at bottom). If a user finds this surprising, change `ScrollLines(-…)` and friends to also `set_follow_mode(false)`.
 
+### `--grep` follow-ups — **S each**
+
+- **Rename the overloaded `[filter]` status token**: when only `--grep` is active, the status line reads `... [grep]  [filter]`. The trailing `[filter]` is meant to signal "hide mode is on" but visually clashes with the flag name. Either rename to `[hide]` (and `[dim]` becomes `[dim]` as today, unchanged), or drop the trailing token entirely when `--filter` is not in effect. Single point of change: `viewport::format_status`.
+- **`grep` field on `[group.NAME]` in `formats.toml`**: groups can carry default `filter = [...]` entries but not `grep`. Add a `grep: Vec<String>` field to `format::Group` and wire it through `format::expand_argv` the same way `filter` is. Small, but needs a test for repeatable expansion and another for user-grep-after-group accumulation (clap `Vec` behavior).
+
 ### Long tail of `less` flags — **L (cumulative)**
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some are non-trivial behavior. Add as needed; document each in its own commit.
