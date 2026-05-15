@@ -308,6 +308,55 @@ In **dim mode** (`--dim`): non-matching lines are still rendered, but with `Attr
 
 ---
 
+## Multi-line records
+
+Some log formats emit records that span many physical newlines: PHP error
+logs with stack traces, Java exception traces, multi-line debug payloads.
+Set `record_start` to a regex that matches the first line of each record,
+and tess treats every following non-matching line as a continuation:
+
+```toml
+[format.php-app]
+record_start = '^\['
+regex        = '^\[(?P<ts>[^\]]+)\] +(?P<level>\w+) +(?P<msg>[\s\S]+)$'
+display      = '[<ts>] <level> <msg>'
+```
+
+Then run:
+
+```
+tess --format php-app /var/log/php/error.log
+```
+
+Or use the CLI flag directly without a format:
+
+```
+tess --record-start '^\[' /var/log/php/error.log
+```
+
+When records mode is active:
+
+- Search (`/pattern`, `n`, `N`) matches against the full record bytes
+  with embedded newlines. Use `(?s)` if you want `.` to match `\n`.
+- `--filter FIELD<op>VALUE` matches against the parsed record (so
+  `[\s\S]+` capture groups span lines).
+- `--grep PATTERN` matches against the full record bytes.
+- Hide mode hides every line of a non-matching record; dim mode dims
+  them but keeps them visible.
+- Status line shows `L<line>-<line>/<total>  R<rec>-<rec>/<total>`.
+- `Ng` jumps to physical line N; `NG` jumps to record N; `N%` jumps to
+  N percent through the file by bytes. `Esc` cancels a partially-typed
+  numeric prefix.
+
+Lines before the first `record_start` match are collected into a single
+synthetic record numbered 0. If no line in the file matches the regex,
+the entire content becomes one big record (this is usually a sign that
+the regex is wrong).
+
+`--head N` and `--tail N` continue to count physical lines, not records.
+
+---
+
 ## Examples
 
 ### Plain file viewing
