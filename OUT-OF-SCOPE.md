@@ -25,10 +25,6 @@ should be added without their own spec → plan cycle.
 
 ## Waiting
 
-### Redundant `use std::io::Read;` in `src/source.rs` — **S**
-
-There's both a top-level import and a function-local one. Harmless, but a one-line cleanup.
-
 ---
 
 ## Deferred
