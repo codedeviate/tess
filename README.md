@@ -163,10 +163,11 @@ Architecture notes and module layout: [CLAUDE.md](CLAUDE.md). Deferred features 
 ## Building from source
 
 ```sh
-cargo build --release          # binary at target/release/tess
-cargo test                     # unit + integration tests
-cargo run -- Cargo.toml        # quick interactive run
-ls -la | cargo run --release   # piped stdin
+cargo build --release                  # binary at target/release/tess
+cargo test -- --test-threads=1         # unit + integration tests (PTY tests need serial)
+cargo bench                            # criterion baselines (HTML in target/criterion/)
+cargo run -- Cargo.toml                # quick interactive run
+ls -la | cargo run --release           # piped stdin
 ```
 
 ---
