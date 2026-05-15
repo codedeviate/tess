@@ -53,8 +53,7 @@ fn wait_clean(mut s: Session) {
     drain_for(&mut s, Duration::from_millis(300));
     match s.get_process().wait().expect("wait failed") {
         WaitStatus::Exited(_, code) => assert_eq!(code, 0, "tess should exit 0"),
-        WaitStatus::Signaled(_, _, _) => {}
-        other => panic!("unexpected wait status: {other:?}"),
+        other => panic!("tess should exit 0 cleanly, got {other:?}"),
     }
 }
 
@@ -83,6 +82,7 @@ fn sigterm_exits_cleanly() {
     let mut s = spawn_tess("");
     drain_for(&mut s, DRAW_GRACE);
     let pid = s.get_process().pid().as_raw();
+    // SAFETY: pid is from expectrl's still-living child process; libc::kill is a thin FFI wrapper.
     unsafe { libc::kill(pid, libc::SIGTERM); }
     // Give tess time to handle the signal and write cleanup bytes
     drain_for(&mut s, Duration::from_millis(400));
