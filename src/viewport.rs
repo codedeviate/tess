@@ -701,6 +701,46 @@ impl Viewport {
         }
     }
 
+    /// Position the viewport so line `n` (0-indexed) is the top visible line.
+    pub fn goto_line(&mut self, n: usize, src: &dyn Source, idx: &mut LineIndex) {
+        idx.extend_to_line(n, src);
+        let target = n.min(idx.line_count().saturating_sub(1));
+        self.top_line = target;
+        self.top_row = 0;
+    }
+
+    /// Position the viewport at the start of record `n` (0-indexed).
+    pub fn goto_record(&mut self, n: usize, src: &dyn Source, idx: &mut LineIndex) {
+        // Ensure the record exists by extending the index. Records can only
+        // appear after their constituent lines are scanned; extend repeatedly
+        // until the record exists or we hit EOF.
+        while idx.record_count() <= n && idx.scanned_through() < src.len() {
+            idx.extend_to_end(src);
+        }
+        if idx.record_count() == 0 {
+            return;
+        }
+        let target = n.min(idx.record_count().saturating_sub(1));
+        let line_range = idx.record_line_range(target);
+        self.top_line = line_range.start;
+        self.top_row = 0;
+    }
+
+    /// Position the viewport at `p` percent through the file by bytes.
+    pub fn goto_percent(&mut self, p: u8, src: &dyn Source, idx: &mut LineIndex) {
+        let p = p.min(100) as usize;
+        let target_byte = src.len().saturating_mul(p) / 100;
+        idx.extend_to_byte_for_query(src, target_byte);
+        let line_n = idx.line_at_byte(target_byte).unwrap_or(0);
+        self.top_line = line_n;
+        self.top_row = 0;
+    }
+
+    /// Get the currently top-displayed physical line index.
+    pub fn top_line(&self) -> usize {
+        self.top_line
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.cols = cols.max(1);
         self.rows = rows.max(2);
@@ -884,6 +924,62 @@ mod tests {
         v.goto_bottom(&m, &mut idx);
         // Last page should show lines 7..=10 → top_line = 6.
         assert_eq!(v.top_line, 6);
+    }
+
+    #[test]
+    fn goto_line_positions_top_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\nd\ne\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_line(3, &m, &mut idx);
+        assert_eq!(v.top_line(), 3);
+    }
+
+    #[test]
+    fn goto_line_clamps_to_last_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_line(999, &m, &mut idx);
+        assert_eq!(v.top_line(), 1);
+    }
+
+    #[test]
+    fn goto_record_positions_at_record_start_line() {
+        let m = MockSource::new();
+        m.append(b"[1] a\n  cont\n[2] b\n[3] c\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(1, &m, &mut idx);  // record 1 starts at line 2 ("[2] b")
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_record_in_line_per_record_mode_equals_goto_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(2, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_percent_50_lands_in_middle() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\nd\ne\n");  // 10 bytes
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_percent(50, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);  // byte 5 → line 2
     }
 
     #[test]

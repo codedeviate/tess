@@ -13,8 +13,6 @@ pub enum Command {
     PageUp,
     HalfPageDown,
     HalfPageUp,
-    GoTop,
-    GoBottom,
     Quit,
     Resize(u16, u16),
     Refresh,
@@ -43,6 +41,20 @@ pub enum Command {
     SetPrettifyMode(PrettifyMode),
     /// Re-run byte-based content detection and apply the result (`-Pa`).
     RedetectPrettify,
+    /// A digit (0-9) was pressed. The app accumulates these into a numeric
+    /// prefix that the next non-digit command consumes.
+    Digit(u8),
+    /// Jump to physical line N (1-indexed). Without a prefix, behaves as
+    /// goto-top.
+    GotoLine,
+    /// Jump to record N (1-indexed). Without a prefix, behaves as
+    /// goto-bottom (preserves the existing bare-`G` behavior).
+    GotoRecord,
+    /// Jump to N percent through the file by bytes. Without a prefix,
+    /// behaves as goto-top.
+    GotoPercent,
+    /// Cancel any pending numeric prefix without firing a command.
+    Cancel,
     Noop,
 }
 
@@ -68,8 +80,20 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('b'), false) | (Char('b'), true) | (PageUp, _) => Command::PageUp,
         (Char('d'), false) | (Char('d'), true) => Command::HalfPageDown,
         (Char('u'), false) | (Char('u'), true) => Command::HalfPageUp,
-        (Char('g'), false) | (Char('<'), false) | (Home, _) => Command::GoTop,
-        (Char('G'), false) | (Char('>'), false) | (End, _) => Command::GoBottom,
+        (Char('0'), false) => Command::Digit(0),
+        (Char('1'), false) => Command::Digit(1),
+        (Char('2'), false) => Command::Digit(2),
+        (Char('3'), false) => Command::Digit(3),
+        (Char('4'), false) => Command::Digit(4),
+        (Char('5'), false) => Command::Digit(5),
+        (Char('6'), false) => Command::Digit(6),
+        (Char('7'), false) => Command::Digit(7),
+        (Char('8'), false) => Command::Digit(8),
+        (Char('9'), false) => Command::Digit(9),
+        (Char('g'), false) | (Char('<'), false) | (Home, _) => Command::GotoLine,
+        (Char('G'), false) | (Char('>'), false) | (End, _) => Command::GotoRecord,
+        (Char('%'), false) => Command::GotoPercent,
+        (Esc, _) => Command::Cancel,
         (Char('r'), false) | (Char('l'), true) => Command::Refresh,
         (Char('R'), false) => Command::Reload,
         (Char('P'), false) => Command::TogglePrettify,
@@ -116,8 +140,34 @@ mod tests {
     }
 
     #[test]
-    fn capital_g_goes_to_bottom() {
-        assert_eq!(translate(key(KeyCode::Char('G'), KeyModifiers::SHIFT)), Command::GoBottom);
+    fn capital_g_goes_to_record() {
+        assert_eq!(translate(key(KeyCode::Char('G'), KeyModifiers::SHIFT)), Command::GotoRecord);
+    }
+
+    #[test]
+    fn lowercase_g_goes_to_line() {
+        assert_eq!(translate(key(KeyCode::Char('g'), KeyModifiers::NONE)), Command::GotoLine);
+    }
+
+    #[test]
+    fn percent_goes_to_percent() {
+        assert_eq!(translate(key(KeyCode::Char('%'), KeyModifiers::NONE)), Command::GotoPercent);
+    }
+
+    #[test]
+    fn digit_keys_produce_digit_commands() {
+        for d in 0u8..=9 {
+            let ch = char::from_digit(d as u32, 10).unwrap();
+            assert_eq!(
+                translate(key(KeyCode::Char(ch), KeyModifiers::NONE)),
+                Command::Digit(d),
+            );
+        }
+    }
+
+    #[test]
+    fn esc_produces_cancel() {
+        assert_eq!(translate(key(KeyCode::Esc, KeyModifiers::NONE)), Command::Cancel);
     }
 
     #[test]

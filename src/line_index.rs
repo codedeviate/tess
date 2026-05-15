@@ -202,6 +202,32 @@ impl LineIndex {
         self.extend_to_byte(src, src.len());
     }
 
+    /// Byte position up to which the index has scanned.
+    pub fn scanned_through(&self) -> usize {
+        self.scanned_through
+    }
+
+    /// Extend the index until `byte` is covered (or EOF). Public wrapper
+    /// around the private `extend_to_byte`, for callers that need to query
+    /// a specific byte position.
+    pub fn extend_to_byte_for_query(&mut self, src: &dyn Source, byte: usize) {
+        self.extend_to_byte(src, byte);
+    }
+
+    /// Find the physical-line index containing the byte at position `byte`.
+    /// Returns `None` if `byte` is before `start_byte` or at/after
+    /// `scanned_through`.
+    pub fn line_at_byte(&self, byte: usize) -> Option<usize> {
+        if byte < self.start_byte || byte >= self.scanned_through {
+            return None;
+        }
+        match self.starts.binary_search(&byte) {
+            Ok(idx) => Some(idx),
+            Err(0) => None,
+            Err(idx) => Some(idx - 1),
+        }
+    }
+
     /// Byte range of line `n` (excluding the trailing newline).
     /// Caller must ensure n < line_count() and the index has scanned through the line.
     pub fn line_range(&self, n: usize, src: &dyn Source) -> Range<usize> {
