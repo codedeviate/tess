@@ -883,6 +883,11 @@ impl Viewport {
 
     #[cfg(test)]
     pub fn visible_lines_for_test(&self) -> &[usize] { &self.visible_lines }
+
+    /// Return the current set of visible (matched) line indices. Non-empty only
+    /// in hide mode (filter or grep active without --dim). Stable public accessor
+    /// so integration tests and external tooling can inspect filter results.
+    pub fn visible_lines(&self) -> &[usize] { &self.visible_lines }
 }
 
 #[cfg(test)]

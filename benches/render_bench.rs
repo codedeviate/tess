@@ -93,10 +93,27 @@ fn bench_render_line(c: &mut Criterion) {
     });
 }
 
+fn bench_big_file_open_with_records(c: &mut Criterion) {
+    let bytes = make_big_input(10 * 1024 * 1024);
+    let mut tmp = NamedTempFile::new().unwrap();
+    tmp.write_all(&bytes).unwrap();
+
+    c.bench_function("big_file_open_10mb_with_records", |b| {
+        b.iter(|| {
+            let src = FileSource::open(tmp.path()).unwrap();
+            let mut idx = LineIndex::new();
+            idx.set_record_start(regex::bytes::Regex::new(r"^the").unwrap());
+            idx.extend_to_end(&src);
+            black_box(idx.record_count());
+        });
+    });
+}
+
 criterion_group!(benches,
     bench_big_file_open,
     bench_scroll_page,
     bench_regex_search,
     bench_render_line,
+    bench_big_file_open_with_records,
 );
 criterion_main!(benches);

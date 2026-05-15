@@ -395,6 +395,28 @@ showing raw (use --content-type=NAME to override)"
         idx.set_head_cap(n);
     }
 
+    // Resolve --record-start: CLI flag takes priority; fall back to the active
+    // format's record_start (if a --format was given and defines one).
+    // Must be set BEFORE any idx.extend_* call.
+    {
+        let fmt_record_start: Option<String> = if let Some(name) = args.format.as_deref() {
+            let formats = format::load_all().map_err(Error::Runtime)?;
+            formats.get(name).and_then(|f| {
+                f.record_start.as_ref().map(|r| r.as_str().to_string())
+            })
+        } else {
+            None
+        };
+        let record_start_pattern: Option<String> = args.record_start
+            .clone()
+            .or(fmt_record_start);
+        if let Some(pat) = record_start_pattern {
+            let re = regex::bytes::Regex::new(&pat)
+                .map_err(|e| Error::Runtime(format!("--record-start: {e}")))?;
+            idx.set_record_start(re);
+        }
+    }
+
     // Only redirect fd 0 to /dev/tty if we actually drained stdin from a pipe.
     // For file inputs, stdin is already the user's terminal — replacing it with
     // a read-only /dev/tty fd would break crossterm's event source.
