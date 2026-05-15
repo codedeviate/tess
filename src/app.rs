@@ -80,6 +80,7 @@ pub fn run(
     // Always draw the initial frame before entering the event loop.
     let mut needs_redraw = true;
     let mut mode = InputMode::Normal;
+    let mut numeric_prefix: Option<usize> = None;
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -202,7 +203,46 @@ pub fn run(
                     InputMode::Normal => {}
                 }
                 let cmd = translate(event);
+                // Consume the numeric prefix at the top of each dispatch so
+                // commands that don't need it drop it implicitly.
+                let prefix_at_cmd = numeric_prefix.take();
                 match cmd {
+                    Command::Digit(d) => {
+                        let cur = prefix_at_cmd.unwrap_or(0);
+                        let next = cur.saturating_mul(10).saturating_add(d as usize);
+                        if next <= 99_999_999 {
+                            numeric_prefix = Some(next);
+                        } else {
+                            // Overflow: keep previous prefix, ignore this digit.
+                            numeric_prefix = prefix_at_cmd;
+                        }
+                        continue;
+                    }
+                    Command::Cancel => {
+                        // prefix_at_cmd already consumed; nothing else to do.
+                        continue;
+                    }
+                    Command::GotoLine => {
+                        match prefix_at_cmd {
+                            Some(line) if line > 0 => viewport.goto_line(line - 1, src.as_ref(), &mut idx),
+                            _ => viewport.goto_top(),
+                        }
+                        needs_redraw = true;
+                    }
+                    Command::GotoRecord => {
+                        match prefix_at_cmd {
+                            Some(rec) if rec > 0 => viewport.goto_record(rec - 1, src.as_ref(), &mut idx),
+                            _ => viewport.goto_bottom(src.as_ref(), &mut idx),
+                        }
+                        needs_redraw = true;
+                    }
+                    Command::GotoPercent => {
+                        match prefix_at_cmd {
+                            Some(p) if p <= 100 => viewport.goto_percent(p as u8, src.as_ref(), &mut idx),
+                            _ => viewport.goto_top(),
+                        }
+                        needs_redraw = true;
+                    }
                     Command::Quit => break,
                     Command::Resize(c, r) => {
                         cols = c; rows = r;
@@ -231,14 +271,6 @@ pub fn run(
                     }
                     Command::HalfPageUp => {
                         viewport.half_page_up(src.as_ref(), &mut idx);
-                        needs_redraw = true;
-                    }
-                    Command::GoTop => {
-                        viewport.goto_top();
-                        needs_redraw = true;
-                    }
-                    Command::GoBottom => {
-                        viewport.goto_bottom(src.as_ref(), &mut idx);
                         needs_redraw = true;
                     }
                     Command::Refresh => {

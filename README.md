@@ -17,6 +17,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 `less` is great, but it doesn't know what your data *is*. `tess` adds a small amount of structure-awareness without trying to be a log explorer:
 
 - **Parse-aware filtering.** Declare a log format once (built-in or your own regex), then keep only the lines whose parsed `status`, `ip`, `level`, etc. match a predicate. Hide them entirely or just dim them so context is preserved.
+- **Multi-line records.** Set `record_start` in formats.toml (or pass `--record-start REGEX`) to group continuation lines under their leading record — search, filter, and `--grep` then operate on whole records like PHP stack traces or Java exception dumps.
 - **Pretty-printing.** Open a JSON / YAML / TOML / XML / HTML / CSV file and see it laid out, not minified — without leaving the pager. Toggle on/off with `Shift-P`.
 - **Live + follow modes.** `--follow` for tail-style appended logs (background reader thread, doesn't fight your tty); `--live` for whole-file rewrites (editor saves, AI agents, build outputs).
 - **Cheap on huge files.** mmap'd file source, lazy line indexing, `--tail N` reverse-scans only as far as needed.

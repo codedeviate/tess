@@ -101,3 +101,16 @@ fn resize_then_quit_exits_cleanly() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn records_mode_starts_and_quits_cleanly() {
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let cmd = format!(
+        "{bin} --record-start '^\\[' tests/fixtures/multiline-records.log"
+    );
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    drain_for(&mut s, DRAW_GRACE);
+    s.send("q").unwrap();
+    wait_clean(s);
+}

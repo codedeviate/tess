@@ -199,6 +199,15 @@ impl Viewport {
     /// reverse if `reverse` is true). Wraps at the end of the source.
     /// Returns true iff a match was found and the viewport moved.
     pub fn search_repeat(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
+        if idx.records_mode() {
+            self.search_repeat_records(src, idx, reverse)
+        } else {
+            self.search_repeat_lines(src, idx, reverse)
+        }
+    }
+
+    /// Line-mode search: unchanged original logic.
+    fn search_repeat_lines(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
         let Some(s) = self.search.as_ref() else { return false; };
         let forward = match (s.direction, reverse) {
             (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
@@ -212,6 +221,44 @@ impl Viewport {
         } else {
             self.search_step_in_logical(&pattern, src, idx, forward)
         }
+    }
+
+    /// Records-mode search: iterate records, match against UTF-8-lossy decoded
+    /// record bytes (which may contain embedded `\n`s), and jump the viewport
+    /// to the first line of the matching record.
+    fn search_repeat_records(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
+        let Some(s) = self.search.as_ref() else { return false; };
+        let forward = match (s.direction, reverse) {
+            (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
+            _ => false,
+        };
+        let pattern = s.regex.clone();
+        idx.extend_to_end(src);
+
+        let total = idx.record_count();
+        if total == 0 { return false; }
+
+        let cur_record = idx.line_to_record(self.top_line);
+
+        let range: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(((cur_record + 1)..total).chain(0..=cur_record))
+        } else {
+            let earlier: Vec<usize> = (0..cur_record).rev().collect();
+            let later: Vec<usize> = (cur_record..total).rev().collect();
+            Box::new(earlier.into_iter().chain(later.into_iter()))
+        };
+
+        for r in range {
+            let bytes_cow = idx.record_bytes(r, src);
+            let text = String::from_utf8_lossy(&bytes_cow);
+            if pattern.is_match(&text) {
+                let line_range = idx.record_line_range(r);
+                self.top_line = line_range.start;
+                self.top_row = 0;
+                return true;
+            }
+        }
+        false
     }
 
     fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
@@ -305,11 +352,21 @@ impl Viewport {
 
     /// Walk any newly indexed logical lines and append matching ones to
     /// `visible_lines` if we're in hide mode. No-op otherwise. Cheap to call
-    /// every loop tick — keeps a `visible_scanned` cursor.
+    /// every loop tick — keeps a `visible_scanned` cursor (line mode only;
+    /// records mode rebuilds from scratch each call).
     pub fn extend_visible_lines(&mut self, idx: &LineIndex, src: &dyn Source) {
         if !self.hide_mode() {
             return;
         }
+        if idx.records_mode() {
+            self.extend_visible_lines_records(idx, src);
+        } else {
+            self.extend_visible_lines_per_line(idx, src);
+        }
+    }
+
+    /// Line-mode: incrementally append newly indexed matching lines.
+    fn extend_visible_lines_per_line(&mut self, idx: &LineIndex, src: &dyn Source) {
         let total = idx.line_count();
         while self.visible_scanned < total {
             let line_n = self.visible_scanned;
@@ -322,8 +379,32 @@ impl Viewport {
         }
     }
 
-    /// Combined predicate: a line passes iff the (optional) filter matches
-    /// AND the (optional) grep matches. Missing predicates vacuously pass.
+    /// Records-mode: evaluate predicates once per record on the full record
+    /// bytes (which include embedded `\n`s). All physical lines of a matching
+    /// record are pushed to `visible_lines`; non-matching records are dropped
+    /// entirely (hide mode). Rebuilds from scratch on each call — O(records)
+    /// per frame but acceptable for current workloads; avoids the complexity
+    /// of tracking a records-scanned cursor alongside `visible_scanned`.
+    fn extend_visible_lines_records(&mut self, idx: &LineIndex, src: &dyn Source) {
+        self.visible_lines.clear();
+        self.visible_scanned = 0; // not used by records path; reset for clarity
+        let total_records = idx.record_count();
+        for r in 0..total_records {
+            let bytes_cow = idx.record_bytes(r, src);
+            let bytes: &[u8] = &bytes_cow;
+            if self.line_passes(bytes) {
+                for line_n in idx.record_line_range(r) {
+                    self.visible_lines.push(line_n);
+                }
+            }
+        }
+    }
+
+    /// Combined predicate: bytes pass iff the (optional) filter matches AND
+    /// the (optional) grep matches. Missing predicates vacuously pass.
+    /// In line mode, `bytes` is a single line. In records mode, `bytes` is
+    /// the full record (with embedded `\n`s) — callers are responsible for
+    /// passing the right granularity.
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
@@ -334,6 +415,25 @@ impl Viewport {
             None => true,
         };
         filter_ok && grep_ok
+    }
+
+    /// Return true iff line `line_n` should be rendered dim. In records mode,
+    /// the match decision is made once per record and applied to all its
+    /// physical lines. In line mode, the decision is made per line.
+    fn should_dim_line(&self, line_n: usize, idx: &LineIndex, src: &dyn Source) -> bool {
+        if !self.dim_mode {
+            return false;
+        }
+        if idx.records_mode() {
+            let r = idx.line_to_record(line_n);
+            let bytes_cow = idx.record_bytes(r, src);
+            let bytes: &[u8] = &bytes_cow;
+            !self.line_passes(bytes)
+        } else {
+            let range = idx.line_range(line_n, src);
+            let bytes = src.bytes(range);
+            !self.line_passes(&bytes)
+        }
     }
 
     pub fn body_rows(&self) -> u16 { self.rows.saturating_sub(1).max(1) }
@@ -464,7 +564,7 @@ impl Viewport {
             let rows = render_line(&display_bytes, &r_opts);
             let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
-                    if self.line_passes(&raw) { RowStyle::Normal } else { RowStyle::Dim }
+                    if self.should_dim_line(line_n, idx, src) { RowStyle::Dim } else { RowStyle::Normal }
                 } else {
                     // hide mode: only matching lines reach here
                     RowStyle::Normal
@@ -538,7 +638,26 @@ impl Viewport {
             (top, bottom, total, total_str)
         };
         let pct = if total_for_pct == 0 { 0 } else { (bottom * 100) / total_for_pct };
-        let mut s = format!("{}  {}-{}/{}  {}%", self.source_label, top, bottom, total_str, pct);
+        // In records mode, prefix line numbers with 'L' and append an 'R' record block.
+        let (line_prefix, records_block) = if idx.records_mode() {
+            let line_total = idx.line_count();
+            let rec_total = idx.record_count();
+            let rec_block = if line_total == 0 || rec_total == 0 {
+                format!("R0-0/{}", rec_total)
+            } else {
+                let rec_top = idx.line_to_record(self.top_line) + 1;
+                let rec_bottom = idx.line_to_record(bottom.saturating_sub(1)) + 1;
+                format!("R{}-{}/{}", rec_top, rec_bottom, rec_total)
+            };
+            ("L", Some(rec_block))
+        } else {
+            ("", None)
+        };
+        let middle = match records_block {
+            Some(ref rb) => format!("{}{}-{}/{}  {}  {}%", line_prefix, top, bottom, total_str, rb, pct),
+            None         => format!("{}-{}/{}  {}%", top, bottom, total_str, pct),
+        };
+        let mut s = format!("{}  {}", self.source_label, middle);
         // Wrap-row offset: when scrolled inside a long wrapping line, surface
         // the offset so the user knows scrolling is happening at sub-line
         // granularity. Without this the line range above stays static while
@@ -701,6 +820,53 @@ impl Viewport {
         }
     }
 
+    /// Position the viewport so line `n` (0-indexed) is the top visible line.
+    pub fn goto_line(&mut self, n: usize, src: &dyn Source, idx: &mut LineIndex) {
+        idx.extend_to_line(n, src);
+        let target = n.min(idx.line_count().saturating_sub(1));
+        self.top_line = target;
+        self.top_row = 0;
+    }
+
+    /// Position the viewport at the start of record `n` (0-indexed).
+    pub fn goto_record(&mut self, n: usize, src: &dyn Source, idx: &mut LineIndex) {
+        // Ensure the record exists by extending the index. Records can only
+        // appear after their constituent lines are scanned; extend repeatedly
+        // until the record exists or we hit EOF.
+        while idx.record_count() <= n && idx.scanned_through() < src.len() {
+            idx.extend_to_end(src);
+        }
+        if idx.record_count() == 0 {
+            return;
+        }
+        let target = n.min(idx.record_count().saturating_sub(1));
+        let line_range = idx.record_line_range(target);
+        self.top_line = line_range.start;
+        self.top_row = 0;
+    }
+
+    /// Position the viewport at `p` percent through the file by bytes.
+    /// `p` is clamped to 0..=100. p=100 lands at the last line.
+    pub fn goto_percent(&mut self, p: u8, src: &dyn Source, idx: &mut LineIndex) {
+        let p = p.min(100) as usize;
+        let target_byte = src.len().saturating_mul(p) / 100;
+        idx.extend_to_byte_for_query(src, target_byte);
+        let line_n = idx.line_at_byte(target_byte)
+            .or_else(|| {
+                // target_byte at or past EOF: fall through to the last line.
+                let lc = idx.line_count();
+                if lc > 0 { Some(lc - 1) } else { None }
+            })
+            .unwrap_or(0);
+        self.top_line = line_n;
+        self.top_row = 0;
+    }
+
+    /// Get the currently top-displayed physical line index.
+    pub fn top_line(&self) -> usize {
+        self.top_line
+    }
+
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.cols = cols.max(1);
         self.rows = rows.max(2);
@@ -715,8 +881,10 @@ impl Viewport {
         self.opts.wrap = !self.opts.wrap;
     }
 
-    #[cfg(test)]
-    pub fn visible_lines_for_test(&self) -> &[usize] { &self.visible_lines }
+    /// Return the current set of visible (matched) line indices. Non-empty only
+    /// in hide mode (filter or grep active without --dim). Stable public accessor
+    /// so integration tests and external tooling can inspect filter results.
+    pub fn visible_lines(&self) -> &[usize] { &self.visible_lines }
 }
 
 #[cfg(test)]
@@ -884,6 +1052,86 @@ mod tests {
         v.goto_bottom(&m, &mut idx);
         // Last page should show lines 7..=10 → top_line = 6.
         assert_eq!(v.top_line, 6);
+    }
+
+    #[test]
+    fn goto_line_positions_top_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\nd\ne\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_line(3, &m, &mut idx);
+        assert_eq!(v.top_line(), 3);
+    }
+
+    #[test]
+    fn goto_line_clamps_to_last_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_line(999, &m, &mut idx);
+        assert_eq!(v.top_line(), 1);
+    }
+
+    #[test]
+    fn goto_record_positions_at_record_start_line() {
+        let m = MockSource::new();
+        m.append(b"[1] a\n  cont\n[2] b\n[3] c\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(1, &m, &mut idx);  // record 1 starts at line 2 ("[2] b")
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_record_in_line_per_record_mode_equals_goto_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(2, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_percent_50_lands_in_middle() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\nd\ne\n");  // 10 bytes
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_percent(50, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);  // byte 5 → line 2
+    }
+
+    #[test]
+    fn goto_percent_100_lands_at_last_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");  // 6 bytes, 3 lines
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_percent(100, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_percent_0_lands_at_first_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(2, &m, &mut idx);  // first jump elsewhere
+        assert_eq!(v.top_line(), 2);
+        v.goto_percent(0, &m, &mut idx);
+        assert_eq!(v.top_line(), 0);
     }
 
     #[test]
@@ -1243,7 +1491,7 @@ mod tests {
         v.set_filter(Some(f));
         v.set_grep(Some(g));
         v.extend_visible_lines(&idx, &src);
-        assert_eq!(v.visible_lines_for_test(), &[0usize]);
+        assert_eq!(v.visible_lines(), &[0usize]);
     }
 
     #[test]
@@ -1281,5 +1529,135 @@ mod tests {
         simulate_growth_tick(&mut v, &m, &mut idx);
         let frame_after = v.frame(&m, &mut idx);
         assert_eq!(frame_after.body[0][0], top_first_cell, "auto-scroll fired despite follow off");
+    }
+
+    // ----- Records-mode search -----
+
+    #[test]
+    fn search_jumps_to_next_matching_record() {
+        let m = MockSource::new();
+        m.append(b"[1] alpha\n  cont\n[2] bravo\n[3] charlie\n  cont\n[4] delta\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search("charlie".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(hit, "should find 'charlie' in record 2");
+        assert_eq!(v.top_line(), 3);  // record 2 starts at line 3 ("[3] charlie")
+    }
+
+    #[test]
+    fn search_finds_cross_line_match_in_record_with_s_flag() {
+        let m = MockSource::new();
+        m.append(b"[1] head\n  Renderer.php(214)\n[2] other line\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search(r"(?s)head.*Renderer".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(hit, "should match across \\n inside record 0 with (?s)");
+        assert_eq!(v.top_line(), 0);
+    }
+
+    #[test]
+    fn search_repeat_with_no_match_returns_false() {
+        let m = MockSource::new();
+        m.append(b"[1] alpha\n[2] bravo\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search("nonexistent".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(!hit);
+    }
+
+    // ----- Records-mode filter/grep -----
+
+    #[test]
+    fn filter_hide_mode_drops_all_lines_of_nonmatching_record() {
+        // Record 0: "[1] head\n  cont a" — grep matches "cont a" → visible.
+        // Record 1: "[2] head\n  cont b" — grep does NOT match → hidden.
+        let m = MockSource::new();
+        m.append(b"[1] head\n  cont a\n[2] head\n  cont b\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&["cont a".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.extend_visible_lines(&idx, &m);
+        // Record 0 ([1] head + cont a) matches; lines 0 and 1 visible.
+        // Record 1 ([2] head + cont b) does not match; lines 2 and 3 hidden.
+        assert_eq!(v.visible_lines(), &[0usize, 1]);
+    }
+
+    #[test]
+    fn grep_matches_across_record_newlines_in_records_mode() {
+        // Pattern spans the record-header and a continuation line (needs (?s) for .).
+        let m = MockSource::new();
+        m.append(b"[1] head\n  Renderer.php\n[2] other\n  body\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&[r"(?s)head.*Renderer".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.extend_visible_lines(&idx, &m);
+        // Record 0 matches (cross-line); record 1 does not.
+        assert_eq!(v.visible_lines(), &[0usize, 1]);
+    }
+
+    #[test]
+    fn dim_mode_keeps_all_lines_visible_dims_nonmatching_records() {
+        // All 4 lines stay in visible_lines (dim mode = no hiding).
+        // Record 0 matches grep → Normal; record 1 does not → Dim.
+        let m = MockSource::new();
+        m.append(b"[1] head\n  cont\n[2] other\n  cont\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&[r"\[1\]".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.set_dim_mode(true);
+        v.extend_visible_lines(&idx, &m);
+        // Dim mode: visible_lines stays empty (hide_mode() is false).
+        assert_eq!(v.visible_lines(), &[] as &[usize]);
+        // Dim decision is per record: lines 0 and 1 belong to matching record → Normal.
+        assert!(!v.should_dim_line(0, &idx, &m));
+        assert!(!v.should_dim_line(1, &idx, &m));
+        // Lines 2 and 3 belong to non-matching record → Dim.
+        assert!(v.should_dim_line(2, &idx, &m));
+        assert!(v.should_dim_line(3, &idx, &m));
+    }
+
+    #[test]
+    fn status_unchanged_when_records_inactive() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let v = Viewport::new(20, 5, "f".into());
+        let frame = v.frame(&m, &mut idx);
+        let status = &frame.status;
+        // Default format: <label>  <top>-<bot>/<total>  <pct>%
+        assert!(status.contains("1-3/3"), "got: {status}");
+        assert!(!status.contains("L1"), "no L block in line-mode: {status}");
+        assert!(!status.contains("R1"), "no R block in line-mode: {status}");
+    }
+
+    #[test]
+    fn status_dual_readout_when_records_active() {
+        let m = MockSource::new();
+        m.append(b"[1] a\n  cont\n[2] b\n");
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let v = Viewport::new(20, 5, "f".into());
+        let frame = v.frame(&m, &mut idx);
+        let status = &frame.status;
+        assert!(status.contains("L1-3/3"), "lines block missing or wrong: {status}");
+        assert!(status.contains("R1-2/2"), "records block missing or wrong: {status}");
     }
 }

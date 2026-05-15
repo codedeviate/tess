@@ -1,8 +1,9 @@
-//! Baseline performance benchmarks. Four scenarios:
+//! Baseline performance benchmarks. Five scenarios:
 //!   1. big_file_open: build a LineIndex over a synthetic 10 MB input.
 //!   2. scroll_page: compose one full viewport frame over a large index.
 //!   3. regex_search: run a regex over every line of a large input.
 //!   4. render_line / count_rows: per-line kernel cost.
+//!   5. big_file_open_with_records: same as (1) but with record-start indexing enabled.
 //!
 //! Run with: cargo bench
 //! HTML reports are written to target/criterion/.
@@ -93,10 +94,27 @@ fn bench_render_line(c: &mut Criterion) {
     });
 }
 
+fn bench_big_file_open_with_records(c: &mut Criterion) {
+    let bytes = make_big_input(10 * 1024 * 1024);
+    let mut tmp = NamedTempFile::new().unwrap();
+    tmp.write_all(&bytes).unwrap();
+
+    c.bench_function("big_file_open_10mb_with_records", |b| {
+        b.iter(|| {
+            let src = FileSource::open(tmp.path()).unwrap();
+            let mut idx = LineIndex::new();
+            idx.set_record_start(regex::bytes::Regex::new(r"^the").unwrap());
+            idx.extend_to_end(&src);
+            black_box(idx.record_count());
+        });
+    });
+}
+
 criterion_group!(benches,
     bench_big_file_open,
     bench_scroll_page,
     bench_regex_search,
     bench_render_line,
+    bench_big_file_open_with_records,
 );
 criterion_main!(benches);
