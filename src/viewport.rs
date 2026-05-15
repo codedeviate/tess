@@ -638,7 +638,26 @@ impl Viewport {
             (top, bottom, total, total_str)
         };
         let pct = if total_for_pct == 0 { 0 } else { (bottom * 100) / total_for_pct };
-        let mut s = format!("{}  {}-{}/{}  {}%", self.source_label, top, bottom, total_str, pct);
+        // In records mode, prefix line numbers with 'L' and append an 'R' record block.
+        let (line_prefix, records_block) = if idx.records_mode() {
+            let line_total = idx.line_count();
+            let rec_total = idx.record_count();
+            let rec_block = if line_total == 0 || rec_total == 0 {
+                format!("R0-0/{}", rec_total)
+            } else {
+                let rec_top = idx.line_to_record(self.top_line) + 1;
+                let rec_bottom = idx.line_to_record(bottom.saturating_sub(1)) + 1;
+                format!("R{}-{}/{}", rec_top, rec_bottom, rec_total)
+            };
+            ("L", Some(rec_block))
+        } else {
+            ("", None)
+        };
+        let middle = match records_block {
+            Some(ref rb) => format!("{}{}-{}/{}  {}  {}%", line_prefix, top, bottom, total_str, rb, pct),
+            None         => format!("{}-{}/{}  {}%", top, bottom, total_str, pct),
+        };
+        let mut s = format!("{}  {}", self.source_label, middle);
         // Wrap-row offset: when scrolled inside a long wrapping line, surface
         // the offset so the user knows scrolling is happening at sub-line
         // granularity. Without this the line range above stays static while
@@ -1611,5 +1630,32 @@ mod tests {
         // Lines 2 and 3 belong to non-matching record → Dim.
         assert!(v.should_dim_line(2, &idx, &m));
         assert!(v.should_dim_line(3, &idx, &m));
+    }
+
+    #[test]
+    fn status_unchanged_when_records_inactive() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let v = Viewport::new(20, 5, "f".into());
+        let frame = v.frame(&m, &mut idx);
+        let status = &frame.status;
+        // Default format: <label>  <top>-<bot>/<total>  <pct>%
+        assert!(status.contains("1-3/3"), "got: {status}");
+        assert!(!status.contains("L1"), "no L block in line-mode: {status}");
+        assert!(!status.contains("R1"), "no R block in line-mode: {status}");
+    }
+
+    #[test]
+    fn status_dual_readout_when_records_active() {
+        let m = MockSource::new();
+        m.append(b"[1] a\n  cont\n[2] b\n");
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let v = Viewport::new(20, 5, "f".into());
+        let frame = v.frame(&m, &mut idx);
+        let status = &frame.status;
+        assert!(status.contains("L1-3/3"), "lines block missing or wrong: {status}");
+        assert!(status.contains("R1-2/2"), "records block missing or wrong: {status}");
     }
 }
