@@ -25,10 +25,6 @@ should be added without their own spec → plan cycle.
 
 ## Waiting
 
-### PTY-based integration tests — **M**
-
-The MVP relied on a single golden-frame test plus manual smoke testing. Adding `expectrl`/`rexpect` would let us verify keyboard interaction, terminal restoration on panic/SIGTERM, and resize behavior in CI. Not free — PTY tests are flaky if not carefully scoped.
-
 ### Performance benchmarks — **S**
 
 `cargo bench` baseline for big-file open, scroll, and search. Wait until there's a perceivable performance issue or a redesign that risks regressions.
