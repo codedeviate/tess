@@ -25,10 +25,6 @@ should be added without their own spec → plan cycle.
 
 ## Waiting
 
-### `proptest` for `render` — **S**
-
-The render kernel has small, well-defined inputs and outputs. Property tests like "`count_rows(b, opts) == render_line(b, opts).len()` for any `b` and any `opts.cols >= 1`" would catch edge cases beyond the hand-picked tests. Fair amount of value.
-
 ### Redundant `use std::io::Read;` in `src/source.rs` — **S**
 
 There's both a top-level import and a function-local one. Harmless, but a one-line cleanup.
