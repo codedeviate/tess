@@ -199,6 +199,15 @@ impl Viewport {
     /// reverse if `reverse` is true). Wraps at the end of the source.
     /// Returns true iff a match was found and the viewport moved.
     pub fn search_repeat(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
+        if idx.records_mode() {
+            self.search_repeat_records(src, idx, reverse)
+        } else {
+            self.search_repeat_lines(src, idx, reverse)
+        }
+    }
+
+    /// Line-mode search: unchanged original logic.
+    fn search_repeat_lines(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
         let Some(s) = self.search.as_ref() else { return false; };
         let forward = match (s.direction, reverse) {
             (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
@@ -212,6 +221,44 @@ impl Viewport {
         } else {
             self.search_step_in_logical(&pattern, src, idx, forward)
         }
+    }
+
+    /// Records-mode search: iterate records, match against UTF-8-lossy decoded
+    /// record bytes (which may contain embedded `\n`s), and jump the viewport
+    /// to the first line of the matching record.
+    fn search_repeat_records(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
+        let Some(s) = self.search.as_ref() else { return false; };
+        let forward = match (s.direction, reverse) {
+            (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
+            _ => false,
+        };
+        let pattern = s.regex.clone();
+        idx.extend_to_end(src);
+
+        let total = idx.record_count();
+        if total == 0 { return false; }
+
+        let cur_record = idx.line_to_record(self.top_line);
+
+        let range: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new(((cur_record + 1)..total).chain(0..=cur_record))
+        } else {
+            let earlier: Vec<usize> = (0..cur_record).rev().collect();
+            let later: Vec<usize> = (cur_record..total).rev().collect();
+            Box::new(earlier.into_iter().chain(later.into_iter()))
+        };
+
+        for r in range {
+            let bytes_cow = idx.record_bytes(r, src);
+            let text = String::from_utf8_lossy(&bytes_cow);
+            if pattern.is_match(&text) {
+                let line_range = idx.record_line_range(r);
+                self.top_line = line_range.start;
+                self.top_row = 0;
+                return true;
+            }
+        }
+        false
     }
 
     fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
@@ -1408,5 +1455,48 @@ mod tests {
         simulate_growth_tick(&mut v, &m, &mut idx);
         let frame_after = v.frame(&m, &mut idx);
         assert_eq!(frame_after.body[0][0], top_first_cell, "auto-scroll fired despite follow off");
+    }
+
+    // ----- Records-mode search -----
+
+    #[test]
+    fn search_jumps_to_next_matching_record() {
+        let m = MockSource::new();
+        m.append(b"[1] alpha\n  cont\n[2] bravo\n[3] charlie\n  cont\n[4] delta\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search("charlie".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(hit, "should find 'charlie' in record 2");
+        assert_eq!(v.top_line(), 3);  // record 2 starts at line 3 ("[3] charlie")
+    }
+
+    #[test]
+    fn search_finds_cross_line_match_in_record_with_s_flag() {
+        let m = MockSource::new();
+        m.append(b"[1] head\n  Renderer.php(214)\n[2] other line\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search(r"(?s)head.*Renderer".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(hit, "should match across \\n inside record 0 with (?s)");
+        assert_eq!(v.top_line(), 0);
+    }
+
+    #[test]
+    fn search_repeat_with_no_match_returns_false() {
+        let m = MockSource::new();
+        m.append(b"[1] alpha\n[2] bravo\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_search("nonexistent".into(), SearchDirection::Forward).unwrap();
+        let hit = v.search_repeat(&m, &mut idx, false);
+        assert!(!hit);
     }
 }
