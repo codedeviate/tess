@@ -17,11 +17,12 @@ pub struct LogFormat {
     /// When set and no CLI override is given, the viewer / batch output
     /// renders each parsed line through this template instead of the raw line.
     pub display: Option<DisplayTemplate>,
+    pub record_start: Option<Regex>,
 }
 
 impl LogFormat {
     pub fn compile(name: &str, pattern: &str) -> Result<Self, String> {
-        Self::compile_with_display(name, pattern, None)
+        Self::compile_full(name, pattern, None, None)
     }
 
     pub fn compile_with_display(
@@ -29,9 +30,16 @@ impl LogFormat {
         pattern: &str,
         display: Option<&str>,
     ) -> Result<Self, String> {
+        Self::compile_full(name, pattern, display, None)
+    }
+
+    pub fn compile_full(
+        name: &str,
+        pattern: &str,
+        display: Option<&str>,
+        record_start: Option<&str>,
+    ) -> Result<Self, String> {
         let regex = Regex::new(pattern).map_err(|e| format!("format `{name}`: {e}"))?;
-        // capture_names() includes all groups (including the implicit whole-match
-        // group as None at index 0); skip those.
         let field_names: Vec<String> = regex
             .capture_names()
             .flatten()
@@ -48,11 +56,15 @@ impl LogFormat {
                     .map_err(|e| format!("format `{name}`: display: {e}"))
             })
             .transpose()?;
+        let record_start = record_start
+            .map(|s| Regex::new(s).map_err(|e| format!("format `{name}`: record_start: {e}")))
+            .transpose()?;
         Ok(Self {
             name: name.to_string(),
             regex,
             field_names,
             display,
+            record_start,
         })
     }
 }
@@ -203,6 +215,8 @@ struct FormatEntry {
     regex: String,
     #[serde(default)]
     display: Option<String>,
+    #[serde(default)]
+    record_start: Option<String>,
 }
 
 /// Raw group entry as deserialized from TOML. Promoted to `Group` after
@@ -261,6 +275,7 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "content-type",
     "help",
     "version",
+    "record-start",
 ];
 
 /// Built-in formats compiled from this list of (name, pattern). Patterns use
@@ -302,9 +317,19 @@ fn load_user_config() -> Result<UserConfig, String> {
     toml::from_str(&text).map_err(|e| format!("parsing {}: {e}", path.display()))
 }
 
-fn load_user_formats() -> Result<HashMap<String, (String, Option<String>)>, String> {
+struct FormatSource {
+    regex: String,
+    display: Option<String>,
+    record_start: Option<String>,
+}
+
+fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
     let cfg = load_user_config()?;
-    Ok(cfg.format.into_iter().map(|(k, v)| (k, (v.regex, v.display))).collect())
+    Ok(cfg.format.into_iter().map(|(k, v)| (k, FormatSource {
+        regex: v.regex,
+        display: v.display,
+        record_start: v.record_start,
+    })).collect())
 }
 
 /// Load all user-defined groups from `~/.config/tess/formats.toml`. Built-ins
@@ -343,17 +368,26 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
 /// (which override built-ins of the same name). Returns the compiled map keyed
 /// by format name.
 pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
-    let mut sources: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut sources: HashMap<String, FormatSource> = HashMap::new();
     for (name, pat) in BUILTINS {
-        sources.insert(name.to_string(), (pat.to_string(), None));
+        sources.insert(name.to_string(), FormatSource {
+            regex: pat.to_string(),
+            display: None,
+            record_start: None,
+        });
     }
     let user = load_user_formats()?;
     for (name, src) in user {
         sources.insert(name, src);
     }
     let mut compiled = HashMap::new();
-    for (name, (pat, display)) in sources {
-        let fmt = LogFormat::compile_with_display(&name, &pat, display.as_deref())?;
+    for (name, src) in sources {
+        let fmt = LogFormat::compile_full(
+            &name,
+            &src.regex,
+            src.display.as_deref(),
+            src.record_start.as_deref(),
+        )?;
         compiled.insert(name, fmt);
     }
     Ok(compiled)
@@ -378,6 +412,7 @@ const VALUE_TAKING_LONG_FLAGS: &[&str] = &[
     "--head",
     "--tail",
     "--tab-width",
+    "--record-start",
 ];
 
 pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<String> {
@@ -822,5 +857,53 @@ regex = "^(?P<custom>\\S+)$"
         let formats = result.unwrap();
         let common = &formats["apache-common"];
         assert_eq!(common.field_names, vec!["custom"], "user config should win");
+    }
+
+    #[test]
+    fn format_entry_parses_record_start() {
+        let toml_text = r#"
+            [format.myapp]
+            regex = '^(?P<line>.*)$'
+            record_start = '^\['
+        "#;
+        let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
+        let entry = cfg.format.get("myapp").expect("myapp present");
+        assert_eq!(entry.regex, "^(?P<line>.*)$");
+        assert_eq!(entry.record_start.as_deref(), Some("^\\["));
+    }
+
+    #[test]
+    fn format_entry_record_start_optional() {
+        let toml_text = r#"
+            [format.myapp]
+            regex = '^(?P<line>.*)$'
+        "#;
+        let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
+        let entry = cfg.format.get("myapp").expect("myapp present");
+        assert!(entry.record_start.is_none());
+    }
+
+    #[test]
+    fn log_format_compile_full_with_record_start() {
+        let fmt = LogFormat::compile_full(
+            "test",
+            r"^(?P<msg>.+)$",
+            None,
+            Some(r"^\["),
+        ).expect("compile");
+        assert!(fmt.record_start.is_some());
+        assert!(fmt.record_start.as_ref().unwrap().is_match("[2026-05-15"));
+        assert!(!fmt.record_start.as_ref().unwrap().is_match("  continuation"));
+    }
+
+    #[test]
+    fn log_format_compile_full_bad_record_start_errors() {
+        let err = LogFormat::compile_full(
+            "test",
+            r"^(?P<msg>.+)$",
+            None,
+            Some(r"["),  // unclosed bracket
+        ).expect_err("should fail");
+        assert!(err.contains("record_start"), "error mentions record_start: {err}");
     }
 }

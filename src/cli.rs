@@ -100,18 +100,27 @@ pub struct Args {
     #[arg(long = "prettify", display_order = 16)]
     pub prettify: bool,
 
+    /// Treat lines matching REGEX as record boundaries. Lines that don't
+    /// match are joined to the preceding record. Affects search, filter,
+    /// grep, and the status line — all operate on whole records when set.
+    /// Overrides the active --format's record_start if both are present.
+    /// Without --format, this is the only way to enable records mode for
+    /// plain text. Example: --record-start '^\['
+    #[arg(long = "record-start", value_name = "REGEX", display_order = 17)]
+    pub record_start: Option<String>,
+
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 17)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 18)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 18)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 19)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 19)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 20)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -318,6 +327,7 @@ mod tests {
             "--manual",
             "--output",
             "--prettify",
+            "--record-start",
             "--stdout",
             "--tab-width",
             "--tail",
