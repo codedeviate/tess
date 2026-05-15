@@ -951,7 +951,7 @@ mod tests {
     }
 
     #[test]
-    fn status_shows_F_suffix_when_follow_mode_on() {
+    fn status_shows_follow_suffix_when_follow_mode_on() {
         let (m, mut idx) = setup(b"a\nb\n");
         let mut v = Viewport::new(20, 5, "f".into());
         let frame_off = v.frame(&m, &mut idx);

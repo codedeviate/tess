@@ -1,6 +1,6 @@
 [package]
 name = "tess-cli"
-version = "0.10.5"
+version = "0.10.6"
 edition = "2021"
 rust-version = "1.85"
 description = "Less-style terminal pager with structured-log filtering and pretty-printing."
