@@ -25,10 +25,6 @@ should be added without their own spec → plan cycle.
 
 ## Waiting
 
-### Cargo.lock policy — **S**
-
-For a shipped binary, `Cargo.lock` should normally be committed. Currently it's in `.gitignore` because this started as a personal learning project. Flip when shipping or when collaborators join.
-
 ### PTY-based integration tests — **M**
 
 The MVP relied on a single golden-frame test plus manual smoke testing. Adding `expectrl`/`rexpect` would let us verify keyboard interaction, terminal restoration on panic/SIGTERM, and resize behavior in CI. Not free — PTY tests are flaky if not carefully scoped.
