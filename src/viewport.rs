@@ -136,8 +136,7 @@ pub struct Viewport {
 
 impl Viewport {
     pub fn new(cols: u16, rows: u16, source_label: String) -> Self {
-        let mut opts = RenderOpts::default();
-        opts.cols = cols;
+        let opts = RenderOpts { cols, ..RenderOpts::default() };
         Self {
             top_line: 0,
             top_row: 0,
@@ -209,10 +208,10 @@ impl Viewport {
     /// Line-mode search: unchanged original logic.
     fn search_repeat_lines(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
         let Some(s) = self.search.as_ref() else { return false; };
-        let forward = match (s.direction, reverse) {
-            (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
-            _ => false,
-        };
+        let forward = matches!(
+            (s.direction, reverse),
+            (SearchDirection::Forward, false) | (SearchDirection::Backward, true)
+        );
         idx.extend_to_end(src);
         let pattern = s.regex.clone();
         if self.hide_mode() {
@@ -228,10 +227,10 @@ impl Viewport {
     /// to the first line of the matching record.
     fn search_repeat_records(&mut self, src: &dyn Source, idx: &mut LineIndex, reverse: bool) -> bool {
         let Some(s) = self.search.as_ref() else { return false; };
-        let forward = match (s.direction, reverse) {
-            (SearchDirection::Forward, false) | (SearchDirection::Backward, true) => true,
-            _ => false,
-        };
+        let forward = matches!(
+            (s.direction, reverse),
+            (SearchDirection::Forward, false) | (SearchDirection::Backward, true)
+        );
         let pattern = s.regex.clone();
         idx.extend_to_end(src);
 
@@ -245,7 +244,7 @@ impl Viewport {
         } else {
             let earlier: Vec<usize> = (0..cur_record).rev().collect();
             let later: Vec<usize> = (cur_record..total).rev().collect();
-            Box::new(earlier.into_iter().chain(later.into_iter()))
+            Box::new(earlier.into_iter().chain(later))
         };
 
         for r in range {
@@ -637,7 +636,7 @@ impl Viewport {
             let total_str = if src.is_complete() { format!("{total}") } else { format!("{total}+") };
             (top, bottom, total, total_str)
         };
-        let pct = if total_for_pct == 0 { 0 } else { (bottom * 100) / total_for_pct };
+        let pct = (bottom * 100).checked_div(total_for_pct).unwrap_or(0);
         // In records mode, prefix line numbers with 'L' and append an 'R' record block.
         let (line_prefix, records_block) = if idx.records_mode() {
             let line_total = idx.line_count();
@@ -956,7 +955,7 @@ mod tests {
         // Mid-wrap K should snap to start of current line first, then go back.
         let mut content = vec![b'A'; 50];
         content.push(b'\n');
-        content.extend_from_slice(&vec![b'B'; 50]);
+        content.extend_from_slice(&[b'B'; 50]);
         content.push(b'\n');
         let (m, mut idx) = setup(&content);
         let mut v = Viewport::new(10, 8, "f".into());
@@ -973,7 +972,7 @@ mod tests {
     fn scroll_down_walks_wraps_of_last_line() {
         // Last line is 30 chars in a 10-col viewport → 3 wrap rows.
         let mut content = b"first\n".to_vec();
-        content.extend_from_slice(&vec![b'X'; 30]);
+        content.extend_from_slice(&[b'X'; 30]);
         content.push(b'\n');
         let (m, mut idx) = setup(&content);
         let mut v = Viewport::new(10, 5, "f".into());

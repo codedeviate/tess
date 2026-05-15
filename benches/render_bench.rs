@@ -43,7 +43,7 @@ fn bench_big_file_open(c: &mut Criterion) {
 }
 
 fn bench_scroll_page(c: &mut Criterion) {
-    let bytes = make_big_input(1 * 1024 * 1024);
+    let bytes = make_big_input(1024 * 1024);
     let mut tmp = NamedTempFile::new().unwrap();
     tmp.write_all(&bytes).unwrap();
     let src = FileSource::open(tmp.path()).unwrap();

@@ -10,6 +10,7 @@ use crate::prettify::{self, PrettifyMode};
 
 pub trait Source: Send + Sync {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool { self.len() == 0 }
     fn bytes(&self, range: Range<usize>) -> Cow<'_, [u8]>;
     fn is_complete(&self) -> bool;
     /// Read any new bytes that have become available since the last call.
@@ -203,6 +204,12 @@ impl Source for FileSource {
 pub struct MockSource {
     buf: Arc<Mutex<Vec<u8>>>,
     complete: Arc<AtomicBool>,
+}
+
+impl Default for MockSource {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockSource {

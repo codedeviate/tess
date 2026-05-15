@@ -208,7 +208,7 @@ pub fn count_rows(bytes: &[u8], opts: &RenderOpts) -> usize {
         } else {
             match decode_cluster(bytes, i) {
                 Some((cluster, consumed)) => {
-                    let w = UnicodeWidthStr::width(cluster) as usize;
+                    let w = UnicodeWidthStr::width(cluster);
                     let w = if w == 0 { 1 } else { w };
                     bump(w, &mut col, &mut rows);
                     i += consumed;
@@ -258,8 +258,8 @@ mod tests {
     fn tab_at_col_zero_expands_to_eight() {
         let rows = render_line(b"\tx", &opts(20, true));
         // Eight spaces, then 'x', then padding.
-        for i in 0..8 {
-            assert_eq!(rows[0][i], ch(' '), "col {} should be space", i);
+        for (i, cell) in rows[0].iter().take(8).enumerate() {
+            assert_eq!(*cell, ch(' '), "col {i} should be space");
         }
         assert_eq!(rows[0][8], ch('x'));
     }
@@ -270,8 +270,8 @@ mod tests {
         let rows = render_line(b"abc\tx", &opts(20, true));
         assert_eq!(rows[0][0], ch('a'));
         assert_eq!(rows[0][2], ch('c'));
-        for i in 3..8 {
-            assert_eq!(rows[0][i], ch(' '));
+        for cell in rows[0].iter().skip(3).take(5) {
+            assert_eq!(*cell, ch(' '));
         }
         assert_eq!(rows[0][8], ch('x'));
     }
@@ -282,8 +282,8 @@ mod tests {
         input.push(b'\t');
         input.push(b'x');
         let rows = render_line(&input, &opts(20, true));
-        for i in 8..16 {
-            assert_eq!(rows[0][i], ch(' '));
+        for cell in rows[0].iter().skip(8).take(8) {
+            assert_eq!(*cell, ch(' '));
         }
         assert_eq!(rows[0][16], ch('x'));
     }

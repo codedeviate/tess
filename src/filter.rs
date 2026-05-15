@@ -159,8 +159,8 @@ impl CompiledFilter {
             let ok = match p.op {
                 FilterOp::Eq => p.literal.as_deref() == Some(captured),
                 FilterOp::Ne => p.literal.as_deref() != Some(captured),
-                FilterOp::Re => p.regex.as_ref().map_or(false, |r| r.is_match(captured)),
-                FilterOp::NotRe => p.regex.as_ref().map_or(false, |r| !r.is_match(captured)),
+                FilterOp::Re => p.regex.as_ref().is_some_and(|r| r.is_match(captured)),
+                FilterOp::NotRe => p.regex.as_ref().is_some_and(|r| !r.is_match(captured)),
                 FilterOp::Lt | FilterOp::Le | FilterOp::Gt | FilterOp::Ge => {
                     let rhs = p.literal.as_deref().unwrap_or("");
                     compare(&p.op, captured, rhs)
@@ -186,14 +186,14 @@ fn compare(op: &FilterOp, lhs: &str, rhs: &str) -> bool {
         _ => Some(lhs.cmp(rhs)),
     };
     let Some(order) = order else { return false; };
-    use std::cmp::Ordering::*;
-    match (op, order) {
-        (FilterOp::Lt, Less) => true,
-        (FilterOp::Le, Less | Equal) => true,
-        (FilterOp::Gt, Greater) => true,
-        (FilterOp::Ge, Greater | Equal) => true,
-        _ => false,
-    }
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    matches!(
+        (op, order),
+        (FilterOp::Lt, Less)
+            | (FilterOp::Le, Less | Equal)
+            | (FilterOp::Gt, Greater)
+            | (FilterOp::Ge, Greater | Equal)
+    )
 }
 
 #[cfg(test)]

@@ -16,6 +16,12 @@ pub struct LineIndex {
     record_zero_committed: bool,
 }
 
+impl Default for LineIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LineIndex {
     pub fn new() -> Self {
         Self::new_starting_at(0)

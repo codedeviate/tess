@@ -250,7 +250,7 @@ fn prettify_csv(input: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = String::new();
     for r in &records {
         let mut parts: Vec<String> = Vec::with_capacity(cols);
-        for i in 0..cols {
+        for (i, width) in widths.iter().enumerate().take(cols) {
             let cell = r.get(i).unwrap_or("");
             let truncated: String = if cell.chars().count() > COL_CAP {
                 let mut s: String = cell.chars().take(COL_CAP - 1).collect();
@@ -259,7 +259,7 @@ fn prettify_csv(input: &[u8]) -> Result<Vec<u8>, String> {
             } else {
                 cell.to_string()
             };
-            let pad = widths[i].saturating_sub(truncated.chars().count());
+            let pad = width.saturating_sub(truncated.chars().count());
             parts.push(format!("{truncated}{}", " ".repeat(pad)));
         }
         out.push_str(&parts.join(" | "));
