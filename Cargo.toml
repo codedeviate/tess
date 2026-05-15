@@ -1,6 +1,6 @@
 [package]
 name = "tess-cli"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Less-style terminal pager with structured-log filtering and pretty-printing."
@@ -42,6 +42,7 @@ csv = "1"
 [dev-dependencies]
 tempfile = "3"
 expectrl = "0.7"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [lib]
 name = "tess"
@@ -50,6 +51,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "tess"
 path = "src/main.rs"
+
+[[bench]]
+name = "render_bench"
+harness = false
 
 # Tuned for distribution (Homebrew, crates.io binary installs).
 # Trades ~20-30s build time for a smaller, faster single-file binary.
