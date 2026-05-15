@@ -352,11 +352,21 @@ impl Viewport {
 
     /// Walk any newly indexed logical lines and append matching ones to
     /// `visible_lines` if we're in hide mode. No-op otherwise. Cheap to call
-    /// every loop tick — keeps a `visible_scanned` cursor.
+    /// every loop tick — keeps a `visible_scanned` cursor (line mode only;
+    /// records mode rebuilds from scratch each call).
     pub fn extend_visible_lines(&mut self, idx: &LineIndex, src: &dyn Source) {
         if !self.hide_mode() {
             return;
         }
+        if idx.records_mode() {
+            self.extend_visible_lines_records(idx, src);
+        } else {
+            self.extend_visible_lines_per_line(idx, src);
+        }
+    }
+
+    /// Line-mode: incrementally append newly indexed matching lines.
+    fn extend_visible_lines_per_line(&mut self, idx: &LineIndex, src: &dyn Source) {
         let total = idx.line_count();
         while self.visible_scanned < total {
             let line_n = self.visible_scanned;
@@ -369,8 +379,32 @@ impl Viewport {
         }
     }
 
-    /// Combined predicate: a line passes iff the (optional) filter matches
-    /// AND the (optional) grep matches. Missing predicates vacuously pass.
+    /// Records-mode: evaluate predicates once per record on the full record
+    /// bytes (which include embedded `\n`s). All physical lines of a matching
+    /// record are pushed to `visible_lines`; non-matching records are dropped
+    /// entirely (hide mode). Rebuilds from scratch on each call — O(records)
+    /// per frame but acceptable for current workloads; avoids the complexity
+    /// of tracking a records-scanned cursor alongside `visible_scanned`.
+    fn extend_visible_lines_records(&mut self, idx: &LineIndex, src: &dyn Source) {
+        self.visible_lines.clear();
+        self.visible_scanned = 0; // not used by records path; reset for clarity
+        let total_records = idx.record_count();
+        for r in 0..total_records {
+            let bytes_cow = idx.record_bytes(r, src);
+            let bytes: &[u8] = &bytes_cow;
+            if self.line_passes(bytes) {
+                for line_n in idx.record_line_range(r) {
+                    self.visible_lines.push(line_n);
+                }
+            }
+        }
+    }
+
+    /// Combined predicate: bytes pass iff the (optional) filter matches AND
+    /// the (optional) grep matches. Missing predicates vacuously pass.
+    /// In line mode, `bytes` is a single line. In records mode, `bytes` is
+    /// the full record (with embedded `\n`s) — callers are responsible for
+    /// passing the right granularity.
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
@@ -381,6 +415,25 @@ impl Viewport {
             None => true,
         };
         filter_ok && grep_ok
+    }
+
+    /// Return true iff line `line_n` should be rendered dim. In records mode,
+    /// the match decision is made once per record and applied to all its
+    /// physical lines. In line mode, the decision is made per line.
+    fn should_dim_line(&self, line_n: usize, idx: &LineIndex, src: &dyn Source) -> bool {
+        if !self.dim_mode {
+            return false;
+        }
+        if idx.records_mode() {
+            let r = idx.line_to_record(line_n);
+            let bytes_cow = idx.record_bytes(r, src);
+            let bytes: &[u8] = &bytes_cow;
+            !self.line_passes(bytes)
+        } else {
+            let range = idx.line_range(line_n, src);
+            let bytes = src.bytes(range);
+            !self.line_passes(&bytes)
+        }
     }
 
     pub fn body_rows(&self) -> u16 { self.rows.saturating_sub(1).max(1) }
@@ -511,7 +564,7 @@ impl Viewport {
             let rows = render_line(&display_bytes, &r_opts);
             let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
-                    if self.line_passes(&raw) { RowStyle::Normal } else { RowStyle::Dim }
+                    if self.should_dim_line(line_n, idx, src) { RowStyle::Dim } else { RowStyle::Normal }
                 } else {
                     // hide mode: only matching lines reach here
                     RowStyle::Normal
@@ -1498,5 +1551,65 @@ mod tests {
         v.set_search("nonexistent".into(), SearchDirection::Forward).unwrap();
         let hit = v.search_repeat(&m, &mut idx, false);
         assert!(!hit);
+    }
+
+    // ----- Records-mode filter/grep -----
+
+    #[test]
+    fn filter_hide_mode_drops_all_lines_of_nonmatching_record() {
+        // Record 0: "[1] head\n  cont a" — grep matches "cont a" → visible.
+        // Record 1: "[2] head\n  cont b" — grep does NOT match → hidden.
+        let m = MockSource::new();
+        m.append(b"[1] head\n  cont a\n[2] head\n  cont b\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&["cont a".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.extend_visible_lines(&idx, &m);
+        // Record 0 ([1] head + cont a) matches; lines 0 and 1 visible.
+        // Record 1 ([2] head + cont b) does not match; lines 2 and 3 hidden.
+        assert_eq!(v.visible_lines_for_test(), &[0usize, 1]);
+    }
+
+    #[test]
+    fn grep_matches_across_record_newlines_in_records_mode() {
+        // Pattern spans the record-header and a continuation line (needs (?s) for .).
+        let m = MockSource::new();
+        m.append(b"[1] head\n  Renderer.php\n[2] other\n  body\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&[r"(?s)head.*Renderer".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.extend_visible_lines(&idx, &m);
+        // Record 0 matches (cross-line); record 1 does not.
+        assert_eq!(v.visible_lines_for_test(), &[0usize, 1]);
+    }
+
+    #[test]
+    fn dim_mode_keeps_all_lines_visible_dims_nonmatching_records() {
+        // All 4 lines stay in visible_lines (dim mode = no hiding).
+        // Record 0 matches grep → Normal; record 1 does not → Dim.
+        let m = MockSource::new();
+        m.append(b"[1] head\n  cont\n[2] other\n  cont\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let grep = GrepPredicate::compile(&[r"\[1\]".to_string()]).unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_grep(Some(grep));
+        v.set_dim_mode(true);
+        v.extend_visible_lines(&idx, &m);
+        // Dim mode: visible_lines stays empty (hide_mode() is false).
+        assert_eq!(v.visible_lines_for_test(), &[] as &[usize]);
+        // Dim decision is per record: lines 0 and 1 belong to matching record → Normal.
+        assert!(!v.should_dim_line(0, &idx, &m));
+        assert!(!v.should_dim_line(1, &idx, &m));
+        // Lines 2 and 3 belong to non-matching record → Dim.
+        assert!(v.should_dim_line(2, &idx, &m));
+        assert!(v.should_dim_line(3, &idx, &m));
     }
 }
