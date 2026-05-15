@@ -9,7 +9,6 @@ pub struct LineIndex {
     scanned_through: usize,
     start_byte: usize,
     pending_line_start: bool,
-    pending_record_start: bool,
     head_cap: Option<usize>,
     /// True once we've committed the first record (either a real match
     /// or the synthetic record-0 absorbing orphan-head lines). Always
@@ -33,7 +32,6 @@ impl LineIndex {
             scanned_through: start_byte,
             start_byte,
             pending_line_start: false,
-            pending_record_start: false,
             head_cap: None,
             record_zero_committed: true,
         }
@@ -100,7 +98,6 @@ impl LineIndex {
             self.starts.push(line_start);
             self.maybe_push_record_start(line_start, src);
             self.pending_line_start = false;
-            self.pending_record_start = false;
             if self.at_scan_cap() {
                 return;
             }
@@ -247,6 +244,7 @@ impl LineIndex {
             self.record_starts.len()
         };
         match self.head_cap {
+            Some(0) => 0,
             Some(cap) => {
                 let visible_lines = raw.min(self.starts.len()).min(cap);
                 self.line_to_record_inner(visible_lines.saturating_sub(1))
@@ -563,5 +561,29 @@ mod tests {
         assert!(!idx.records_mode());
         idx.set_record_start(re(r"^\["));
         assert!(idx.records_mode());
+    }
+
+    #[test]
+    fn record_range_handles_unterminated_last_record() {
+        let m = MockSource::new();
+        m.append(b"[1] head\n[2] last line no newline");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(re(r"^\["));
+        idx.extend_to_end(&m);
+        assert_eq!(idx.record_count(), 2);
+        let r1 = idx.record_range(1, &m);
+        assert_eq!(&m.bytes(r1)[..], b"[2] last line no newline");
+    }
+
+    #[test]
+    fn record_count_with_head_cap_zero_returns_zero_in_records_mode() {
+        let m = MockSource::new();
+        m.append(b"[1] head\n[2] next\n");
+        let mut idx = LineIndex::new();
+        idx.set_record_start(re(r"^\["));
+        idx.set_head_cap(0);
+        idx.extend_to_end(&m);
+        assert_eq!(idx.line_count(), 0);
+        assert_eq!(idx.record_count(), 0);
     }
 }
