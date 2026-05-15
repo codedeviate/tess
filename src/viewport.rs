@@ -881,9 +881,6 @@ impl Viewport {
         self.opts.wrap = !self.opts.wrap;
     }
 
-    #[cfg(test)]
-    pub fn visible_lines_for_test(&self) -> &[usize] { &self.visible_lines }
-
     /// Return the current set of visible (matched) line indices. Non-empty only
     /// in hide mode (filter or grep active without --dim). Stable public accessor
     /// so integration tests and external tooling can inspect filter results.
@@ -1494,7 +1491,7 @@ mod tests {
         v.set_filter(Some(f));
         v.set_grep(Some(g));
         v.extend_visible_lines(&idx, &src);
-        assert_eq!(v.visible_lines_for_test(), &[0usize]);
+        assert_eq!(v.visible_lines(), &[0usize]);
     }
 
     #[test]
@@ -1594,7 +1591,7 @@ mod tests {
         v.extend_visible_lines(&idx, &m);
         // Record 0 ([1] head + cont a) matches; lines 0 and 1 visible.
         // Record 1 ([2] head + cont b) does not match; lines 2 and 3 hidden.
-        assert_eq!(v.visible_lines_for_test(), &[0usize, 1]);
+        assert_eq!(v.visible_lines(), &[0usize, 1]);
     }
 
     #[test]
@@ -1610,7 +1607,7 @@ mod tests {
         v.set_grep(Some(grep));
         v.extend_visible_lines(&idx, &m);
         // Record 0 matches (cross-line); record 1 does not.
-        assert_eq!(v.visible_lines_for_test(), &[0usize, 1]);
+        assert_eq!(v.visible_lines(), &[0usize, 1]);
     }
 
     #[test]
@@ -1628,7 +1625,7 @@ mod tests {
         v.set_dim_mode(true);
         v.extend_visible_lines(&idx, &m);
         // Dim mode: visible_lines stays empty (hide_mode() is false).
-        assert_eq!(v.visible_lines_for_test(), &[] as &[usize]);
+        assert_eq!(v.visible_lines(), &[] as &[usize]);
         // Dim decision is per record: lines 0 and 1 belong to matching record → Normal.
         assert!(!v.should_dim_line(0, &idx, &m));
         assert!(!v.should_dim_line(1, &idx, &m));

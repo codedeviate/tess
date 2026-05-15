@@ -1,8 +1,9 @@
-//! Baseline performance benchmarks. Four scenarios:
+//! Baseline performance benchmarks. Five scenarios:
 //!   1. big_file_open: build a LineIndex over a synthetic 10 MB input.
 //!   2. scroll_page: compose one full viewport frame over a large index.
 //!   3. regex_search: run a regex over every line of a large input.
 //!   4. render_line / count_rows: per-line kernel cost.
+//!   5. big_file_open_with_records: same as (1) but with record-start indexing enabled.
 //!
 //! Run with: cargo bench
 //! HTML reports are written to target/criterion/.

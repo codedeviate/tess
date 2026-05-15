@@ -60,7 +60,7 @@ proptest! {
         let mut idx = LineIndex::new();
         idx.set_record_start(BytesRegex::new(r"^\[").unwrap());
         idx.extend_to_end(&src);
-        prop_assert!(idx.record_count() <= idx.line_count().max(1),
+        prop_assert!(idx.record_count() <= idx.line_count(),
                      "records={} lines={}",
                      idx.record_count(), idx.line_count());
     }
