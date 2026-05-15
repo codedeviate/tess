@@ -727,11 +727,18 @@ impl Viewport {
     }
 
     /// Position the viewport at `p` percent through the file by bytes.
+    /// `p` is clamped to 0..=100. p=100 lands at the last line.
     pub fn goto_percent(&mut self, p: u8, src: &dyn Source, idx: &mut LineIndex) {
         let p = p.min(100) as usize;
         let target_byte = src.len().saturating_mul(p) / 100;
         idx.extend_to_byte_for_query(src, target_byte);
-        let line_n = idx.line_at_byte(target_byte).unwrap_or(0);
+        let line_n = idx.line_at_byte(target_byte)
+            .or_else(|| {
+                // target_byte at or past EOF: fall through to the last line.
+                let lc = idx.line_count();
+                if lc > 0 { Some(lc - 1) } else { None }
+            })
+            .unwrap_or(0);
         self.top_line = line_n;
         self.top_row = 0;
     }
@@ -980,6 +987,30 @@ mod tests {
         let mut v = Viewport::new(20, 5, "f".into());
         v.goto_percent(50, &m, &mut idx);
         assert_eq!(v.top_line(), 2);  // byte 5 → line 2
+    }
+
+    #[test]
+    fn goto_percent_100_lands_at_last_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");  // 6 bytes, 3 lines
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_percent(100, &m, &mut idx);
+        assert_eq!(v.top_line(), 2);
+    }
+
+    #[test]
+    fn goto_percent_0_lands_at_first_line() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.goto_record(2, &m, &mut idx);  // first jump elsewhere
+        assert_eq!(v.top_line(), 2);
+        v.goto_percent(0, &m, &mut idx);
+        assert_eq!(v.top_line(), 0);
     }
 
     #[test]
