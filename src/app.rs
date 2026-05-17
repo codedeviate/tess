@@ -1,16 +1,18 @@
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crossterm::cursor::MoveTo;
-use crossterm::event::{poll, read, Event, KeyCode, KeyEvent};
+use crossterm::event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::style::{Print, ResetColor, SetAttribute, Attribute};
 use crossterm::terminal::{Clear, ClearType, size};
 use crossterm::QueueableCommand;
 
 use crate::error::Result;
 use crate::input::{translate, Command};
+use crate::marks::{mark_set, mark_jump, jump_previous, update_prev_position, is_valid_mark_name};
 use crate::line_index::LineIndex;
 use crate::prettify::PrettifyMode;
 use crate::render::Cell;
@@ -44,6 +46,12 @@ enum InputMode {
         /// buffer until the next keystroke.
         error: Option<String>,
     },
+    /// Set-mark prefix: the next keystroke names the mark to set.
+    MarkSetPending,
+    /// Jump-to-mark prefix: the next keystroke names the mark to jump to.
+    MarkJumpPending,
+    /// First half of the Ctrl-X Ctrl-X chord.
+    CtrlXPending,
 }
 
 pub fn run(
@@ -81,6 +89,8 @@ pub fn run(
     let mut needs_redraw = true;
     let mut mode = InputMode::Normal;
     let mut numeric_prefix: Option<usize> = None;
+    let mut marks: HashMap<char, usize> = HashMap::new();
+    let mut previous_position: Option<usize> = None;
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -124,12 +134,14 @@ pub fn run(
                                                 (SearchDirection::Forward, SearchDirection::Forward)
                                                 | (SearchDirection::Backward, SearchDirection::Backward)
                                             );
+                                            update_prev_position(&mut previous_position, viewport.top_line());
                                             viewport.search_repeat(src.as_ref(), &mut idx, reverse);
                                         }
                                         mode = InputMode::Normal;
                                     } else {
                                         match viewport.set_search(buffer.clone(), *direction) {
                                             Ok(()) => {
+                                                update_prev_position(&mut previous_position, viewport.top_line());
                                                 viewport.search_repeat(src.as_ref(), &mut idx, false);
                                                 mode = InputMode::Normal;
                                             }
@@ -200,6 +212,54 @@ pub fn run(
                         needs_redraw = true;
                         continue;
                     }
+                    InputMode::MarkSetPending => {
+                        if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
+                            if is_valid_mark_name(c) {
+                                mark_set(&mut marks, c, viewport.top_line());
+                            }
+                        }
+                        mode = InputMode::Normal;
+                        continue;
+                    }
+                    InputMode::MarkJumpPending => {
+                        if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
+                            if is_valid_mark_name(c) {
+                                if let Some(line) = mark_jump(
+                                    &marks, c, idx.line_count(),
+                                    &mut previous_position, viewport.top_line(),
+                                ) {
+                                    viewport.goto_line(line, src.as_ref(), &mut idx);
+                                    needs_redraw = true;
+                                }
+                            }
+                        }
+                        mode = InputMode::Normal;
+                        continue;
+                    }
+                    InputMode::CtrlXPending => {
+                        let is_ctrl_x = matches!(
+                            event,
+                            Event::Key(KeyEvent {
+                                code: KeyCode::Char('x'),
+                                modifiers: KeyModifiers::CONTROL,
+                                ..
+                            })
+                        );
+                        if is_ctrl_x {
+                            if let Some(line) = jump_previous(
+                                &mut previous_position, viewport.top_line(),
+                            ) {
+                                let clamped = line.min(idx.line_count().saturating_sub(1));
+                                viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                                needs_redraw = true;
+                            }
+                            mode = InputMode::Normal;
+                            continue;
+                        }
+                        // Anything else: cancel and fall through to normal dispatch.
+                        mode = InputMode::Normal;
+                        // Don't `continue` — let the event fall through.
+                    }
                     InputMode::Normal => {}
                 }
                 let cmd = translate(event);
@@ -223,6 +283,7 @@ pub fn run(
                         continue;
                     }
                     Command::GotoLine => {
+                        update_prev_position(&mut previous_position, viewport.top_line());
                         match prefix_at_cmd {
                             Some(line) if line > 0 => viewport.goto_line(line - 1, src.as_ref(), &mut idx),
                             _ => viewport.goto_top(),
@@ -230,6 +291,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::GotoRecord => {
+                        update_prev_position(&mut previous_position, viewport.top_line());
                         match prefix_at_cmd {
                             Some(rec) if rec > 0 => viewport.goto_record(rec - 1, src.as_ref(), &mut idx),
                             _ => viewport.goto_bottom(src.as_ref(), &mut idx),
@@ -237,6 +299,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::GotoPercent => {
+                        update_prev_position(&mut previous_position, viewport.top_line());
                         match prefix_at_cmd {
                             Some(p) if p <= 100 => viewport.goto_percent(p as u8, src.as_ref(), &mut idx),
                             _ => viewport.goto_top(),
@@ -347,17 +410,32 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::NextMatch => {
+                        update_prev_position(&mut previous_position, viewport.top_line());
                         if viewport.search_repeat(src.as_ref(), &mut idx, false) {
                             needs_redraw = true;
                         }
                     }
                     Command::PreviousMatch => {
+                        update_prev_position(&mut previous_position, viewport.top_line());
                         if viewport.search_repeat(src.as_ref(), &mut idx, true) {
                             needs_redraw = true;
                         }
                     }
                     Command::OptionPrefix => {
                         mode = InputMode::OptionPrefix;
+                    }
+                    Command::MarkSet => {
+                        mode = InputMode::MarkSetPending;
+                    }
+                    Command::MarkJump => {
+                        mode = InputMode::MarkJumpPending;
+                    }
+                    Command::CtrlXPrefix => {
+                        mode = InputMode::CtrlXPending;
+                    }
+                    Command::JumpPrevious => {
+                        // Resolved inside the CtrlXPending mode intercept; this
+                        // arm is defensive and should never fire.
                     }
                     Command::Noop => {}
                 }

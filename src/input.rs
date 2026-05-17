@@ -55,6 +55,18 @@ pub enum Command {
     GotoPercent,
     /// Cancel any pending numeric prefix without firing a command.
     Cancel,
+    /// First half of a set-mark sequence (the `m` key). The next keystroke
+    /// names the mark.
+    MarkSet,
+    /// First half of a jump-to-mark sequence (the `'` key). The next
+    /// keystroke names the mark.
+    MarkJump,
+    /// First half of the `Ctrl-X Ctrl-X` jump-to-previous-position chord.
+    /// The next keystroke must also be Ctrl-X.
+    CtrlXPrefix,
+    /// Jump to the previous position (Ctrl-X Ctrl-X in less). Dispatched
+    /// from the CtrlXPending mode intercept in app.rs.
+    JumpPrevious,
     Noop,
 }
 
@@ -103,6 +115,9 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('?'), false) => Command::SearchBackward,
         (Char('n'), false) => Command::NextMatch,
         (Char('N'), false) => Command::PreviousMatch,
+        (Char('m'), false) => Command::MarkSet,
+        (Char('\''), false) => Command::MarkJump,
+        (Char('x'), true) => Command::CtrlXPrefix,
         _ => Command::Noop,
     }
 }
@@ -239,5 +254,23 @@ mod tests {
     #[test]
     fn resize_event() {
         assert_eq!(translate(Event::Resize(80, 24)), Command::Resize(80, 24));
+    }
+
+    #[test]
+    fn m_key_produces_mark_set_command() {
+        let evt = key(KeyCode::Char('m'), KeyModifiers::NONE);
+        assert_eq!(translate(evt), Command::MarkSet);
+    }
+
+    #[test]
+    fn single_quote_key_produces_mark_jump_command() {
+        let evt = key(KeyCode::Char('\''), KeyModifiers::NONE);
+        assert_eq!(translate(evt), Command::MarkJump);
+    }
+
+    #[test]
+    fn ctrl_x_produces_ctrl_x_prefix_command() {
+        let evt = key(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        assert_eq!(translate(evt), Command::CtrlXPrefix);
     }
 }

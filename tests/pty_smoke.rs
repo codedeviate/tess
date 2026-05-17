@@ -103,6 +103,24 @@ fn resize_then_quit_exits_cleanly() {
 }
 
 #[test]
+fn marks_round_trip_via_pty() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    for i in 1..=50 {
+        writeln!(tmp, "line {:03}", i).unwrap();
+    }
+    let cmd = format!("{bin} {}", tmp.path().display());
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    thread::sleep(DRAW_GRACE);
+    // 5j: scroll. ma: set mark a. 20j: scroll more. 'a: jump to mark.
+    // \x18\x18: Ctrl-X Ctrl-X. q: quit.
+    s.send("5jma20j'a\x18\x18q").unwrap();
+    wait_clean(s);
+}
+
+#[test]
 fn records_mode_starts_and_quits_cleanly() {
     let bin = env!("CARGO_BIN_EXE_tess");
     let cmd = format!(
