@@ -308,6 +308,31 @@ In **dim mode** (`--dim`): non-matching lines are still rendered, but with `Attr
 
 ---
 
+## Marks
+
+Save and restore positions in the file. Marks are session-local: they
+live only as long as the running tess process.
+
+| Keys | Action |
+|------|--------|
+| `m<x>` | Set mark `<x>` to the current top line. |
+| `'<x>` | Jump to mark `<x>`. Silent no-op if the mark is unset. |
+| `Ctrl-X Ctrl-X` | Jump to the previous position. Swaps current with previous, so pressing it twice returns to where you were. |
+
+`<x>` is any lowercase letter `a`-`z` or digit `0`-`9` (36 slots total).
+
+The previous-position slot is updated automatically on every big jump:
+search (`/`, `?`, `n`, `N`), goto (`Ng`, `NG`, `N%`, bare `g`, bare `G`),
+mark jumps, and `Ctrl-X Ctrl-X` itself. Scrolling (`j`, `k`, `Space`,
+arrows) does NOT update it — so `Ctrl-X Ctrl-X` after scrolling around
+takes you back to wherever you last jumped from.
+
+If a mark refers to a line that no longer exists (for example, after
+the source file has shrunk in `--live` mode), the jump lands at the
+last available line.
+
+---
+
 ## Multi-line records
 
 Some log formats emit records that span many physical newlines: PHP error

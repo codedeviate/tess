@@ -35,10 +35,6 @@ The CLI already accepts multiple files but only opens the first; we even emit a 
 
 Touches: `cli` (already collects them), `app` (colon command mode), new module.
 
-### Marks and jumps (`m<x>`, `'<x>`, `123g`, `50p`, `^X^X`) — **S/M**
-
-Save and restore positions. Single-keystroke goto-line and percentage jumps need a numeric-prefix accumulator in `input`/`app`.
-
 ### Shell integration — **M**
 
 - `!cmd` to escape to the shell while keeping the file open.
