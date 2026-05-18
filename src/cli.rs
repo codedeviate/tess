@@ -109,11 +109,11 @@ pub struct Args {
 
     /// Pipe the source file through this command before rendering.
     /// Must start with `|`; `%s` is substituted with the file path.
-    /// Example: `--preprocess '|pdftotext - %s'`. Overrides $LESSOPEN.
+    /// Example: `--preprocess '|pdftotext %s -'`. Overrides $LESSOPEN.
     #[arg(
         long = "preprocess",
         value_name = "CMD",
-        conflicts_with_all = ["no_preprocess", "hex", "follow"],
+        conflicts_with_all = ["no_preprocess", "hex", "follow", "live"],
         display_order = 18,
     )]
     pub preprocess: Option<String>,
