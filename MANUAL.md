@@ -485,6 +485,77 @@ source.
 
 ---
 
+## Tag jumping
+
+`tess` can read a `ctags`- or `etags`-format tags file and jump to
+named definitions, vim-style.
+
+### Loading a tags file
+
+| Flag | Behavior |
+|------|----------|
+| `-T PATH` / `--tag-file PATH` | Use this exact tags file. |
+| (default) | Walk up from the first file's directory looking for `tags`. |
+
+If `-t` is given but no tags file is found, `tess` exits with code 1
+and a message on stderr.
+
+### Jumping
+
+| Action | Trigger |
+|--------|---------|
+| Jump to a tag at startup | `tess -t NAME [files...]` |
+| Open the tag-name prompt at runtime | `Ctrl-]` (then type a name, Enter) |
+| Jump to a tag via colon prompt | `:tag NAME` |
+| Pop the tag stack | `Ctrl-T` |
+| Next match (multi-match tag) | `:tnext` |
+| Previous match | `:tprev` |
+
+The tag stack is a vim-style LIFO of jump-from positions. Each
+`:tag` / `Ctrl-]` push the current `(file, line)` onto the stack;
+`Ctrl-T` pops back. The stack is unbounded.
+
+### Multi-match cycling
+
+When a tag has more than one definition (e.g. an overloaded function
+in multiple files), the first match is shown and a status indicator
+appears at the right end of the status line:
+
+```
+[tag: foo (1/3)]
+```
+
+`:tnext` advances the cursor; `:tprev` retreats. The indicator stays
+visible until you `Ctrl-T` pop the stack or start a new tag jump.
+Other movement (`j`/`k`/`/` etc.) does not clear it.
+
+Single-match jumps do not show the indicator.
+
+### Supported tag-file formats
+
+- **ctags traditional**: `name\tfile\taddress`
+- **ctags exuberant / universal**: same plus optional `;"` extended
+  fields (kind, scope, etc.). Extended fields are ignored.
+- **etags** (Emacs): standard etags format with `\x0c\n`-separated
+  sections.
+
+Tag addresses can be line numbers (`42`) or vi-style search patterns
+(`/^fn foo()$/` or `?pattern?`). Pattern addresses are converted to
+regex anchors (`^...$` preserved); other metacharacters in the
+pattern body are escaped.
+
+If a pattern address doesn't match in the source file, `tess` shows
+`[tag pattern not found]` and stays where it is — the stack push
+already happened, so `Ctrl-T` returns to where you came from.
+
+### Custom prompt placement
+
+The `<tag-tag>` placeholder in `--prompt` templates resolves to
+`  [tag: NAME (N/M)]` when a multi-match cycle is active, empty
+otherwise.
+
+---
+
 ## Running shell commands
 
 Press `!` inside the pager to enter a shell command. The prompt shows

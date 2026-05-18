@@ -29,9 +29,12 @@ should be added without their own spec → plan cycle.
 
 ## Deferred
 
-### Tags (`-t`, `-T`) — **M**
+### Tag-feature follow-ups — **S each**
 
-Jump to a tag (ctags-style). Requires parsing a tags file.
+- Tag-name completion in the `:tag` / `Ctrl-]` prompt.
+- Auto-reload of the tags file when its mtime changes.
+- Support for `ex` command tag addresses beyond simple `/pattern/` and line numbers.
+- `:tselect` — a numbered picker for multi-match tags up front (vim has both cycling and select).
 
 ### Follow-mode follow-ups — **S each**
 
