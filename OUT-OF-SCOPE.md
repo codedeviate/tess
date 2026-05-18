@@ -29,12 +29,6 @@ should be added without their own spec → plan cycle.
 
 ## Deferred
 
-### Multi-file navigation (`:n`, `:p`, `:e`, file list) — **M**
-
-The CLI already accepts multiple files but only opens the first; we even emit a stderr warning about ignored ones. Need a small `file_set` module that owns a list of `Source`s and a current-index, plus the colon-prefix command interface.
-
-Touches: `cli` (already collects them), `app` (colon command mode), new module.
-
 ### Tags (`-t`, `-T`) — **M**
 
 Jump to a tag (ctags-style). Requires parsing a tags file.

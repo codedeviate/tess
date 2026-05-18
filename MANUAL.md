@@ -425,6 +425,66 @@ last available line.
 
 ---
 
+## Multi-file navigation
+
+Pass multiple files on the command line:
+
+```sh
+tess foo.log bar.log baz.log
+```
+
+The first file opens immediately. Use `:`-prefixed commands to navigate:
+
+| Command | Action |
+|---------|--------|
+| `:n` (or `:next`) | Next file. Shows `[no next file]` at the end. |
+| `:p` (or `:prev`) | Previous file. Shows `[no previous file]` at the start. |
+| `:e <path>` (or `:edit`) | Open `<path>`, append it to the file list, switch to it. `~/` expands to `$HOME`. |
+| `:f` | Show the current filename and position briefly in the status line. |
+| `:q` (or `:quit`) | Quit (alias for `q`). |
+| `:d` (or `:delete`) | Remove the current file from the list and switch to the next (or previous if at the end). Errors if only one file remains. |
+| `:x` (or `:first`) | Jump to the first file in the list. |
+| `:t` (or `:last`) | Jump to the last file in the list. |
+
+Press `:` to enter the colon prompt; type the command and press Enter,
+or press Esc to cancel. Bare Enter on an empty prompt dismisses without
+running anything.
+
+When the file list has more than one entry, the status line shows
+`<label>  [N/M]` next to the filename. Custom `--prompt` templates can
+place this anywhere via the `<file-index-tag>` placeholder.
+
+### State preserved across file switches
+
+- Marks (`m a`, `'a`) are session-wide. Setting `m a` in `foo.log` and
+  switching to `bar.log` doesn't lose the mark — `'a` returns to that
+  position in `foo.log`.
+- The previous-position slot (Ctrl-X Ctrl-X) tracks across files too.
+  Jump from line 50 in `foo.log` to line 1 in `bar.log` (via `:n`),
+  press Ctrl-X Ctrl-X, return to `foo.log:50`.
+- The active search regex persists. After `:n`, pressing `n` searches
+  the new file from the top with the same pattern.
+
+### State reset on every switch
+
+- Top-of-screen position resets to line 1. Each file starts fresh.
+- The numeric-prefix accumulator, mark-pending, and Ctrl-X-pending
+  states all clear.
+
+### Stdin and multi-file
+
+Piped stdin (`cat foo | tess bar.log baz.log`) still wins: stdin is
+read as the only source, and file arguments are ignored with a warning.
+Multi-file navigation requires file-path arguments.
+
+### `--follow` and `--live` with multi-file
+
+If you invoked with `--follow`, each file you switch to enters follow
+mode. If you invoked with `--live`, each file is opened as a live
+source.
+
+---
+
 ## Running shell commands
 
 Press `!` inside the pager to enter a shell command. The prompt shows
