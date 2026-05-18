@@ -37,20 +37,23 @@ pub fn run_shell_command(cmd_text: &str) -> io::Result<()> {
     let _ = writeln!(io::stderr(), "[Press any key to continue]");
     let _ = io::stderr().flush();
 
-    // Read one byte from stdin (blocking). If stdin is closed or fails,
-    // proceed anyway — the user will see the terminal restore happen.
-    let mut buf = [0u8; 1];
-    let _ = io::stdin().read(&mut buf);
-
-    // Rebuild the terminal state. We don't construct a new TerminalGuard
-    // here because the caller's active guard will still call Drop on the
-    // way out of `app::run`. Directly re-enable raw mode + alt-screen.
+    // Re-enable raw mode BEFORE reading the keystroke. In canonical
+    // (cooked) mode, read() would block until a newline; raw mode
+    // delivers single bytes immediately so any keypress unblocks.
     // Both calls are best-effort: in test environments there is no real
     // TTY and enable_raw_mode() returns ENXIO — that's fine, the caller's
     // TerminalGuard will clean up anyway.
     use crossterm::cursor::Hide;
     use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen};
     let _ = enable_raw_mode();
+
+    // Read one byte from stdin. If stdin is closed or fails, proceed
+    // anyway — the user will see the terminal restore happen.
+    let mut buf = [0u8; 1];
+    let _ = io::stdin().read(&mut buf);
+
+    // NOW enter the alt-screen so the next frame draw paints over the
+    // shell-command output.
     let _ = crossterm::execute!(io::stdout(), EnterAlternateScreen, Hide);
 
     status_result.map(|_| ())
