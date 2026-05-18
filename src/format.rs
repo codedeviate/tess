@@ -234,6 +234,8 @@ struct GroupEntry {
     tab_width: Option<u8>,
     #[serde(default)]
     filter: Vec<String>,
+    #[serde(default)]
+    grep: Vec<String>,
 }
 
 /// A user-defined CLI shortcut. When `tess --<group_name>` appears in argv,
@@ -252,6 +254,7 @@ pub struct Group {
     pub chop: bool,
     pub tab_width: Option<u8>,
     pub filter: Vec<String>,
+    pub grep: Vec<String>,
 }
 
 /// Long-form names of every built-in clap flag. A group cannot reuse one of
@@ -358,6 +361,7 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
                 chop: entry.chop.unwrap_or(false),
                 tab_width: entry.tab_width,
                 filter: entry.filter,
+                grep: entry.grep,
             },
         );
     }
@@ -490,6 +494,10 @@ fn expand_group(g: &Group, out: &mut Vec<String>) {
     for f in &g.filter {
         out.push("--filter".into());
         out.push(f.clone());
+    }
+    for g_pat in &g.grep {
+        out.push("--grep".into());
+        out.push(g_pat.clone());
     }
     if let Some(file) = &g.file {
         out.push(file.clone());
@@ -905,5 +913,51 @@ regex = "^(?P<custom>\\S+)$"
             Some(r"["),  // unclosed bracket
         ).expect_err("should fail");
         assert!(err.contains("record_start"), "error mentions record_start: {err}");
+    }
+
+    #[test]
+    fn group_with_grep_field_deserializes() {
+        let toml_text = r#"
+            [group.errorlog]
+            format = "app"
+            grep = ["timeout", "deadlock"]
+        "#;
+        let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
+        let entry = cfg.group.get("errorlog").expect("errorlog present");
+        assert_eq!(entry.grep, vec!["timeout".to_string(), "deadlock".to_string()]);
+    }
+
+    #[test]
+    fn expand_argv_emits_group_grep_flags() {
+        let mut groups = HashMap::new();
+        groups.insert("errorlog".to_string(), Group {
+            name: "errorlog".to_string(),
+            grep: vec!["timeout".to_string(), "deadlock".to_string()],
+            ..Default::default()
+        });
+        let out = expand_argv(
+            argv(&["tess", "--errorlog", "logs.txt"]),
+            &groups,
+        );
+        let joined = out.join(" ");
+        assert!(joined.contains("--grep timeout"), "got: {joined}");
+        assert!(joined.contains("--grep deadlock"), "got: {joined}");
+    }
+
+    #[test]
+    fn user_grep_after_group_accumulates() {
+        let mut groups = HashMap::new();
+        groups.insert("errorlog".to_string(), Group {
+            name: "errorlog".to_string(),
+            grep: vec!["timeout".to_string()],
+            ..Default::default()
+        });
+        let out = expand_argv(
+            argv(&["tess", "--errorlog", "--grep", "extra", "logs.txt"]),
+            &groups,
+        );
+        let joined = out.join(" ");
+        assert!(joined.contains("--grep timeout"));
+        assert!(joined.contains("--grep extra"));
     }
 }

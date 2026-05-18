@@ -675,7 +675,7 @@ impl Viewport {
             s.push_str("  [grep]");
         }
         if self.filter.is_some() || self.grep.is_some() {
-            s.push_str(if self.dim_mode { "  [dim]" } else { "  [filter]" });
+            s.push_str(if self.dim_mode { "  [dim]" } else { "  [hide]" });
         }
         if let Some(sr) = self.search.as_ref() {
             let prefix = if matches!(sr.direction, SearchDirection::Forward) { "/" } else { "?" };
