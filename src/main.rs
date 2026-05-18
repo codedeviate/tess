@@ -508,6 +508,9 @@ showing raw (use --content-type=NAME to override)"
     if let Some(d) = display_renderer {
         viewport.set_display(Some(d));
     }
+    if args.hex {
+        viewport.set_hex_mode(true);
+    }
 
     let rebuild_spec = RebuildSpec {
         head: args.head,

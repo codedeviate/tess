@@ -63,12 +63,22 @@ pub struct Args {
     #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 10)]
     pub head: Option<usize>,
 
+    /// Render the source as an xxd-style hex dump instead of byte-faithful
+    /// text. 16 bytes per row, offset prefix, ASCII gutter. Mutually
+    /// exclusive with parsing- and rendering-oriented flags.
+    #[arg(
+        long = "hex",
+        display_order = 11,
+        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start"],
+    )]
+    pub hex: bool,
+
     /// Show line numbers.
-    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 11)]
+    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 12)]
     pub line_numbers: bool,
 
     /// Print available log formats and their named fields, then exit.
-    #[arg(long = "list-formats", display_order = 12)]
+    #[arg(long = "list-formats", display_order = 13)]
     pub list_formats: bool,
 
     /// Live mode: re-read the file when its on-disk content changes (mtime,
@@ -76,11 +86,11 @@ pub struct Args {
     /// being edited, files saved by an editor or AI agent. Different from
     /// `--follow` (which watches for *appended* bytes); the two are mutually
     /// exclusive. Press `R` inside the pager to force a reload.
-    #[arg(long = "live", conflicts_with = "follow", display_order = 13)]
+    #[arg(long = "live", conflicts_with = "follow", display_order = 14)]
     pub live: bool,
 
     /// Print the full user manual and exit.
-    #[arg(long = "manual", display_order = 14)]
+    #[arg(long = "manual", display_order = 15)]
     pub manual: bool,
 
     /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
@@ -89,7 +99,7 @@ pub struct Args {
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 15)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 16)]
     pub output: Option<String>,
 
     /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
@@ -97,7 +107,7 @@ pub struct Args {
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 16)]
+    #[arg(long = "prettify", display_order = 17)]
     pub prettify: bool,
 
     /// Treat lines matching REGEX as record boundaries. Lines that don't
@@ -106,21 +116,21 @@ pub struct Args {
     /// Overrides the active --format's record_start if both are present.
     /// Without --format, this is the only way to enable records mode for
     /// plain text. Example: --record-start '^\['
-    #[arg(long = "record-start", value_name = "REGEX", display_order = 17)]
+    #[arg(long = "record-start", value_name = "REGEX", display_order = 18)]
     pub record_start: Option<String>,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 18)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 19)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 19)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 20)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 20)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 21)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -321,6 +331,7 @@ mod tests {
             "--format",
             "--grep",
             "--head",
+            "--hex",
             "--LINE-NUMBERS",
             "--list-formats",
             "--live",

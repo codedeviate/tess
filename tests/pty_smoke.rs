@@ -132,3 +132,18 @@ fn records_mode_starts_and_quits_cleanly() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn hex_mode_starts_and_quits_cleanly() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    let bytes: Vec<u8> = (0u8..=255).collect();
+    tmp.write_all(&bytes).unwrap();
+    let cmd = format!("{bin} --hex {}", tmp.path().display());
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    thread::sleep(DRAW_GRACE);
+    s.send("q").unwrap();
+    wait_clean(s);
+}

@@ -132,6 +132,7 @@ pub struct Viewport {
     /// through the template before being shown, searched, or counted for wraps.
     /// Filtering still operates on the raw line (it uses captures, not text).
     display: Option<crate::format::DisplayRenderer>,
+    hex_mode: bool,
 }
 
 impl Viewport {
@@ -155,11 +156,16 @@ impl Viewport {
             visible_scanned: 0,
             search: None,
             display: None,
+            hex_mode: false,
         }
     }
 
     pub fn set_display(&mut self, renderer: Option<crate::format::DisplayRenderer>) {
         self.display = renderer;
+    }
+
+    pub fn set_hex_mode(&mut self, on: bool) {
+        self.hex_mode = on;
     }
 
     /// Fetch a logical line's display bytes — rendered through the active
@@ -507,6 +513,9 @@ impl Viewport {
     }
 
     pub fn frame(&self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
+        if self.hex_mode {
+            return self.frame_hex(src);
+        }
         let body_rows = self.body_rows() as usize;
         idx.extend_to_line(self.top_line + body_rows + 1, src);
 
@@ -687,6 +696,55 @@ impl Viewport {
         if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
         s
+    }
+
+    fn frame_hex(&self, src: &dyn Source) -> Frame {
+        use crate::hex::format_hex_row;
+        use crate::render::{render_line, Cell, RenderOpts};
+
+        let body_rows = self.rows.saturating_sub(1) as usize;
+        let total_bytes = src.len();
+        let total_hex_rows = total_bytes.div_ceil(16);
+
+        let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
+        let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
+        let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
+
+        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1 };
+
+        for row_idx in 0..body_rows {
+            let hex_row = self.top_line + row_idx;
+            if hex_row >= total_hex_rows {
+                body.push(vec![Cell::Empty; self.cols as usize]);
+            } else {
+                let offset = hex_row * 16;
+                let end = (offset + 16).min(total_bytes);
+                let bytes_cow = src.bytes(offset..end);
+                let text = format_hex_row(offset, &bytes_cow);
+                let rows = render_line(text.as_bytes(), &opts);
+                body.push(rows.into_iter().next().unwrap_or_else(|| {
+                    vec![Cell::Empty; self.cols as usize]
+                }));
+            }
+            row_styles.push(RowStyle::Normal);
+            highlights.push(Vec::new());
+        }
+
+        let status = self.format_status_hex(src);
+        Frame { body, row_styles, highlights, status }
+    }
+
+    fn format_status_hex(&self, src: &dyn Source) -> String {
+        let total_bytes = src.len();
+        let total_hex_rows = total_bytes.div_ceil(16);
+        let body_rows = self.rows.saturating_sub(1) as usize;
+        let top = self.top_line.min(total_hex_rows.saturating_sub(1)) + 1;
+        let bottom = (self.top_line + body_rows).min(total_hex_rows.max(1));
+        let pct = (bottom * 100).checked_div(total_hex_rows).unwrap_or(0);
+        format!(
+            "{}  off {}-{}/{}  {}%  [hex]",
+            self.source_label, top, bottom, total_hex_rows, pct
+        )
     }
 
     /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
