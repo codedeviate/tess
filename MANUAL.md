@@ -44,6 +44,7 @@ cmd | tess [OPTIONS]
 - **`-N`, `--LINE-NUMBERS`** — show line numbers in a left-side gutter.
 - **`-S`, `--chop-long-lines`** — truncate long lines at the right edge instead of wrapping. Toggle interactively with `Shift-S`.
 - **`--tab-width N`** — tab-stop width (default `8`).
+- **`--hex`** — render the source as an `xxd`-style hex dump. Mutually exclusive with `--filter`, `--grep`, `--prettify`, `--format`, `--display`, `--record-start`, and `--prompt`.
 
 ### Source
 
@@ -113,6 +114,7 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 - **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
 - **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
 - **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
+- **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
 - **`-V`, `--version`** — print version.
 
 ---
@@ -205,6 +207,54 @@ The bottom row shows current state. Format:
 - **`+`** suffix on `total` — the source may still grow (streaming stdin, follow mode, or live mode).
 
 While a search prompt is open, the entire status row is replaced with `/<typed-so-far>` (or `?…`). `Enter` commits, `Esc` cancels, `Backspace` edits.
+
+---
+
+## Customizing the status line
+
+Override the built-in status format with a templated string. Same
+`<field>` syntax as `--display`:
+
+```sh
+tess --prompt '<label> <pct>%' file.log
+tess --prompt '<label>  <rec-block>  <pct>%<grep-tag><hide-tag>' --format app file.log
+```
+
+Set a per-format default in `~/.config/tess/formats.toml`:
+
+```toml
+[format.app]
+regex = '^(?P<ts>\S+) (?P<level>\w+) (?P<msg>.+)$'
+prompt = '<label>  <top>-<bottom>/<total>  <pct>%<filter-tag><hide-tag>'
+```
+
+CLI `--prompt` overrides `format.prompt`, which overrides the built-in
+default. The built-in default reproduces tess's standard status format.
+
+Available placeholders:
+
+| Placeholder | Resolves to |
+|---|---|
+| `<label>` | source label (filename / stdin) |
+| `<top>` / `<bottom>` / `<total>` | visible line range and total |
+| `<pct>` | percent through file (0–100) |
+| `<rec-top>` / `<rec-bottom>` / `<rec-total>` | record range and total (records mode only) |
+| `<rec-block>` | `L<top>-<bot>/<total>  R<rec-top>-<rec-bot>/<rec-total>` in records mode; `<top>-<bot>/<total>` in line mode |
+| `<wrap-offset>` | `+N/M` indicator when inside a long-wrapped line |
+| `<format-tag>` | `[<format-name>]` when --format is active |
+| `<filter-tag>` | `[<format-name>]` when --filter is active |
+| `<grep-tag>` | `[grep]` when --grep is active |
+| `<hide-tag>` | `[hide]` or `[dim]` when a predicate is active |
+| `<search-tag>` | `[/pattern]` or `[?pattern]` while searching |
+| `<pretty-tag>` | `[pretty:<type>]` when prettify is on |
+| `<live-tag>` / `<follow-tag>` | `(L)` / `(F)` markers |
+
+Tag placeholders that aren't active resolve to empty strings (with no
+surrounding whitespace), so a template like `<label><filter-tag>` cleanly
+collapses when there's no filter.
+
+Escape `\<` for a literal `<` and `\\` for a literal `\`. Unknown
+placeholders cause a startup error pointing at the offending field name.
 
 ---
 
@@ -330,6 +380,32 @@ takes you back to wherever you last jumped from.
 If a mark refers to a line that no longer exists (for example, after
 the source file has shrunk in `--live` mode), the jump lands at the
 last available line.
+
+---
+
+## Hex display
+
+Render the source as an `xxd`-style hex dump. One row covers 16 bytes:
+an 8-digit hex offset, the bytes themselves grouped in 8 × 2-byte words,
+and an ASCII gutter where printable bytes appear and everything else
+shows as `.`.
+
+```sh
+tess --hex /usr/bin/ls
+tess -f --hex /var/log/binary-feed.bin   # follow mode works
+```
+
+`--hex` is mutually exclusive with `--filter`, `--grep`, `--prettify`,
+`--format`, `--display`, `--record-start`, and `--prompt` — hex mode is
+fundamentally byte-level and these features are line- or record-oriented.
+
+Search (`/pattern`) inside hex mode operates on the rendered row text,
+so you can find ASCII strings in the gutter or hex byte sequences:
+
+```
+/Hello       # find the ASCII string in the gutter
+/4865 6c6c   # find the same bytes by their hex
+```
 
 ---
 
@@ -606,10 +682,23 @@ All optional. Anything left out simply isn't passed.
 | `chop` | bool | `-S` |
 | `tab_width` | integer | `--tab-width N` |
 | `filter` | array of strings | `--filter X` (one entry per element) |
+| `grep`   | array of strings | `--grep X` (one entry per element) |
 
 ### Override semantics
 
-When the group is expanded, its flags appear in argv before any flags you typed *after* the group token. For repeatable flags (`--filter`), CLI values **add** to the group's. For single-value flags (`--tail`, `--head`, `--tab-width`, `--format`), the **last occurrence wins**, so a CLI flag after the group token overrides the group's value.
+When the group is expanded, its flags appear in argv before any flags you typed *after* the group token. For repeatable flags (`--filter`, `--grep`), CLI values **add** to the group's. For single-value flags (`--tail`, `--head`, `--tab-width`, `--format`), the **last occurrence wins**, so a CLI flag after the group token overrides the group's value.
+
+Groups also support a `grep` field that mirrors `filter`. Each entry
+becomes a repeated `--grep <pattern>` after group expansion, and the
+user's own `--grep` arguments accumulate on top:
+
+```toml
+[group.errorlog]
+format = "errorlog"
+follow = true
+filter = ["level=ERROR"]
+grep = ["timeout", "deadlock"]   # both patterns must match
+```
 
 ### Restrictions
 

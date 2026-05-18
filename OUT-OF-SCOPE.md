@@ -43,28 +43,15 @@ Touches: `cli` (already collects them), `app` (colon command mode), new module.
 
 Each is its own sub-feature; they don't have to land together.
 
-### Prompt customization (`-P` / `lessrc`) — **S**
-
-Replace the hardcoded status format with a templated prompt. Needs a tiny format-string parser. Currently the status is `"<label>  <top>-<bottom>/<total>  <pct>%"`, baked into `viewport::format_status`.
-
 ### Tags (`-t`, `-T`) — **M**
 
 Jump to a tag (ctags-style). Requires parsing a tags file.
-
-### Hex display — **S**
-
-When the file looks binary, show a hex dump instead of byte-faithful text. Could be a `--hex` flag.
 
 ### Follow-mode follow-ups — **S each**
 
 - **File rotation / truncation**: real `tail -F` re-opens the file when it shrinks or its inode changes. We currently keep a single `File` handle and would read garbage past a truncation. Detect via `metadata().len() < known_size` (or inode change) and re-open from offset 0.
 - **No-content idle hint**: when in follow mode and nothing has arrived for a while, an indicator like `(F idle)` could be useful. Trivially derivable from "ticks since last growth".
 - **Press-any-key suspends follow** (real `less +F` semantics): right now `Shift-F` is the explicit toggle and movement keys leave follow on (auto-scroll just doesn't fire because user isn't at bottom). If a user finds this surprising, change `ScrollLines(-…)` and friends to also `set_follow_mode(false)`.
-
-### `--grep` follow-ups — **S each**
-
-- **Rename the overloaded `[filter]` status token**: when only `--grep` is active, the status line reads `... [grep]  [filter]`. The trailing `[filter]` is meant to signal "hide mode is on" but visually clashes with the flag name. Either rename to `[hide]` (and `[dim]` becomes `[dim]` as today, unchanged), or drop the trailing token entirely when `--filter` is not in effect. Single point of change: `viewport::format_status`.
-- **`grep` field on `[group.NAME]` in `formats.toml`**: groups can carry default `filter = [...]` entries but not `grep`. Add a `grep: Vec<String>` field to `format::Group` and wire it through `format::expand_argv` the same way `filter` is. Small, but needs a test for repeatable expansion and another for user-grep-after-group accumulation (clap `Vec` behavior).
 
 ### Long tail of `less` flags — **L (cumulative)**
 
