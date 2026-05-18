@@ -69,7 +69,7 @@ pub struct Args {
     #[arg(
         long = "hex",
         display_order = 11,
-        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt"],
+        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt", "preprocess"],
     )]
     pub hex: bool,
 
@@ -93,21 +93,37 @@ pub struct Args {
     #[arg(long = "manual", display_order = 15)]
     pub manual: bool,
 
+    /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
+    /// for one invocation.
+    #[arg(long = "no-preprocess", conflicts_with = "preprocess", display_order = 16)]
+    pub no_preprocess: bool,
+
     /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
     /// to the source and write the resulting raw bytes to FILE, then exit.
     /// Use `-` for stdout (`--stdout` is a synonym). Skips the alt-screen and
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 16)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 17)]
     pub output: Option<String>,
+
+    /// Pipe the source file through this command before rendering.
+    /// Must start with `|`; `%s` is substituted with the file path.
+    /// Example: `--preprocess '|pdftotext - %s'`. Overrides $LESSOPEN.
+    #[arg(
+        long = "preprocess",
+        value_name = "CMD",
+        conflicts_with_all = ["no_preprocess", "hex", "follow"],
+        display_order = 18,
+    )]
+    pub preprocess: Option<String>,
 
     /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
     /// Detects the type from the filename extension or the first bytes; use
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 17)]
+    #[arg(long = "prettify", display_order = 19)]
     pub prettify: bool,
 
     /// Replace the hardcoded status format with a templated string.
@@ -117,7 +133,7 @@ pub struct Args {
     /// hide-tag, search-tag, pretty-tag, live-tag, follow-tag.
     /// Per-format default can be set via `prompt = '...'` in formats.toml.
     /// Mutually exclusive with --hex.
-    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 18)]
+    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 20)]
     pub prompt: Option<String>,
 
     /// Treat lines matching REGEX as record boundaries. Lines that don't
@@ -126,21 +142,21 @@ pub struct Args {
     /// Overrides the active --format's record_start if both are present.
     /// Without --format, this is the only way to enable records mode for
     /// plain text. Example: --record-start '^\['
-    #[arg(long = "record-start", value_name = "REGEX", display_order = 19)]
+    #[arg(long = "record-start", value_name = "REGEX", display_order = 21)]
     pub record_start: Option<String>,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 20)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 22)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 21)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 23)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 22)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 24)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -346,7 +362,9 @@ mod tests {
             "--list-formats",
             "--live",
             "--manual",
+            "--no-preprocess",
             "--output",
+            "--preprocess",
             "--prettify",
             "--prompt",
             "--record-start",

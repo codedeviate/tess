@@ -16,3 +16,4 @@ pub mod hex;
 pub mod prettify;
 pub mod batch;
 pub mod shell;
+pub mod preprocess;

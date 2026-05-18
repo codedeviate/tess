@@ -293,6 +293,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "record-start",
     "hex",
     "prompt",
+    "preprocess",
+    "no-preprocess",
 ];
 
 /// Built-in formats compiled from this list of (name, pattern). Patterns use

@@ -577,6 +577,32 @@ impl Source for StdinSource {
     }
 }
 
+/// A `Source` backed by an in-memory `Vec<u8>`. Used by the preprocessor
+/// to feed transformed bytes into the viewer without writing a temp file.
+pub struct MemorySource {
+    bytes: Vec<u8>,
+}
+
+impl MemorySource {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+}
+
+impl Source for MemorySource {
+    fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    fn bytes(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, [u8]> {
+        std::borrow::Cow::Borrowed(&self.bytes[range])
+    }
+
+    fn is_complete(&self) -> bool {
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,5 +910,21 @@ mod tests {
         assert_eq!(&*m.bytes(0..6), b"abcdef");
         m.finish();
         assert!(m.is_complete());
+    }
+
+    #[test]
+    fn memory_source_len_and_bytes() {
+        let src = MemorySource::new(b"hello world".to_vec());
+        assert_eq!(src.len(), 11);
+        let slice = src.bytes(0..5);
+        assert_eq!(&*slice, b"hello");
+        assert!(src.is_complete());
+    }
+
+    #[test]
+    fn memory_source_empty() {
+        let src = MemorySource::new(Vec::new());
+        assert_eq!(src.len(), 0);
+        assert!(src.is_empty());
     }
 }
