@@ -142,6 +142,8 @@ pub struct Viewport {
     preprocess_failure: Option<String>,
     /// When `count > 1`, status line shows `<label>  [current+1/count]`.
     file_index: Option<(usize, usize)>,
+    /// When set, status line and prompt context include `[tag: <name> (N/M)]`.
+    tag_active: Option<(String, usize, usize)>,  // (name, cursor+1, total)
 }
 
 impl Viewport {
@@ -170,6 +172,7 @@ impl Viewport {
             prompt: None,
             preprocess_failure: None,
             file_index: None,
+            tag_active: None,
         }
     }
 
@@ -195,6 +198,10 @@ impl Viewport {
         } else {
             None
         };
+    }
+
+    pub fn set_tag_active(&mut self, info: Option<(String, usize, usize)>) {
+        self.tag_active = info;
     }
 
     pub fn set_source_label(&mut self, label: String) {
@@ -750,6 +757,13 @@ impl Viewport {
             let first_line = msg.lines().next().unwrap_or("");
             s.push_str(&format!("  [preprocess-failed: {}]", first_line));
         }
+        let tag_suffix = match &self.tag_active {
+            Some((name, cur, total)) if *total > 1 => {
+                format!("  [tag: {name} ({cur}/{total})]")
+            }
+            _ => String::new(),
+        };
+        s.push_str(&tag_suffix);
         s
     }
 
@@ -816,6 +830,13 @@ impl Viewport {
             None => String::new(),
         };
 
+        let tag_tag = match &self.tag_active {
+            Some((name, cur, total)) if *total > 1 => {
+                format!("  [tag: {name} ({cur}/{total})]")
+            }
+            _ => String::new(),
+        };
+
         PromptContext {
             label: self.source_label.clone(),
             top,
@@ -837,6 +858,7 @@ impl Viewport {
             follow_tag,
             preprocess_failed_tag,
             file_index_tag,
+            tag_tag,
         }
     }
 
@@ -889,9 +911,15 @@ impl Viewport {
             Some((current, total)) => format!("{}  [{}/{}]", self.source_label, current + 1, total),
             None => self.source_label.clone(),
         };
+        let tag_suffix = match &self.tag_active {
+            Some((name, cur, total)) if *total > 1 => {
+                format!("  [tag: {name} ({cur}/{total})]")
+            }
+            _ => String::new(),
+        };
         format!(
-            "{}  off {}-{}/{}  {}%  [hex]",
-            label_with_index, top_byte, bottom_byte, total_bytes, pct
+            "{}  off {}-{}/{}  {}%  [hex]{}",
+            label_with_index, top_byte, bottom_byte, total_bytes, pct, tag_suffix
         )
     }
 
@@ -1915,5 +1943,37 @@ mod tests {
         v.set_file_index(0, 1);
         let frame = v.frame(&m, &mut idx);
         assert!(!frame.status.contains('['), "should not show [1/1] for single-file: {}", frame.status);
+    }
+
+    #[test]
+    fn status_shows_tag_active_when_multimatch() {
+        let m = MockSource::new();
+        m.append(b"a\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(80, 5, "f.log".into());
+        v.set_tag_active(Some(("foo".into(), 2, 3)));
+        let frame = v.frame(&m, &mut idx);
+        assert!(
+            frame.status.contains("[tag: foo (2/3)]"),
+            "got: {}",
+            frame.status
+        );
+    }
+
+    #[test]
+    fn status_omits_tag_active_when_single_match() {
+        let m = MockSource::new();
+        m.append(b"a\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(80, 5, "f.log".into());
+        v.set_tag_active(Some(("foo".into(), 1, 1)));
+        let frame = v.frame(&m, &mut idx);
+        assert!(
+            !frame.status.contains("[tag:"),
+            "should not show indicator for single match: {}",
+            frame.status
+        );
     }
 }

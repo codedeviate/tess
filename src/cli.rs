@@ -153,10 +153,18 @@ pub struct Args {
     #[arg(long = "tab-width", default_value_t = 8, display_order = 23)]
     pub tab_width: u8,
 
+    /// Jump to the tag NAME at startup (requires a tags file).
+    #[arg(short = 't', long = "tag", value_name = "NAME", display_order = 24)]
+    pub tag: Option<String>,
+
+    /// Path to the tags file. Default: walk up from CWD looking for `tags`.
+    #[arg(short = 'T', long = "tag-file", value_name = "PATH", display_order = 25)]
+    pub tag_file: Option<std::path::PathBuf>,
+
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 24)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 26)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -370,6 +378,8 @@ mod tests {
             "--record-start",
             "--stdout",
             "--tab-width",
+            "--tag",
+            "--tag-file",
             "--tail",
         ];
         let listed: Vec<&str> = help

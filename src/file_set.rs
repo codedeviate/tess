@@ -110,6 +110,11 @@ impl FileSet {
         Some(self.paths[self.current_index].as_path())
     }
 
+    /// Borrow the i-th entry, or None if out of range.
+    pub fn nth(&self, i: usize) -> Option<&Path> {
+        self.paths.get(i).map(|p| p.as_path())
+    }
+
     /// Append `path` to the list and switch the cursor to it.
     pub fn append_and_switch(&mut self, path: PathBuf) -> &Path {
         self.paths.push(path);
@@ -261,6 +266,14 @@ mod tests {
         assert_eq!(f.current(), Some(Path::new("c.log")));
         f.set_current_index(99);  // clamp
         assert_eq!(f.current_index(), 2);
+    }
+
+    #[test]
+    fn nth_returns_path_or_none() {
+        let f = fs(&["a.log", "b.log"]);
+        assert_eq!(f.nth(0), Some(Path::new("a.log")));
+        assert_eq!(f.nth(1), Some(Path::new("b.log")));
+        assert_eq!(f.nth(2), None);
     }
 
     #[test]

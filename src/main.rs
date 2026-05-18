@@ -182,7 +182,7 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
     let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
     let stub_args = Args::parse_from(["tess"]);
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None)?;
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None, None)?;
     Ok(())
 }
 
@@ -540,6 +540,33 @@ showing raw (use --content-type=NAME to override)"
     };
     let keymap = tess::keys::KeyMap::load_from_default_path()
         .map_err(Error::Runtime)?;
-    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor)?;
+
+    let tag_file: Option<tess::tags::TagFile> = if let Some(path) = &args.tag_file {
+        match tess::tags::TagFile::load(path) {
+            Ok(tf) => Some(tf),
+            Err(e) => {
+                eprintln!("tess: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        let start = args
+            .files
+            .first()
+            .map(|p| p.as_path())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        if let Some(found) = tess::tags::TagFile::find_walking_up(start) {
+            tess::tags::TagFile::load(&found).ok()
+        } else {
+            None
+        }
+    };
+
+    if args.tag.is_some() && tag_file.is_none() {
+        eprintln!("tess: tags file not found (required by -t)");
+        std::process::exit(1);
+    }
+
+    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file)?;
     Ok(())
 }

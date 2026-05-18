@@ -220,3 +220,31 @@ fn multifile_next_prev_via_pty() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn ctrl_close_bracket_opens_tag_prompt() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+
+    let tmpdir = tempfile::tempdir().unwrap();
+    let src_a = tmpdir.path().join("a.txt");
+    let src_b = tmpdir.path().join("b.txt");
+    std::fs::write(&src_a, "alpha line 1\nalpha line 2\n").unwrap();
+    std::fs::write(&src_b, "beta line 1\nbeta line 2\n").unwrap();
+    let tags = tmpdir.path().join("tags");
+    let mut f = std::fs::File::create(&tags).unwrap();
+    writeln!(f, "foo\t{}\t2", src_a.file_name().unwrap().to_str().unwrap()).unwrap();
+    writeln!(f, "bar\t{}\t1", src_b.file_name().unwrap().to_str().unwrap()).unwrap();
+    drop(f);
+
+    let cmd = format!("{bin} -T {} {}", tags.display(), src_a.display());
+    let mut s = expectrl::spawn(&cmd).expect("spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    drain_for(&mut s, DRAW_GRACE);
+    s.send("\x1d").unwrap();   // Ctrl-]
+    drain_for(&mut s, Duration::from_millis(200));
+    s.send("bar\r").unwrap();
+    drain_for(&mut s, Duration::from_millis(300));
+    s.send("q").unwrap();
+    wait_clean(s);
+}
