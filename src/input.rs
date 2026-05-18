@@ -71,6 +71,10 @@ pub enum Command {
     ShellEscape,
     /// Enter the :colon-command prompt.
     ColonPrompt,
+    /// Enter the tag-name prompt (`Ctrl-]`).
+    TagPrompt,
+    /// Pop the tag stack and jump back (`Ctrl-T`).
+    TagPop,
     Noop,
 }
 
@@ -124,6 +128,8 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('!'), false) => Command::ShellEscape,
         (Char('x'), true) => Command::CtrlXPrefix,
         (Char(':'), false) => Command::ColonPrompt,
+        (Char(']'), true) => Command::TagPrompt,
+        (Char('t'), true) => Command::TagPop,
         _ => Command::Noop,
     }
 }
@@ -290,5 +296,17 @@ mod tests {
     fn colon_produces_colon_prompt_command() {
         let evt = Event::Key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
         assert_eq!(translate(evt), Command::ColonPrompt);
+    }
+
+    #[test]
+    fn ctrl_close_bracket_produces_tag_prompt() {
+        let evt = Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL));
+        assert_eq!(translate(evt), Command::TagPrompt);
+    }
+
+    #[test]
+    fn ctrl_t_produces_tag_pop() {
+        let evt = Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
+        assert_eq!(translate(evt), Command::TagPop);
     }
 }

@@ -70,12 +70,16 @@ enum ColonCommand {
     Delete,
     First,
     Last,
+    Tag(String),
+    TagNext,
+    TagPrev,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum ColonParseError {
     UnknownCommand(String),
     MissingPath,
+    TagRequiresName,
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -83,6 +87,7 @@ impl std::fmt::Display for ColonParseError {
         match self {
             ColonParseError::UnknownCommand(t) => write!(f, "unknown command: :{t}"),
             ColonParseError::MissingPath => write!(f, ":e requires a path"),
+            ColonParseError::TagRequiresName => write!(f, ":tag requires a name"),
         }
     }
 }
@@ -122,6 +127,15 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "d" | "delete" => Ok(ColonCommand::Delete),
         "x" | "first" => Ok(ColonCommand::First),
         "t" | "last" => Ok(ColonCommand::Last),
+        "tag" => {
+            if rest.is_empty() {
+                Err(ColonParseError::TagRequiresName)
+            } else {
+                Ok(ColonCommand::Tag(rest.to_string()))
+            }
+        }
+        "tnext" => Ok(ColonCommand::TagNext),
+        "tprev" => Ok(ColonCommand::TagPrev),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -281,6 +295,10 @@ fn dispatch_colon_command(
             } else {
                 ColonOutcome::Continue(None)
             }
+        }
+        // Dispatch wired in Task 5.
+        ColonCommand::Tag(_) | ColonCommand::TagNext | ColonCommand::TagPrev => {
+            ColonOutcome::Continue(None)
         }
     }
 }
@@ -865,6 +883,8 @@ pub fn run(
                         // Resolved inside the CtrlXPending mode intercept; this
                         // arm is defensive and should never fire.
                     }
+                    // Dispatch wired in Task 5.
+                    Command::TagPrompt | Command::TagPop => {}
                     Command::Noop => {}
                 }
             }
@@ -1150,5 +1170,39 @@ mod tests {
         // Trailing whitespace OK.
         assert_eq!(parse_colon_command("n  ").unwrap(), ColonCommand::Next);
         assert_eq!(parse_colon_command("  n").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn parse_colon_tag_with_name() {
+        assert_eq!(
+            parse_colon_command("tag foo").unwrap(),
+            ColonCommand::Tag("foo".into())
+        );
+    }
+
+    #[test]
+    fn parse_colon_tag_strips_trailing_whitespace() {
+        assert_eq!(
+            parse_colon_command("tag foo  ").unwrap(),
+            ColonCommand::Tag("foo".into())
+        );
+    }
+
+    #[test]
+    fn parse_colon_tag_without_name_errors() {
+        assert_eq!(
+            parse_colon_command("tag").unwrap_err(),
+            ColonParseError::TagRequiresName
+        );
+        assert_eq!(
+            parse_colon_command("tag  ").unwrap_err(),
+            ColonParseError::TagRequiresName
+        );
+    }
+
+    #[test]
+    fn parse_colon_tnext_and_tprev() {
+        assert_eq!(parse_colon_command("tnext").unwrap(), ColonCommand::TagNext);
+        assert_eq!(parse_colon_command("tprev").unwrap(), ColonCommand::TagPrev);
     }
 }
