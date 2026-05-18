@@ -147,3 +147,25 @@ fn hex_mode_starts_and_quits_cleanly() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn shell_escape_starts_and_quits_cleanly() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    for i in 1..=20 {
+        writeln!(tmp, "line {:03}", i).unwrap();
+    }
+    let cmd = format!("{bin} {}", tmp.path().display());
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    thread::sleep(DRAW_GRACE);
+    // !echo hello: enter shell mode, run echo, press any key (space), then q.
+    s.send("!echo hello\r").unwrap();
+    thread::sleep(Duration::from_millis(500));
+    // Press a key to dismiss the "press any key to continue" prompt.
+    s.send(" ").unwrap();
+    thread::sleep(Duration::from_millis(500));
+    s.send("q").unwrap();
+    wait_clean(s);
+}

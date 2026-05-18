@@ -46,6 +46,9 @@ enum InputMode {
         /// buffer until the next keystroke.
         error: Option<String>,
     },
+    /// User pressed `!`. The next keystrokes build a shell command in
+    /// `buffer`; Enter executes via shell::run_shell_command, Esc cancels.
+    ShellPrompt { buffer: String, error: Option<String> },
     /// Set-mark prefix: the next keystroke names the mark to set.
     MarkSetPending,
     /// Jump-to-mark prefix: the next keystroke names the mark to jump to.
@@ -100,12 +103,21 @@ pub fn run(
         if needs_redraw {
             let mut frame = viewport.frame(src.as_ref(), &mut idx);
             // Override the status row when we're in an interactive prompt.
-            if let InputMode::SearchPrompt { direction, buffer, error } = &mode {
-                let prefix = if matches!(direction, SearchDirection::Forward) { "/" } else { "?" };
-                frame.status = match error {
-                    Some(e) => format!("{prefix}{buffer}  [error: {e}]"),
-                    None => format!("{prefix}{buffer}"),
-                };
+            match &mode {
+                InputMode::SearchPrompt { direction, buffer, error } => {
+                    let prefix = if matches!(direction, SearchDirection::Forward) { "/" } else { "?" };
+                    frame.status = match error {
+                        Some(e) => format!("{prefix}{buffer}  [error: {e}]"),
+                        None => format!("{prefix}{buffer}"),
+                    };
+                }
+                InputMode::ShellPrompt { buffer, error } => {
+                    frame.status = match error {
+                        Some(e) => format!("!{buffer}  [error: {e}]"),
+                        None => format!("!{buffer}"),
+                    };
+                }
+                _ => {}
             }
             write_frame(&mut stdout, &frame, cols, rows)
                 .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
@@ -234,6 +246,43 @@ pub fn run(
                             }
                         }
                         mode = InputMode::Normal;
+                        continue;
+                    }
+                    InputMode::ShellPrompt { buffer, error } => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            match code {
+                                KeyCode::Esc => {
+                                    mode = InputMode::Normal;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Enter => {
+                                    if buffer.is_empty() {
+                                        mode = InputMode::Normal;
+                                    } else {
+                                        match crate::shell::run_shell_command(buffer) {
+                                            Ok(()) => {
+                                                mode = InputMode::Normal;
+                                            }
+                                            Err(e) => {
+                                                *error = Some(e.to_string());
+                                            }
+                                        }
+                                    }
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Backspace => {
+                                    buffer.pop();
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char(c) => {
+                                    buffer.push(c);
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                _ => {}
+                            }
+                        }
                         continue;
                     }
                     InputMode::CtrlXPending => {
@@ -404,6 +453,13 @@ pub fn run(
                     Command::SearchBackward => {
                         mode = InputMode::SearchPrompt {
                             direction: SearchDirection::Backward,
+                            buffer: String::new(),
+                            error: None,
+                        };
+                        needs_redraw = true;
+                    }
+                    Command::ShellEscape => {
+                        mode = InputMode::ShellPrompt {
                             buffer: String::new(),
                             error: None,
                         };
