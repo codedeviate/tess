@@ -736,14 +736,16 @@ impl Viewport {
 
     fn format_status_hex(&self, src: &dyn Source) -> String {
         let total_bytes = src.len();
-        let total_hex_rows = total_bytes.div_ceil(16);
         let body_rows = self.rows.saturating_sub(1) as usize;
-        let top = self.top_line.min(total_hex_rows.saturating_sub(1)) + 1;
-        let bottom = (self.top_line + body_rows).min(total_hex_rows.max(1));
-        let pct = (bottom * 100).checked_div(total_hex_rows).unwrap_or(0);
+        // Byte offset of the first visible byte (start of the top hex row).
+        let top_byte = self.top_line * 16;
+        // Byte offset just past the last visible byte. Clamped to total_bytes
+        // so we never show a value past EOF.
+        let bottom_byte = ((self.top_line + body_rows) * 16).min(total_bytes);
+        let pct = (bottom_byte * 100).checked_div(total_bytes).unwrap_or(0);
         format!(
             "{}  off {}-{}/{}  {}%  [hex]",
-            self.source_label, top, bottom, total_hex_rows, pct
+            self.source_label, top_byte, bottom_byte, total_bytes, pct
         )
     }
 
