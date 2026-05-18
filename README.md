@@ -1,6 +1,6 @@
 # `tess`
 
-A `less`-style terminal pager for files, pipes, and live logs — with first-class support for **structured-log filtering**, **pretty-printing** of JSON/YAML/TOML/XML/HTML/CSV, and **wrap-aware scrolling** of long lines. Written in Rust. macOS + Linux.
+A `less`-style terminal pager for files, pipes, and live logs — with first-class support for **structured-log filtering**, **pretty-printing** of JSON/YAML/TOML/XML/HTML/CSV, and **wrap-aware scrolling** of long lines. Escape to the shell with `!cmd`, preprocess inputs (`$LESSOPEN` / `--preprocess`), and remap keys via `~/.config/tess/keys.toml`. Written in Rust. macOS + Linux.
 
 ```sh
 tess /var/log/syslog                                # like `less`, but newer keys

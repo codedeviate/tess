@@ -35,14 +35,6 @@ The CLI already accepts multiple files but only opens the first; we even emit a 
 
 Touches: `cli` (already collects them), `app` (colon command mode), new module.
 
-### Shell integration — **M**
-
-- `!cmd` to escape to the shell while keeping the file open.
-- `LESSOPEN` / `LESSCLOSE` preprocessor (e.g., view PDFs as text via a configured pipe).
-- `lesskey` custom keybindings.
-
-Each is its own sub-feature; they don't have to land together.
-
 ### Tags (`-t`, `-T`) — **M**
 
 Jump to a tag (ctags-style). Requires parsing a tags file.
