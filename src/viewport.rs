@@ -133,6 +133,9 @@ pub struct Viewport {
     /// Filtering still operates on the raw line (it uses captures, not text).
     display: Option<crate::format::DisplayRenderer>,
     hex_mode: bool,
+    /// Custom status-line prompt template. When set, replaces the built-in
+    /// format_status output with the template rendered against PromptContext.
+    prompt: Option<crate::prompt::ParsedPrompt>,
 }
 
 impl Viewport {
@@ -157,6 +160,7 @@ impl Viewport {
             search: None,
             display: None,
             hex_mode: false,
+            prompt: None,
         }
     }
 
@@ -166,6 +170,10 @@ impl Viewport {
 
     pub fn set_hex_mode(&mut self, on: bool) {
         self.hex_mode = on;
+    }
+
+    pub fn set_prompt(&mut self, prompt: Option<crate::prompt::ParsedPrompt>) {
+        self.prompt = prompt;
     }
 
     /// Fetch a logical line's display bytes — rendered through the active
@@ -619,6 +627,10 @@ impl Viewport {
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
+        if let Some(p) = self.prompt.as_ref() {
+            let ctx = self.build_prompt_context(idx, src);
+            return p.render(&ctx);
+        }
         let body_rows = self.body_rows() as usize;
         let total = idx.line_count();
         // In hide mode, the line range and percentage refer to visible (matched)
@@ -696,6 +708,77 @@ impl Viewport {
         if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
         s
+    }
+
+    fn build_prompt_context(&self, idx: &LineIndex, src: &dyn Source) -> crate::prompt::PromptContext {
+        use crate::prompt::PromptContext;
+
+        let body_rows = self.body_rows() as usize;
+        let total = idx.line_count();
+        let top = self.top_line + 1;
+        let bottom = (self.top_line + body_rows).min(total.max(1));
+        let pct = (bottom * 100).checked_div(total).unwrap_or(0);
+
+        let records_mode = idx.records_mode();
+        let (rec_top, rec_bottom, rec_total) = if records_mode {
+            let rt = idx.line_to_record(self.top_line) + 1;
+            let rb = idx.line_to_record(bottom.saturating_sub(1)) + 1;
+            (rt, rb, idx.record_count())
+        } else {
+            (0, 0, 0)
+        };
+
+        let wrap_offset = if !self.hide_mode() && self.top_row > 0 {
+            let line_rows = if total > 0 {
+                let bytes = self.line_display_bytes(src, idx, self.top_line);
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+            } else { 1 };
+            format!("+{}/{}", self.top_row, line_rows)
+        } else {
+            String::new()
+        };
+
+        let filter_tag = self.filter.as_ref()
+            .map(|f| format!("  [{}]", f.format_name))
+            .unwrap_or_default();
+        let grep_tag = if self.grep.is_some() { "  [grep]".to_string() } else { String::new() };
+        let hide_tag = if self.filter.is_some() || self.grep.is_some() {
+            if self.dim_mode { "  [dim]".to_string() } else { "  [hide]".to_string() }
+        } else {
+            String::new()
+        };
+        let search_tag = self.search.as_ref()
+            .map(|s| {
+                let p = if matches!(s.direction, SearchDirection::Forward) { "/" } else { "?" };
+                format!("  [{}{}]", p, s.raw)
+            })
+            .unwrap_or_default();
+        let pretty_tag = self.prettify_label.as_ref()
+            .map(|l| format!("  [pretty:{l}]"))
+            .unwrap_or_default();
+        let live_tag = if self.live_mode { "  (L)".to_string() } else { String::new() };
+        let follow_tag = if self.follow_mode { "  (F)".to_string() } else { String::new() };
+
+        PromptContext {
+            label: self.source_label.clone(),
+            top,
+            bottom,
+            total,
+            pct: pct.min(255) as u8,
+            rec_top,
+            rec_bottom,
+            rec_total,
+            records_mode,
+            wrap_offset,
+            format_tag: filter_tag.clone(),
+            filter_tag,
+            grep_tag,
+            hide_tag,
+            search_tag,
+            pretty_tag,
+            live_tag,
+            follow_tag,
+        }
     }
 
     fn frame_hex(&self, src: &dyn Source) -> Frame {
@@ -1718,5 +1801,19 @@ mod tests {
         let status = &frame.status;
         assert!(status.contains("L1-3/3"), "lines block missing or wrong: {status}");
         assert!(status.contains("R1-2/2"), "records block missing or wrong: {status}");
+    }
+
+    #[test]
+    fn format_status_uses_custom_template_when_set() {
+        let m = MockSource::new();
+        m.append(b"a\nb\nc\n");
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 5, "f".into());
+        let prompt = crate::prompt::ParsedPrompt::parse("<label> <pct>%").unwrap();
+        v.set_prompt(Some(prompt));
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(frame.status, "f 100%");
     }
 }

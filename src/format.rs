@@ -18,11 +18,15 @@ pub struct LogFormat {
     /// renders each parsed line through this template instead of the raw line.
     pub display: Option<DisplayTemplate>,
     pub record_start: Option<Regex>,
+    /// Optional default status-line prompt template (`prompt` key in formats.toml).
+    /// When set and no `--prompt` CLI flag is given, the viewport renders the
+    /// status line through this template instead of the built-in default.
+    pub prompt: Option<crate::prompt::ParsedPrompt>,
 }
 
 impl LogFormat {
     pub fn compile(name: &str, pattern: &str) -> Result<Self, String> {
-        Self::compile_full(name, pattern, None, None)
+        Self::compile_full(name, pattern, None, None, None)
     }
 
     pub fn compile_with_display(
@@ -30,7 +34,7 @@ impl LogFormat {
         pattern: &str,
         display: Option<&str>,
     ) -> Result<Self, String> {
-        Self::compile_full(name, pattern, display, None)
+        Self::compile_full(name, pattern, display, None, None)
     }
 
     pub fn compile_full(
@@ -38,6 +42,7 @@ impl LogFormat {
         pattern: &str,
         display: Option<&str>,
         record_start: Option<&str>,
+        prompt: Option<&str>,
     ) -> Result<Self, String> {
         let regex = Regex::new(pattern).map_err(|e| format!("format `{name}`: {e}"))?;
         let field_names: Vec<String> = regex
@@ -59,12 +64,17 @@ impl LogFormat {
         let record_start = record_start
             .map(|s| Regex::new(s).map_err(|e| format!("format `{name}`: record_start: {e}")))
             .transpose()?;
+        let prompt = prompt
+            .map(|s| crate::prompt::ParsedPrompt::parse(s)
+                .map_err(|e| format!("format `{name}`: prompt: {e}")))
+            .transpose()?;
         Ok(Self {
             name: name.to_string(),
             regex,
             field_names,
             display,
             record_start,
+            prompt,
         })
     }
 }
@@ -217,6 +227,8 @@ struct FormatEntry {
     display: Option<String>,
     #[serde(default)]
     record_start: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
 }
 
 /// Raw group entry as deserialized from TOML. Promoted to `Group` after
@@ -324,6 +336,7 @@ struct FormatSource {
     regex: String,
     display: Option<String>,
     record_start: Option<String>,
+    prompt: Option<String>,
 }
 
 fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
@@ -332,6 +345,7 @@ fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
         regex: v.regex,
         display: v.display,
         record_start: v.record_start,
+        prompt: v.prompt,
     })).collect())
 }
 
@@ -378,6 +392,7 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
             regex: pat.to_string(),
             display: None,
             record_start: None,
+            prompt: None,
         });
     }
     let user = load_user_formats()?;
@@ -391,6 +406,7 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
             &src.regex,
             src.display.as_deref(),
             src.record_start.as_deref(),
+            src.prompt.as_deref(),
         )?;
         compiled.insert(name, fmt);
     }
@@ -898,6 +914,7 @@ regex = "^(?P<custom>\\S+)$"
             r"^(?P<msg>.+)$",
             None,
             Some(r"^\["),
+            None,
         ).expect("compile");
         assert!(fmt.record_start.is_some());
         assert!(fmt.record_start.as_ref().unwrap().is_match("[2026-05-15"));
@@ -911,6 +928,7 @@ regex = "^(?P<custom>\\S+)$"
             r"^(?P<msg>.+)$",
             None,
             Some(r"["),  // unclosed bracket
+            None,
         ).expect_err("should fail");
         assert!(err.contains("record_start"), "error mentions record_start: {err}");
     }
@@ -959,5 +977,17 @@ regex = "^(?P<custom>\\S+)$"
         let joined = out.join(" ");
         assert!(joined.contains("--grep timeout"));
         assert!(joined.contains("--grep extra"));
+    }
+
+    #[test]
+    fn format_entry_parses_prompt() {
+        let toml_text = r#"
+            [format.myapp]
+            regex = '^(?P<line>.*)$'
+            prompt = '<label> <pct>%'
+        "#;
+        let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
+        let entry = cfg.format.get("myapp").expect("myapp present");
+        assert_eq!(entry.prompt.as_deref(), Some("<label> <pct>%"));
     }
 }

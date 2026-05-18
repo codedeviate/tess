@@ -512,6 +512,23 @@ showing raw (use --content-type=NAME to override)"
         viewport.set_hex_mode(true);
     }
 
+    // Resolve --prompt: CLI flag takes priority; fall back to the active
+    // format's prompt (if a --format was given and defines one).
+    {
+        let fmt_prompt: Option<tess::prompt::ParsedPrompt> = if let Some(name) = args.format.as_deref() {
+            let formats = format::load_all().map_err(Error::Runtime)?;
+            formats.get(name).and_then(|f| f.prompt.clone())
+        } else {
+            None
+        };
+        let prompt_template: Option<tess::prompt::ParsedPrompt> = match args.prompt.as_deref() {
+            Some(s) => Some(tess::prompt::ParsedPrompt::parse(s)
+                .map_err(|e| Error::Runtime(format!("--prompt: {e}")))?),
+            None => fmt_prompt,
+        };
+        viewport.set_prompt(prompt_template);
+    }
+
     let rebuild_spec = RebuildSpec {
         head: args.head,
         tail: if source_supports_tail { args.tail } else { None },

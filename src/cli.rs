@@ -69,7 +69,7 @@ pub struct Args {
     #[arg(
         long = "hex",
         display_order = 11,
-        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start"],
+        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt"],
     )]
     pub hex: bool,
 
@@ -110,27 +110,37 @@ pub struct Args {
     #[arg(long = "prettify", display_order = 17)]
     pub prettify: bool,
 
+    /// Replace the hardcoded status format with a templated string.
+    /// Uses the same `<field>` syntax as `--display`. Available fields:
+    /// label, top, bottom, total, pct, rec-top, rec-bottom, rec-total,
+    /// rec-block, wrap-offset, format-tag, filter-tag, grep-tag,
+    /// hide-tag, search-tag, pretty-tag, live-tag, follow-tag.
+    /// Per-format default can be set via `prompt = '...'` in formats.toml.
+    /// Mutually exclusive with --hex.
+    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 18)]
+    pub prompt: Option<String>,
+
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
     /// grep, and the status line — all operate on whole records when set.
     /// Overrides the active --format's record_start if both are present.
     /// Without --format, this is the only way to enable records mode for
     /// plain text. Example: --record-start '^\['
-    #[arg(long = "record-start", value_name = "REGEX", display_order = 18)]
+    #[arg(long = "record-start", value_name = "REGEX", display_order = 19)]
     pub record_start: Option<String>,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 19)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 20)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 20)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 21)]
     pub tab_width: u8,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 21)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 22)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -338,6 +348,7 @@ mod tests {
             "--manual",
             "--output",
             "--prettify",
+            "--prompt",
             "--record-start",
             "--stdout",
             "--tab-width",
