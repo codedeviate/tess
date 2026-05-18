@@ -94,11 +94,6 @@ fn parse_key_spec(spec: &str) -> Result<KeyEvent, String> {
     if parts.is_empty() {
         return Err("empty key spec".to_string());
     }
-    // For a single-character spec like "-" (just a dash), split() would
-    // produce ["", ""]. Special-case it.
-    if parts.len() == 1 && parts[0].is_empty() {
-        return Ok(KeyEvent::new(KeyCode::Char('-'), KeyModifiers::NONE));
-    }
     let key_part = parts.pop().unwrap();
     let mut modifiers = KeyModifiers::NONE;
     for m in &parts {
@@ -138,15 +133,18 @@ fn parse_key_spec(spec: &str) -> Result<KeyEvent, String> {
             KeyCode::F(n)
         }
         s if s.chars().count() == 1 => {
-            // For a bare letter that wasn't shift-prefixed, look at the
-            // ORIGINAL char (preserving case). If the user wrote "J",
-            // promote to shift-j semantics.
+            // For a BARE letter with no modifiers, an uppercase letter
+            // promotes to shift-prefix semantics ("J" == "shift-j").
+            // When modifiers are already present (e.g. "ctrl-J"), the
+            // user's intent is the literal letter — don't add SHIFT.
             let original_char = spec.chars().last().unwrap();
-            if original_char.is_ascii_uppercase() {
+            if original_char.is_ascii_uppercase() && modifiers == KeyModifiers::NONE {
                 modifiers |= KeyModifiers::SHIFT;
                 KeyCode::Char(original_char.to_ascii_lowercase())
             } else {
-                KeyCode::Char(s.chars().next().unwrap())
+                // Either lowercase letter, or uppercase with an explicit
+                // modifier — lowercase the char either way for consistency.
+                KeyCode::Char(original_char.to_ascii_lowercase())
             }
         }
         other => return Err(format!("unknown key '{other}'")),
@@ -335,5 +333,34 @@ mod tests {
         let m = KeyMap::load_from_str(toml).unwrap();
         let other = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
         assert!(m.lookup(&other).is_none());
+    }
+
+    #[test]
+    fn ctrl_uppercase_letter_does_not_add_shift() {
+        // "ctrl-J" should be Ctrl + 'j', NOT Ctrl + Shift + 'j'.
+        let toml = r#"
+[bindings]
+"ctrl-J" = "reload"
+"#;
+        let m = KeyMap::load_from_str(toml).unwrap();
+        let ctrl_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        assert!(matches!(m.lookup(&ctrl_j), Some(BindingTarget::Command(Command::Reload))),
+                "ctrl-J should resolve to Ctrl+j without Shift");
+        let ctrl_shift_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert!(m.lookup(&ctrl_shift_j).is_none(),
+                "ctrl-J should NOT also match Ctrl+Shift+j");
+    }
+
+    #[test]
+    fn dash_with_modifier_is_a_real_key() {
+        // "ctrl--" should resolve to Ctrl + '-' (a valid bind).
+        // (Bare "-" is forbidden by reject_forbidden_key, but Ctrl-- isn't.)
+        let toml = r#"
+[bindings]
+"ctrl--" = "refresh"
+"#;
+        let m = KeyMap::load_from_str(toml).unwrap();
+        let ctrl_dash = KeyEvent::new(KeyCode::Char('-'), KeyModifiers::CONTROL);
+        assert!(matches!(m.lookup(&ctrl_dash), Some(BindingTarget::Command(Command::Refresh))));
     }
 }
