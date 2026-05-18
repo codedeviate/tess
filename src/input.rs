@@ -69,6 +69,8 @@ pub enum Command {
     JumpPrevious,
     /// Enter the !cmd shell-escape prompt.
     ShellEscape,
+    /// Enter the :colon-command prompt.
+    ColonPrompt,
     Noop,
 }
 
@@ -121,6 +123,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('\''), false) => Command::MarkJump,
         (Char('!'), false) => Command::ShellEscape,
         (Char('x'), true) => Command::CtrlXPrefix,
+        (Char(':'), false) => Command::ColonPrompt,
         _ => Command::Noop,
     }
 }
@@ -281,5 +284,11 @@ mod tests {
     fn bang_produces_shell_escape_command() {
         let evt = key(KeyCode::Char('!'), KeyModifiers::NONE);
         assert_eq!(translate(evt), Command::ShellEscape);
+    }
+
+    #[test]
+    fn colon_produces_colon_prompt_command() {
+        let evt = Event::Key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        assert_eq!(translate(evt), Command::ColonPrompt);
     }
 }

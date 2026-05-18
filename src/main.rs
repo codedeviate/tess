@@ -12,7 +12,7 @@ use tess::grep::GrepPredicate;
 use tess::format;
 use tess::line_index::LineIndex;
 use tess::prettify::{self, PrettifyMode, ResolvedType};
-use tess::source::{find_tail_offset, FileSource, LiveFileSource, MemorySource, MockSource, Source, StdinSource, TransformingSource};
+use tess::source::{find_tail_offset, MockSource, Source, StdinSource, TransformingSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
@@ -160,62 +160,6 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Page an in-memory blob through tess itself. Used for `--manual` and
-/// `--examples` when stdout is a TTY: the user gets scroll/search instead of
-/// content scrolling off the top of their terminal.
-/// Open a single source file using the same pipeline as startup:
-/// preprocessor (if configured), live-mode wrapper (if --live).
-///
-/// Returns the boxed Source, the user-facing label, and any preprocess
-/// stderr that should be surfaced in the status line.
-///
-/// Content-type detection and the prettify wrapper are handled by the
-/// caller after this returns, since they can also apply to stdin.
-fn open_source_for_path(
-    path: &std::path::Path,
-    args: &tess::cli::Args,
-    preprocessor: Option<&tess::preprocess::Preprocessor>,
-) -> Result<(Box<dyn Source>, String, Option<String>)> {
-    let label = path.display().to_string();
-    if args.live {
-        let lfs = LiveFileSource::open(path).map_err(|source| {
-            if let std::io::ErrorKind::InvalidInput = source.kind() {
-                Error::NotAFile { path: path.to_path_buf() }
-            } else {
-                Error::OpenFile { path: path.to_path_buf(), source }
-            }
-        })?;
-        return Ok((Box::new(lfs), label, None));
-    }
-    if let Some(p) = preprocessor {
-        // Run the preprocessor. On success use MemorySource; on failure fall
-        // back to the raw file and stash the error for the status line.
-        match tess::preprocess::run(p, path) {
-            tess::preprocess::PreprocessResult::Bytes(bytes) => {
-                return Ok((Box::new(MemorySource::new(bytes)), label, None));
-            }
-            tess::preprocess::PreprocessResult::Failed { stderr } => {
-                let fs = FileSource::open(path).map_err(|source| {
-                    if let std::io::ErrorKind::InvalidInput = source.kind() {
-                        Error::NotAFile { path: path.to_path_buf() }
-                    } else {
-                        Error::OpenFile { path: path.to_path_buf(), source }
-                    }
-                })?;
-                return Ok((Box::new(fs), label, Some(stderr)));
-            }
-        }
-    }
-    let fs = FileSource::open(path).map_err(|source| {
-        if let std::io::ErrorKind::InvalidInput = source.kind() {
-            Error::NotAFile { path: path.to_path_buf() }
-        } else {
-            Error::OpenFile { path: path.to_path_buf(), source }
-        }
-    })?;
-    Ok((Box::new(fs), label, None))
-}
-
 fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let src = MockSource::new();
     src.append(content);
@@ -236,7 +180,9 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let idx = LineIndex::new();
     let keymap = tess::keys::KeyMap::load_from_default_path()
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap)?;
+    let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
+    let stub_args = Args::parse_from(["tess"]);
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None)?;
     Ok(())
 }
 
@@ -372,18 +318,13 @@ documents can't be parsed)".to_string(),
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
     // whether `--tail` is meaningful for this source (streaming stdin can't
     // do random-access tail).
+    let file_set = tess::file_set::FileSet::new(args.files.clone());
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
     let (src, label): (Box<dyn Source>, String) = match args.files.first() {
         Some(path) => {
-            if args.files.len() > 1 {
-                eprintln!(
-                    "tess: ignoring {} additional file(s) (multi-file navigation not yet supported)",
-                    args.files.len() - 1
-                );
-            }
-            let (s, l, pf) = open_source_for_path(path, &args, preprocessor.as_ref())?;
+            let (s, l, pf) = tess::open::open_source_for_path(path, &args, preprocessor.as_ref())?;
             preprocess_failure = pf;
             (s, l)
         }
@@ -456,7 +397,7 @@ showing raw (use --content-type=NAME to override)"
     // Resolve --record-start: CLI flag takes priority; fall back to the active
     // format's record_start (if a --format was given and defines one).
     // Must be set BEFORE any idx.extend_* call.
-    {
+    let record_start_regex: Option<regex::bytes::Regex> = {
         let fmt_record_start: Option<String> = if let Some(name) = args.format.as_deref() {
             let formats = format::load_all().map_err(Error::Runtime)?;
             formats.get(name).and_then(|f| {
@@ -471,9 +412,12 @@ showing raw (use --content-type=NAME to override)"
         if let Some(pat) = record_start_pattern {
             let re = regex::bytes::Regex::new(&pat)
                 .map_err(|e| Error::Runtime(format!("--record-start: {e}")))?;
-            idx.set_record_start(re);
+            idx.set_record_start(re.clone());
+            Some(re)
+        } else {
+            None
         }
-    }
+    };
 
     // Only redirect fd 0 to /dev/tty if we actually drained stdin from a pipe.
     // For file inputs, stdin is already the user's terminal — replacing it with
@@ -588,6 +532,7 @@ showing raw (use --content-type=NAME to override)"
         viewport.set_prompt(prompt_template);
     }
     viewport.set_format_label(args.format.clone());
+    viewport.set_file_index(0, file_set.len());
 
     let rebuild_spec = RebuildSpec {
         head: args.head,
@@ -595,6 +540,6 @@ showing raw (use --content-type=NAME to override)"
     };
     let keymap = tess::keys::KeyMap::load_from_default_path()
         .map_err(Error::Runtime)?;
-    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap)?;
+    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor)?;
     Ok(())
 }

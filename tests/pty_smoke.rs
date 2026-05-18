@@ -199,3 +199,24 @@ fn shell_escape_starts_and_quits_cleanly() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn multifile_next_prev_via_pty() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let mut a = tempfile::NamedTempFile::new().unwrap();
+    let mut b = tempfile::NamedTempFile::new().unwrap();
+    writeln!(a, "alpha line 1").unwrap();
+    writeln!(b, "beta line 1").unwrap();
+    let cmd = format!("{bin} {} {}", a.path().display(), b.path().display());
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    drain_for(&mut s, DRAW_GRACE);
+    // :n + Enter: next file. :p + Enter: previous. q: quit.
+    s.send(":n\r").unwrap();
+    drain_for(&mut s, Duration::from_millis(200));
+    s.send(":p\r").unwrap();
+    drain_for(&mut s, Duration::from_millis(200));
+    s.send("q").unwrap();
+    wait_clean(s);
+}

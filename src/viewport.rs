@@ -140,6 +140,8 @@ pub struct Viewport {
     /// Error message from a failed preprocessor run. When set, surfaces
     /// a `[preprocess-failed: ...]` tag in the status line.
     preprocess_failure: Option<String>,
+    /// When `count > 1`, status line shows `<label>  [current+1/count]`.
+    file_index: Option<(usize, usize)>,
 }
 
 impl Viewport {
@@ -167,6 +169,7 @@ impl Viewport {
             hex_mode: false,
             prompt: None,
             preprocess_failure: None,
+            file_index: None,
         }
     }
 
@@ -184,6 +187,22 @@ impl Viewport {
 
     pub fn set_preprocess_failure(&mut self, msg: Option<String>) {
         self.preprocess_failure = msg;
+    }
+
+    pub fn set_file_index(&mut self, current: usize, total: usize) {
+        self.file_index = if total > 1 {
+            Some((current, total))
+        } else {
+            None
+        };
+    }
+
+    pub fn set_source_label(&mut self, label: String) {
+        self.source_label = label;
+    }
+
+    pub fn source_label_clone(&self) -> String {
+        self.source_label.clone()
     }
 
     /// Fetch a logical line's display bytes — rendered through the active
@@ -693,7 +712,11 @@ impl Viewport {
             Some(ref rb) => format!("{}{}-{}/{}  {}  {}%", line_prefix, top, bottom, total_str, rb, pct),
             None         => format!("{}-{}/{}  {}%", top, bottom, total_str, pct),
         };
-        let mut s = format!("{}  {}", self.source_label, middle);
+        let label_with_index = match self.file_index {
+            Some((current, total)) => format!("{}  [{}/{}]", self.source_label, current + 1, total),
+            None => self.source_label.clone(),
+        };
+        let mut s = format!("{}  {}", label_with_index, middle);
         // Wrap-row offset: when scrolled inside a long wrapping line, surface
         // the offset so the user knows scrolling is happening at sub-line
         // granularity. Without this the line range above stays static while
@@ -788,6 +811,11 @@ impl Viewport {
             })
             .unwrap_or_default();
 
+        let file_index_tag = match self.file_index {
+            Some((current, total)) => format!("  [{}/{}]", current + 1, total),
+            None => String::new(),
+        };
+
         PromptContext {
             label: self.source_label.clone(),
             top,
@@ -808,6 +836,7 @@ impl Viewport {
             live_tag,
             follow_tag,
             preprocess_failed_tag,
+            file_index_tag,
         }
     }
 
@@ -856,9 +885,13 @@ impl Viewport {
         // so we never show a value past EOF.
         let bottom_byte = ((self.top_line + body_rows) * 16).min(total_bytes);
         let pct = (bottom_byte * 100).checked_div(total_bytes).unwrap_or(0);
+        let label_with_index = match self.file_index {
+            Some((current, total)) => format!("{}  [{}/{}]", self.source_label, current + 1, total),
+            None => self.source_label.clone(),
+        };
         format!(
             "{}  off {}-{}/{}  {}%  [hex]",
-            self.source_label, top_byte, bottom_byte, total_bytes, pct
+            label_with_index, top_byte, bottom_byte, total_bytes, pct
         )
     }
 
@@ -1858,5 +1891,29 @@ mod tests {
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.contains("[preprocess-failed: pdftotext: not found]"),
                 "got: {}", frame.status);
+    }
+
+    #[test]
+    fn status_shows_file_index_when_multifile() {
+        let m = MockSource::new();
+        m.append(b"a\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(60, 5, "f.log".into());
+        v.set_file_index(0, 3);
+        let frame = v.frame(&m, &mut idx);
+        assert!(frame.status.contains("f.log  [1/3]"), "got: {}", frame.status);
+    }
+
+    #[test]
+    fn status_omits_file_index_when_single_file() {
+        let m = MockSource::new();
+        m.append(b"a\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(60, 5, "f.log".into());
+        v.set_file_index(0, 1);
+        let frame = v.frame(&m, &mut idx);
+        assert!(!frame.status.contains('['), "should not show [1/1] for single-file: {}", frame.status);
     }
 }
