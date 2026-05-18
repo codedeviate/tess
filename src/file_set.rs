@@ -44,7 +44,8 @@ impl FileSet {
         self.paths.get(self.current_index).map(|p| p.as_path())
     }
 
-    pub fn count(&self) -> usize {
+    /// Total number of files in the set.
+    pub fn len(&self) -> usize {
         self.paths.len()
     }
 
@@ -86,8 +87,10 @@ impl FileSet {
         Ok(self.paths[self.current_index].as_path())
     }
 
-    /// Jump to the first file. Returns the current path after the move
-    /// (None if list is empty).
+    /// Jump to the first file. Returns the current path after the move,
+    /// or `None` if the list is empty. Returns `Option` (not `Result`)
+    /// because jumping to the boundary is always idempotent — there's
+    /// no "no first file" failure mode like there is for `next`.
     pub fn first(&mut self) -> Option<&Path> {
         if self.paths.is_empty() {
             return None;
@@ -96,8 +99,9 @@ impl FileSet {
         Some(self.paths[0].as_path())
     }
 
-    /// Jump to the last file. Returns the current path after the move
-    /// (None if list is empty).
+    /// Jump to the last file. Returns the current path after the move,
+    /// or `None` if the list is empty. See `first` for the rationale
+    /// behind `Option` rather than `Result`.
     pub fn last(&mut self) -> Option<&Path> {
         if self.paths.is_empty() {
             return None;
@@ -144,9 +148,9 @@ mod tests {
     }
 
     #[test]
-    fn count_reports_total() {
+    fn len_reports_total() {
         let f = fs(&["a.log", "b.log", "c.log"]);
-        assert_eq!(f.count(), 3);
+        assert_eq!(f.len(), 3);
     }
 
     #[test]
@@ -201,7 +205,7 @@ mod tests {
         let mut f = fs(&["a.log"]);
         let new_path = f.append_and_switch(PathBuf::from("b.log"));
         assert_eq!(new_path, Path::new("b.log"));
-        assert_eq!(f.count(), 2);
+        assert_eq!(f.len(), 2);
         assert_eq!(f.current_index(), 1);
     }
 
@@ -211,7 +215,7 @@ mod tests {
         f.next().unwrap();  // now at b.log
         let new_path = f.delete_current().unwrap();
         assert_eq!(new_path, Path::new("c.log"));
-        assert_eq!(f.count(), 2);
+        assert_eq!(f.len(), 2);
         assert_eq!(f.current_index(), 1);
     }
 
@@ -221,7 +225,17 @@ mod tests {
         f.next().unwrap();  // at b.log (last)
         let new_path = f.delete_current().unwrap();
         assert_eq!(new_path, Path::new("a.log"));
-        assert_eq!(f.count(), 1);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f.current_index(), 0);
+    }
+
+    #[test]
+    fn delete_current_at_start_stays_at_zero() {
+        let mut f = fs(&["a.log", "b.log", "c.log"]);
+        // cursor is at index 0 (a.log)
+        let new_path = f.delete_current().unwrap();
+        assert_eq!(new_path, Path::new("b.log"));
+        assert_eq!(f.len(), 2);
         assert_eq!(f.current_index(), 0);
     }
 
@@ -229,7 +243,7 @@ mod tests {
     fn delete_current_with_single_file_returns_would_empty_error() {
         let mut f = fs(&["a.log"]);
         assert_eq!(f.delete_current().unwrap_err(), FileSetError::WouldEmpty);
-        assert_eq!(f.count(), 1);
+        assert_eq!(f.len(), 1);
     }
 
     #[test]
@@ -237,7 +251,7 @@ mod tests {
         let f = FileSet::new(Vec::new());
         assert_eq!(f.current(), None);
         assert!(f.is_empty());
-        assert_eq!(f.count(), 0);
+        assert_eq!(f.len(), 0);
     }
 
     #[test]
@@ -247,5 +261,17 @@ mod tests {
         assert_eq!(f.current(), Some(Path::new("c.log")));
         f.set_current_index(99);  // clamp
         assert_eq!(f.current_index(), 2);
+    }
+
+    #[test]
+    fn next_on_empty_returns_no_next_file_error() {
+        let mut f = FileSet::new(Vec::new());
+        assert_eq!(f.next().unwrap_err(), FileSetError::NoNextFile);
+    }
+
+    #[test]
+    fn prev_on_empty_returns_no_previous_file_error() {
+        let mut f = FileSet::new(Vec::new());
+        assert_eq!(f.prev().unwrap_err(), FileSetError::NoPreviousFile);
     }
 }
