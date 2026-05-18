@@ -7,12 +7,20 @@ pub enum Error {
     NotAFile { path: PathBuf },
     NoInput,
     Runtime(String),
+    /// Tags file specified by `-T` or required by `-t` could not be opened.
+    TagFileNotFound,
+    /// Tags file is malformed: (reason, path, line number).
+    TagFileParse(String, std::path::PathBuf, usize),
 }
 
 impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
-            Error::OpenFile { .. } | Error::NotAFile { .. } | Error::NoInput => 1,
+            Error::OpenFile { .. }
+            | Error::NotAFile { .. }
+            | Error::NoInput
+            | Error::TagFileNotFound
+            | Error::TagFileParse(..) => 1,
             Error::Runtime(_) => 2,
         }
     }
@@ -29,6 +37,12 @@ impl fmt::Display for Error {
             }
             Error::NoInput => write!(f, "tess: no input (specify a file or pipe stdin)"),
             Error::Runtime(msg) => write!(f, "tess: {}", msg),
+            Error::TagFileNotFound => {
+                write!(f, "tags file not found")
+            }
+            Error::TagFileParse(reason, path, line) => {
+                write!(f, "tags file parse error: {reason} at {}:{line}", path.display())
+            }
         }
     }
 }
