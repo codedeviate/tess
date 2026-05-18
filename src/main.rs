@@ -181,7 +181,9 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let viewport = Viewport::new(cols, rows, label.to_string());
     let idx = LineIndex::new();
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default())?;
+    let keymap = tess::keys::KeyMap::load_from_default_path()
+        .unwrap_or_else(|_| tess::keys::KeyMap::empty());
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap)?;
     Ok(())
 }
 
@@ -569,6 +571,8 @@ showing raw (use --content-type=NAME to override)"
         head: args.head,
         tail: if source_supports_tail { args.tail } else { None },
     };
-    app::run(src, viewport, idx, sigterm, rebuild_spec)?;
+    let keymap = tess::keys::KeyMap::load_from_default_path()
+        .map_err(Error::Runtime)?;
+    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap)?;
     Ok(())
 }

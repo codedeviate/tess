@@ -63,6 +63,7 @@ pub fn run(
     mut idx: LineIndex,
     sigterm: Arc<AtomicBool>,
     rebuild_spec: RebuildSpec,
+    keymap: crate::keys::KeyMap,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -311,7 +312,31 @@ pub fn run(
                     }
                     InputMode::Normal => {}
                 }
-                let cmd = translate(event);
+                // Pre-translate keymap interception. Only consult the keymap
+                // when in Normal mode (not inside a search/option/prettify/
+                // shell prompt).
+                let mut cmd: Option<Command> = None;
+                if let InputMode::Normal = mode {
+                    if let Event::Key(ke) = &event {
+                        if let Some(target) = keymap.lookup(ke) {
+                            match target {
+                                crate::keys::BindingTarget::Shell(cmd_text) => {
+                                    let cmd_text = cmd_text.clone();
+                                    if let Err(e) = crate::shell::run_shell_command(&cmd_text) {
+                                        let _ = writeln!(std::io::stderr(),
+                                            "[shell: {e}]");
+                                    }
+                                    needs_redraw = true;
+                                    continue;
+                                }
+                                crate::keys::BindingTarget::Command(c) => {
+                                    cmd = Some(c.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                let cmd = cmd.unwrap_or_else(|| translate(event));
                 // Consume the numeric prefix at the top of each dispatch so
                 // commands that don't need it drop it implicitly.
                 let prefix_at_cmd = numeric_prefix.take();
