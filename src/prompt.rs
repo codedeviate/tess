@@ -27,6 +27,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "pretty-tag",
     "live-tag",
     "follow-tag",
+    "preprocess-failed-tag",
 ];
 
 #[derive(Debug, Clone)]
@@ -76,6 +77,7 @@ pub struct PromptContext {
     pub pretty_tag: String,
     pub live_tag: String,
     pub follow_tag: String,
+    pub preprocess_failed_tag: String,
 }
 
 impl PromptContext {
@@ -107,6 +109,7 @@ impl PromptContext {
             "pretty-tag" => Some(self.pretty_tag.clone()),
             "live-tag" => Some(self.live_tag.clone()),
             "follow-tag" => Some(self.follow_tag.clone()),
+            "preprocess-failed-tag" => Some(self.preprocess_failed_tag.clone()),
             _ => None,
         }
     }
@@ -194,5 +197,15 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(p.render(&ctx), "1-3/3");
+    }
+
+    #[test]
+    fn render_preprocess_failed_tag_resolves_when_populated() {
+        let p = ParsedPrompt::parse("<preprocess-failed-tag>").unwrap();
+        let ctx = PromptContext {
+            preprocess_failed_tag: "  [preprocess-failed: bad cmd]".into(),
+            ..Default::default()
+        };
+        assert_eq!(p.render(&ctx), "  [preprocess-failed: bad cmd]");
     }
 }

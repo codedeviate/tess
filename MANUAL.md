@@ -258,6 +258,48 @@ placeholders cause a startup error pointing at the offending field name.
 
 ---
 
+## Customizing key bindings
+
+Override tess's default keybindings via `~/.config/tess/keys.toml`:
+
+```toml
+[bindings]
+"j"       = "scroll-down"         # bind a single character
+"shift-j" = "scroll-logical-down" # case-equivalent: "J" also works
+"f1"      = "toggle-line-numbers" # function keys
+"ctrl-r"  = "reload"              # modifiers stack: ctrl-shift-l works too
+"f2"      = "!git status"         # `!` prefix runs a shell command
+```
+
+Key spec grammar:
+
+- Single character: `"j"`, `"/"`, `"%"`, `"!"`.
+- Named special: `esc`, `enter`, `tab`, `backspace`, `space`,
+  `f1`-`f12`, `up`/`down`/`left`/`right`, `pgup`/`pgdn`, `home`/`end`.
+- Modifiers (stackable): `ctrl-`, `alt-`, `shift-`.
+- Bare uppercase letter (`"J"`) is equivalent to `"shift-j"`. When a
+  modifier is present (`"ctrl-J"`), the letter is taken literally —
+  no implicit shift.
+
+Action:
+
+- Existing command name in kebab-case: `scroll-down`, `page-up`,
+  `goto-line`, `toggle-line-numbers`, `mark-set`, `search-forward`,
+  `shell-escape`, etc. Unknown command names error at startup.
+- `!`-prefixed string: an inline shell command, run via the same
+  infrastructure as `!cmd`.
+
+**Forbidden keys** (cannot be rebound; error at startup):
+`m`, `'`, `-`, `Ctrl-X`, and digits `0`-`9`. These participate in
+multi-key sequences (marks, option prefix, jump-previous chord,
+numeric prefix accumulator) and rebinding them would break those
+features.
+
+User bindings win over the built-in defaults. Any key not in the
+config keeps its default binding.
+
+---
+
 ## Log formats
 
 `tess` ships with three built-in formats and reads user-defined formats from `~/.config/tess/formats.toml`. User entries with the same name as a built-in win.
@@ -383,6 +425,26 @@ last available line.
 
 ---
 
+## Running shell commands
+
+Press `!` inside the pager to enter a shell command. The prompt shows
+the command as you type it; `Enter` runs it, `Esc` cancels.
+
+When the command runs, tess drops the alt-screen and raw mode so the
+command sees a normal interactive terminal. Output streams directly to
+your terminal. After the command exits, tess prompts:
+
+```
+[Press any key to continue]
+```
+
+After you press any key, tess restores the alt-screen and redraws.
+Interactive commands like `!vim notes.txt` work normally.
+
+The shell is taken from `$SHELL`, falling back to `/bin/sh`.
+
+---
+
 ## Hex display
 
 Render the source as an `xxd`-style hex dump. One row covers 16 bytes:
@@ -406,6 +468,41 @@ so you can find ASCII strings in the gutter or hex byte sequences:
 /Hello       # find the ASCII string in the gutter
 /4865 6c6c   # find the same bytes by their hex
 ```
+
+---
+
+## Preprocessing input
+
+Pipe the source file through an external command before tess reads it.
+Useful for viewing PDFs as text (`pdftotext`), tar archives as listings
+(`tar -tzvf`), and so on.
+
+Two ways to set the preprocessor:
+
+```sh
+# Per-invocation (CLI flag):
+tess --preprocess '|pdftotext %s -' document.pdf
+
+# Persistent (env var, less-compatible):
+export LESSOPEN='|lesspipe.sh %s'
+tess any-file.gz
+```
+
+CLI flag overrides env var. `--no-preprocess` ignores both for one
+invocation.
+
+Syntax: the command must start with `|` (pipe mode). `%s` is substituted
+with the file path (shell-quoted to handle spaces). The command's stdout
+becomes tess's input.
+
+On failure (non-zero exit, missing executable, empty output), tess falls
+back to the raw file and shows `[preprocess-failed: <stderr>]` in the
+status line. Custom `--prompt` templates can include the failure tag
+via `<preprocess-failed-tag>`.
+
+Mutually exclusive with `--hex`, `--follow`, and `--live`.
+
+Stdin pipes (`cat foo.txt | tess`) skip preprocessing entirely.
 
 ---
 

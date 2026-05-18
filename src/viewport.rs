@@ -137,6 +137,9 @@ pub struct Viewport {
     /// Custom status-line prompt template. When set, replaces the built-in
     /// format_status output with the template rendered against PromptContext.
     prompt: Option<crate::prompt::ParsedPrompt>,
+    /// Error message from a failed preprocessor run. When set, surfaces
+    /// a `[preprocess-failed: ...]` tag in the status line.
+    preprocess_failure: Option<String>,
 }
 
 impl Viewport {
@@ -163,6 +166,7 @@ impl Viewport {
             display: None,
             hex_mode: false,
             prompt: None,
+            preprocess_failure: None,
         }
     }
 
@@ -176,6 +180,10 @@ impl Viewport {
 
     pub fn set_prompt(&mut self, prompt: Option<crate::prompt::ParsedPrompt>) {
         self.prompt = prompt;
+    }
+
+    pub fn set_preprocess_failure(&mut self, msg: Option<String>) {
+        self.preprocess_failure = msg;
     }
 
     /// Fetch a logical line's display bytes — rendered through the active
@@ -715,6 +723,10 @@ impl Viewport {
         }
         if self.live_mode { s.push_str("  (L)"); }
         if self.follow_mode { s.push_str("  (F)"); }
+        if let Some(msg) = self.preprocess_failure.as_ref() {
+            let first_line = msg.lines().next().unwrap_or("");
+            s.push_str(&format!("  [preprocess-failed: {}]", first_line));
+        }
         s
     }
 
@@ -769,6 +781,12 @@ impl Viewport {
             .unwrap_or_default();
         let live_tag = if self.live_mode { "  (L)".to_string() } else { String::new() };
         let follow_tag = if self.follow_mode { "  (F)".to_string() } else { String::new() };
+        let preprocess_failed_tag = self.preprocess_failure.as_ref()
+            .map(|msg| {
+                let first_line = msg.lines().next().unwrap_or("");
+                format!("  [preprocess-failed: {}]", first_line)
+            })
+            .unwrap_or_default();
 
         PromptContext {
             label: self.source_label.clone(),
@@ -789,6 +807,7 @@ impl Viewport {
             pretty_tag,
             live_tag,
             follow_tag,
+            preprocess_failed_tag,
         }
     }
 
@@ -1826,5 +1845,18 @@ mod tests {
         v.set_prompt(Some(prompt));
         let frame = v.frame(&m, &mut idx);
         assert_eq!(frame.status, "f 100%");
+    }
+
+    #[test]
+    fn status_shows_preprocess_failed_tag_when_set() {
+        let m = MockSource::new();
+        m.append(b"a\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(40, 5, "f".into());
+        v.set_preprocess_failure(Some("pdftotext: not found".to_string()));
+        let frame = v.frame(&m, &mut idx);
+        assert!(frame.status.contains("[preprocess-failed: pdftotext: not found]"),
+                "got: {}", frame.status);
     }
 }

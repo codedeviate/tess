@@ -12,7 +12,7 @@ use tess::grep::GrepPredicate;
 use tess::format;
 use tess::line_index::LineIndex;
 use tess::prettify::{self, PrettifyMode, ResolvedType};
-use tess::source::{find_tail_offset, FileSource, LiveFileSource, MockSource, Source, StdinSource, TransformingSource};
+use tess::source::{find_tail_offset, FileSource, LiveFileSource, MemorySource, MockSource, Source, StdinSource, TransformingSource};
 use tess::terminal::{install_panic_hook, install_signal_flag, TerminalGuard};
 use tess::viewport::Viewport;
 use clap::Parser;
@@ -181,7 +181,9 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let viewport = Viewport::new(cols, rows, label.to_string());
     let idx = LineIndex::new();
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default())?;
+    let keymap = tess::keys::KeyMap::load_from_default_path()
+        .unwrap_or_else(|_| tess::keys::KeyMap::empty());
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap)?;
     Ok(())
 }
 
@@ -299,12 +301,27 @@ documents can't be parsed)".to_string(),
         }
     }
 
+    // Resolve the preprocessor from --preprocess or $LESSOPEN (pipe-mode only).
+    // --no-preprocess suppresses both. Stdin sources skip preprocessing entirely.
+    let preprocessor: Option<tess::preprocess::Preprocessor> = if args.no_preprocess {
+        None
+    } else {
+        let raw = args.preprocess.clone()
+            .or_else(|| std::env::var("LESSOPEN").ok());
+        match raw {
+            Some(r) => Some(tess::preprocess::Preprocessor::parse(&r)
+                .map_err(Error::Runtime)?),
+            None => None,
+        }
+    };
+
     // Resolve source. Track whether we actually consumed stdin — only then
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
     // whether `--tail` is meaningful for this source (streaming stdin can't
     // do random-access tail).
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
+    let mut preprocess_failure: Option<String> = None;
     let (src, label): (Box<dyn Source>, String) = if let Some(path) = args.files.first() {
         if args.files.len() > 1 {
             eprintln!(
@@ -321,6 +338,25 @@ documents can't be parsed)".to_string(),
                 }
             })?;
             (Box::new(lfs), path.display().to_string())
+        } else if let Some(p) = preprocessor.as_ref() {
+            // Run the preprocessor. On success use MemorySource; on failure fall
+            // back to the raw file and stash the error for the status line.
+            match tess::preprocess::run(p, path) {
+                tess::preprocess::PreprocessResult::Bytes(bytes) => {
+                    (Box::new(MemorySource::new(bytes)), path.display().to_string())
+                }
+                tess::preprocess::PreprocessResult::Failed { stderr } => {
+                    preprocess_failure = Some(stderr);
+                    let fs = FileSource::open(path).map_err(|source| {
+                        if let std::io::ErrorKind::InvalidInput = source.kind() {
+                            Error::NotAFile { path: path.clone() }
+                        } else {
+                            Error::OpenFile { path: path.clone(), source }
+                        }
+                    })?;
+                    (Box::new(fs), path.display().to_string())
+                }
+            }
         } else {
             let fs = FileSource::open(path).map_err(|source| {
                 if let std::io::ErrorKind::InvalidInput = source.kind() {
@@ -511,6 +547,7 @@ showing raw (use --content-type=NAME to override)"
     if args.hex {
         viewport.set_hex_mode(true);
     }
+    viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active
     // format's prompt (if a --format was given and defines one).
@@ -534,6 +571,8 @@ showing raw (use --content-type=NAME to override)"
         head: args.head,
         tail: if source_supports_tail { args.tail } else { None },
     };
-    app::run(src, viewport, idx, sigterm, rebuild_spec)?;
+    let keymap = tess::keys::KeyMap::load_from_default_path()
+        .map_err(Error::Runtime)?;
+    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap)?;
     Ok(())
 }

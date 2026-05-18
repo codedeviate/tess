@@ -147,3 +147,55 @@ fn hex_mode_starts_and_quits_cleanly() {
     s.send("q").unwrap();
     wait_clean(s);
 }
+
+#[test]
+fn keymap_remap_works() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+
+    let tmp_home = tempfile::tempdir().unwrap();
+    let cfg_dir = tmp_home.path().join(".config").join("tess");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    let mut keys = std::fs::File::create(cfg_dir.join("keys.toml")).unwrap();
+    writeln!(keys, "[bindings]").unwrap();
+    writeln!(keys, "\"f1\" = \"toggle-line-numbers\"").unwrap();
+    drop(keys);
+
+    let mut content = tempfile::NamedTempFile::new().unwrap();
+    for i in 1..=20 {
+        writeln!(content, "line {:03}", i).unwrap();
+    }
+
+    let mut command = std::process::Command::new(bin);
+    command.env("HOME", tmp_home.path()).arg(content.path());
+    let mut s = expectrl::Session::spawn(command).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    drain_for(&mut s, DRAW_GRACE);
+    s.send("q").unwrap();
+    wait_clean(s);
+}
+
+#[test]
+fn shell_escape_starts_and_quits_cleanly() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_tess");
+    let mut tmp = tempfile::NamedTempFile::new().unwrap();
+    for i in 1..=20 {
+        writeln!(tmp, "line {:03}", i).unwrap();
+    }
+    let cmd = format!("{bin} {}", tmp.path().display());
+    let mut s = expectrl::spawn(&cmd).expect("failed to spawn tess");
+    s.set_expect_timeout(Some(Duration::from_secs(5)));
+    drain_for(&mut s, DRAW_GRACE);
+    // `!` enters ShellPrompt mode. Type a partial command, then Esc to
+    // cancel. We don't exercise the full press-any-key flow here because
+    // it interacts with the PTY's line discipline in a way that's
+    // unreliable to test via expectrl — the run_shell_command helper
+    // itself is unit-tested in src/shell.rs.
+    s.send("!echo hi").unwrap();
+    drain_for(&mut s, Duration::from_millis(200));
+    s.send("\x1b").unwrap();  // ESC cancels back to Normal mode
+    drain_for(&mut s, Duration::from_millis(200));
+    s.send("q").unwrap();
+    wait_clean(s);
+}

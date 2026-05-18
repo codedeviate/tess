@@ -67,6 +67,8 @@ pub enum Command {
     /// Jump to the previous position (Ctrl-X Ctrl-X in less). Dispatched
     /// from the CtrlXPending mode intercept in app.rs.
     JumpPrevious,
+    /// Enter the !cmd shell-escape prompt.
+    ShellEscape,
     Noop,
 }
 
@@ -117,6 +119,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('N'), false) => Command::PreviousMatch,
         (Char('m'), false) => Command::MarkSet,
         (Char('\''), false) => Command::MarkJump,
+        (Char('!'), false) => Command::ShellEscape,
         (Char('x'), true) => Command::CtrlXPrefix,
         _ => Command::Noop,
     }
@@ -272,5 +275,11 @@ mod tests {
     fn ctrl_x_produces_ctrl_x_prefix_command() {
         let evt = key(KeyCode::Char('x'), KeyModifiers::CONTROL);
         assert_eq!(translate(evt), Command::CtrlXPrefix);
+    }
+
+    #[test]
+    fn bang_produces_shell_escape_command() {
+        let evt = key(KeyCode::Char('!'), KeyModifiers::NONE);
+        assert_eq!(translate(evt), Command::ShellEscape);
     }
 }

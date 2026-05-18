@@ -1,6 +1,6 @@
 # `tess` — Claude Code project notes
 
-A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Capabilities: follow mode (`-f` / `--follow`, interactive `Shift-F`) for `tail -f`-style log watching, `--head N` / `--tail N` for cheap views of huge files (`--tail` reverse-scans for the byte offset and only indexes from there forward), structured-log support (`--format <name>` parses lines via named regex captures; built-ins for apache-common, apache-combined, nginx-combined; user-defined formats in `~/.config/tess/formats.toml`), field-based filtering (`--filter FIELD<op>VALUE`, repeatable, AND'd) with optional `--dim` to keep non-matches visible but faded, raw-line regex filtering (`--grep PATTERN`, repeatable, AND'd, composable with `--filter`), user-defined CLI groups (`[group.NAME]` in formats.toml expands `--<groupname>` into a fixed flag bundle and turns positionals into filters; groups support `filter` and `grep` fields), multi-line records (`record_start` regex groups continuation lines; search/filter/grep operate on whole records), hex-dump display (`--hex`) for binary inputs, customizable status line (`--prompt TEMPLATE` or `prompt = '...'` per format), and interactive regex search (`/`, `?`, `n`, `N`) with reverse-video row highlighting. No multi-file nav yet — see `OUT-OF-SCOPE.md` for the full deferred list.
+A `less`-style terminal pager written in Rust. macOS + Linux daily driver. Capabilities: follow mode (`-f` / `--follow`, interactive `Shift-F`) for `tail -f`-style log watching, `--head N` / `--tail N` for cheap views of huge files (`--tail` reverse-scans for the byte offset and only indexes from there forward), structured-log support (`--format <name>` parses lines via named regex captures; built-ins for apache-common, apache-combined, nginx-combined; user-defined formats in `~/.config/tess/formats.toml`), field-based filtering (`--filter FIELD<op>VALUE`, repeatable, AND'd) with optional `--dim` to keep non-matches visible but faded, raw-line regex filtering (`--grep PATTERN`, repeatable, AND'd, composable with `--filter`), user-defined CLI groups (`[group.NAME]` in formats.toml expands `--<groupname>` into a fixed flag bundle and turns positionals into filters; groups support `filter` and `grep` fields), multi-line records (`record_start` regex groups continuation lines; search/filter/grep operate on whole records), hex-dump display (`--hex`) for binary inputs, customizable status line (`--prompt TEMPLATE` or `prompt = '...'` per format), interactive regex search (`/`, `?`, `n`, `N`) with reverse-video row highlighting, `!cmd` shell escape (drops alt-screen, runs command, resumes on keypress), input preprocessing (`--preprocess '|cmd %s'` / `$LESSOPEN`) to pipe files through external tools before display, and user-remappable keybindings via `~/.config/tess/keys.toml` (including inline `!cmd` bindings). No multi-file nav yet — see `OUT-OF-SCOPE.md` for the full deferred list.
 
 ## Build, run, test
 
@@ -13,7 +13,7 @@ ls -la | cargo run --release    # piped stdin
 
 ## Module layout
 
-The codebase splits into seven small, single-purpose units under `src/`. Dependencies flow downward — no upward edges.
+The codebase splits into small, single-purpose units under `src/`. Dependencies flow downward — no upward edges.
 
 ```
 cli (clap parsing) ─→ main ─→ app (event loop) ─→ viewport (scroll state, frame composition)
@@ -27,6 +27,9 @@ error (Error enum, exit codes)                        used everywhere
 input (KeyEvent → Command translation)                used by app
 hex    (xxd-style row formatter)                      used by viewport
 prompt (--prompt template parser; wraps format::DisplayTemplate)  used by viewport
+shell  (!cmd and shell-command binding helper)         used by app
+preprocess (--preprocess / $LESSOPEN resolver and runner)  used by main
+keys   (~/.config/tess/keys.toml loader and dispatch interceptor)  used by app
 ```
 
 - **`render` is the kernel.** Pure functions, no I/O, no terminal. The hard rules (UTF-8 cluster decode, tab stops, control-byte `^X` form, invalid-byte `<HH>` form, wrap vs chop with width-2 char boundaries) all live here so they get the densest unit-test coverage.
