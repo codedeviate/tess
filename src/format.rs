@@ -295,6 +295,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "prompt",
     "preprocess",
     "no-preprocess",
+    "tag",
+    "tag-file",
 ];
 
 /// Built-in formats compiled from this list of (name, pattern). Patterns use
