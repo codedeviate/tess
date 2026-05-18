@@ -29,6 +29,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "follow-tag",
     "preprocess-failed-tag",
     "file-index-tag",
+    "tag-tag",
 ];
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,7 @@ pub struct PromptContext {
     pub follow_tag: String,
     pub preprocess_failed_tag: String,
     pub file_index_tag: String,
+    pub tag_tag: String,
 }
 
 impl PromptContext {
@@ -113,6 +115,7 @@ impl PromptContext {
             "follow-tag" => Some(self.follow_tag.clone()),
             "preprocess-failed-tag" => Some(self.preprocess_failed_tag.clone()),
             "file-index-tag" => Some(self.file_index_tag.clone()),
+            "tag-tag" => Some(self.tag_tag.clone()),
             _ => None,
         }
     }
@@ -225,6 +228,23 @@ mod tests {
     #[test]
     fn render_file_index_tag_empty_when_unset() {
         let p = ParsedPrompt::parse("<file-index-tag>").unwrap();
+        let ctx = PromptContext::default();
+        assert_eq!(p.render(&ctx), "");
+    }
+
+    #[test]
+    fn render_tag_tag_resolves_when_populated() {
+        let p = ParsedPrompt::parse("<tag-tag>").unwrap();
+        let ctx = PromptContext {
+            tag_tag: "  [tag: foo (2/3)]".into(),
+            ..Default::default()
+        };
+        assert_eq!(p.render(&ctx), "  [tag: foo (2/3)]");
+    }
+
+    #[test]
+    fn render_tag_tag_empty_when_unset() {
+        let p = ParsedPrompt::parse("<tag-tag>").unwrap();
         let ctx = PromptContext::default();
         assert_eq!(p.render(&ctx), "");
     }

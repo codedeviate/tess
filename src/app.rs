@@ -145,6 +145,85 @@ enum ColonOutcome {
     Quit,
 }
 
+// Wired in Task 5.
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+struct TagStack {
+    /// Where we jumped FROM, in reverse-chronological order. Tuples are
+    /// (file_index, top_line) at the time of the jump.
+    history: Vec<(usize, usize)>,
+    /// Currently-active match list, set when a tag has at least one match
+    /// and cleared on Ctrl-T or on a fresh tag jump.
+    active: Option<ActiveMatches>,
+}
+
+// Wired in Task 5.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct ActiveMatches {
+    name: String,
+    matches: Vec<crate::tags::TagEntry>,
+    cursor: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TagStepResult {
+    /// Cursor moved; new index is `usize`.
+    Moved(usize),
+    /// Already at the boundary; show a transient message.
+    AtBoundary,
+    /// `active` was None — caller should show "no active tag".
+    NoActive,
+}
+
+// Wired in Task 5.
+#[allow(dead_code)]
+impl TagStack {
+    fn push(&mut self, file_index: usize, top_line: usize) {
+        self.history.push((file_index, top_line));
+    }
+
+    fn pop(&mut self) -> Option<(usize, usize)> {
+        let popped = self.history.pop();
+        if popped.is_some() {
+            self.active = None;
+        }
+        popped
+    }
+
+    fn set_active(&mut self, name: String, matches: Vec<crate::tags::TagEntry>) {
+        self.active = Some(ActiveMatches {
+            name,
+            matches,
+            cursor: 0,
+        });
+    }
+
+    fn next(&mut self) -> TagStepResult {
+        let Some(a) = &mut self.active else {
+            return TagStepResult::NoActive;
+        };
+        if a.cursor + 1 >= a.matches.len() {
+            TagStepResult::AtBoundary
+        } else {
+            a.cursor += 1;
+            TagStepResult::Moved(a.cursor)
+        }
+    }
+
+    fn prev(&mut self) -> TagStepResult {
+        let Some(a) = &mut self.active else {
+            return TagStepResult::NoActive;
+        };
+        if a.cursor == 0 {
+            TagStepResult::AtBoundary
+        } else {
+            a.cursor -= 1;
+            TagStepResult::Moved(a.cursor)
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn switch_file(
     new_path: &std::path::Path,
@@ -1204,5 +1283,100 @@ mod tests {
     fn parse_colon_tnext_and_tprev() {
         assert_eq!(parse_colon_command("tnext").unwrap(), ColonCommand::TagNext);
         assert_eq!(parse_colon_command("tprev").unwrap(), ColonCommand::TagPrev);
+    }
+
+    #[test]
+    fn tag_stack_push_pop_lifo() {
+        let mut s = TagStack::default();
+        s.push(0, 10);
+        s.push(1, 20);
+        assert_eq!(s.pop(), Some((1, 20)));
+        assert_eq!(s.pop(), Some((0, 10)));
+        assert_eq!(s.pop(), None);
+    }
+
+    #[test]
+    fn tag_stack_pop_clears_active() {
+        let mut s = TagStack::default();
+        s.push(0, 10);
+        s.set_active(
+            "foo".into(),
+            vec![crate::tags::TagEntry {
+                file: std::path::PathBuf::from("/a"),
+                address: crate::tags::TagAddress::Line(1),
+            }],
+        );
+        assert!(s.active.is_some());
+        let _ = s.pop();
+        assert!(s.active.is_none());
+    }
+
+    #[test]
+    fn tag_stack_next_advances_then_clamps() {
+        let mut s = TagStack::default();
+        s.set_active(
+            "foo".into(),
+            vec![
+                crate::tags::TagEntry {
+                    file: std::path::PathBuf::from("/a"),
+                    address: crate::tags::TagAddress::Line(1),
+                },
+                crate::tags::TagEntry {
+                    file: std::path::PathBuf::from("/b"),
+                    address: crate::tags::TagAddress::Line(2),
+                },
+            ],
+        );
+        assert_eq!(s.next(), TagStepResult::Moved(1));
+        assert_eq!(s.next(), TagStepResult::AtBoundary);
+    }
+
+    #[test]
+    fn tag_stack_prev_clamps_at_zero() {
+        let mut s = TagStack::default();
+        s.set_active(
+            "foo".into(),
+            vec![crate::tags::TagEntry {
+                file: std::path::PathBuf::from("/a"),
+                address: crate::tags::TagAddress::Line(1),
+            }],
+        );
+        assert_eq!(s.prev(), TagStepResult::AtBoundary);
+    }
+
+    #[test]
+    fn tag_stack_next_with_no_active_returns_no_active() {
+        let mut s = TagStack::default();
+        assert_eq!(s.next(), TagStepResult::NoActive);
+        assert_eq!(s.prev(), TagStepResult::NoActive);
+    }
+
+    #[test]
+    fn tag_stack_set_active_replaces_previous_list() {
+        let mut s = TagStack::default();
+        s.set_active(
+            "foo".into(),
+            vec![crate::tags::TagEntry {
+                file: std::path::PathBuf::from("/a"),
+                address: crate::tags::TagAddress::Line(1),
+            }],
+        );
+        s.set_active(
+            "bar".into(),
+            vec![
+                crate::tags::TagEntry {
+                    file: std::path::PathBuf::from("/x"),
+                    address: crate::tags::TagAddress::Line(5),
+                },
+                crate::tags::TagEntry {
+                    file: std::path::PathBuf::from("/y"),
+                    address: crate::tags::TagAddress::Line(6),
+                },
+            ],
+        );
+        let active = s.active.as_ref().unwrap();
+        assert_eq!(active.name, "bar");
+        assert_eq!(active.matches.len(), 2);
+        assert_eq!(active.cursor, 0);
     }
 }
