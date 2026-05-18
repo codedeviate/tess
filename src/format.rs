@@ -291,6 +291,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "help",
     "version",
     "record-start",
+    "hex",
+    "prompt",
 ];
 
 /// Built-in formats compiled from this list of (name, pattern). Patterns use

@@ -118,6 +118,7 @@ pub struct Viewport {
     follow_mode: bool,
     live_mode: bool,
     prettify_label: Option<String>,
+    format_label: Option<String>,
     filter: Option<CompiledFilter>,
     grep: Option<GrepPredicate>,
     dim_mode: bool,
@@ -152,6 +153,7 @@ impl Viewport {
             follow_mode: false,
             live_mode: false,
             prettify_label: None,
+            format_label: None,
             filter: None,
             grep: None,
             dim_mode: false,
@@ -467,6 +469,12 @@ impl Viewport {
         self.prettify_label = label;
     }
 
+    /// Active --format name shown in <format-tag>. Set from main when a named
+    /// format is resolved; independent of whether --filter is also active.
+    pub fn set_format_label(&mut self, label: Option<String>) {
+        self.format_label = label;
+    }
+
     /// Drop the per-line filter-membership cache without disturbing the filter
     /// itself or scroll position. Used after a `--live` rebuild: line numbering
     /// may have changed, so cached `visible_lines` is stale, but we want to
@@ -738,6 +746,9 @@ impl Viewport {
             String::new()
         };
 
+        let format_tag = self.format_label.as_ref()
+            .map(|n| format!("  [{}]", n))
+            .unwrap_or_default();
         let filter_tag = self.filter.as_ref()
             .map(|f| format!("  [{}]", f.format_name))
             .unwrap_or_default();
@@ -764,13 +775,13 @@ impl Viewport {
             top,
             bottom,
             total,
-            pct: pct.min(255) as u8,
+            pct: pct.min(100) as u8,
             rec_top,
             rec_bottom,
             rec_total,
             records_mode,
             wrap_offset,
-            format_tag: filter_tag.clone(),
+            format_tag,
             filter_tag,
             grep_tag,
             hide_tag,

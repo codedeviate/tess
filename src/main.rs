@@ -528,6 +528,7 @@ showing raw (use --content-type=NAME to override)"
         };
         viewport.set_prompt(prompt_template);
     }
+    viewport.set_format_label(args.format.clone());
 
     let rebuild_spec = RebuildSpec {
         head: args.head,
