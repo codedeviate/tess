@@ -1,13 +1,13 @@
 # `tess`
 
 [![GitHub](https://img.shields.io/badge/github-codedeviate%2Ftess-181717?logo=github)](https://github.com/codedeviate/tess)
-[![Latest release](https://img.shields.io/badge/release-v0.14.0-blue)](https://github.com/codedeviate/tess/releases)
+[![Latest release](https://img.shields.io/badge/release-v0.15.0-blue)](https://github.com/codedeviate/tess/releases)
 [![Rust edition 2021](https://img.shields.io/badge/rust-2021_edition_(MSRV_1.85)-dea584?logo=rust)](https://www.rust-lang.org)
 [![crates.io](https://img.shields.io/crates/v/tess-cli?logo=rust&label=crates.io)](https://crates.io/crates/tess-cli)
 [![Homebrew tap](https://img.shields.io/badge/homebrew-codedeviate%2Fcli%2Ftess-fbb040?logo=homebrew)](https://github.com/codedeviate/homebrew-cli)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A `less`-style terminal pager for files, pipes, and live logs — with first-class support for **structured-log filtering**, **pretty-printing** of JSON/YAML/TOML/XML/HTML/CSV, and **wrap-aware scrolling** of long lines. Escape to the shell with `!cmd`, preprocess inputs (`$LESSOPEN` / `--preprocess`), and remap keys via `~/.config/tess/keys.toml`. Written in Rust. macOS + Linux.
+A `less`-style terminal pager for files, pipes, and live logs — with first-class support for **structured-log filtering**, **pretty-printing** of JSON/YAML/TOML/XML/HTML/CSV, **wrap-aware scrolling** of long lines, and **multi-file navigation** with `:n`/`:p`/`:e` colon commands. Escape to the shell with `!cmd`, preprocess inputs (`$LESSOPEN` / `--preprocess`), and remap keys via `~/.config/tess/keys.toml`. Written in Rust. macOS + Linux.
 
 ```sh
 tess /var/log/syslog                                # like `less`, but newer keys
@@ -80,6 +80,7 @@ Requires **Rust 1.85+**. See [INSTALL.md](INSTALL.md) for full instructions, inc
 | `tail -f` last 1000 | `tess -f --tail 1000 huge.log` |
 | First 50 lines | `tess --head 50 file.txt` |
 | Apache 5xx errors | `tess --format apache-combined --filter status~^5 access.log` |
+| Navigate multiple files | `tess foo.log bar.log baz.log` then `:n` / `:p` |
 
 Run `tess --examples` for a curated list, or `tess --manual` for the full manual paged through `tess` itself.
 
@@ -103,6 +104,7 @@ Vim-ish + `less`-ish hybrid. The full table is in [MANUAL.md](MANUAL.md); these 
 | `-N` / `-S` / `Shift-F` | Toggle line numbers / chop / follow mode |
 | `Shift-P` | Toggle pretty-print on/off |
 | `Shift-R` | Force reload from disk (with `--live`) |
+| `:n` / `:p` / `:e <path>` | Next file / previous file / open new file |
 | `q` `Q` `Ctrl-C` | Quit |
 
 Pressing `/<Enter>` (or `?<Enter>`) with an empty pattern repeats the last search in the typed direction, the way `less` does it.

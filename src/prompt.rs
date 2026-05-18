@@ -28,6 +28,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "live-tag",
     "follow-tag",
     "preprocess-failed-tag",
+    "file-index-tag",
 ];
 
 #[derive(Debug, Clone)]
@@ -78,6 +79,7 @@ pub struct PromptContext {
     pub live_tag: String,
     pub follow_tag: String,
     pub preprocess_failed_tag: String,
+    pub file_index_tag: String,
 }
 
 impl PromptContext {
@@ -110,6 +112,7 @@ impl PromptContext {
             "live-tag" => Some(self.live_tag.clone()),
             "follow-tag" => Some(self.follow_tag.clone()),
             "preprocess-failed-tag" => Some(self.preprocess_failed_tag.clone()),
+            "file-index-tag" => Some(self.file_index_tag.clone()),
             _ => None,
         }
     }
@@ -207,5 +210,22 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(p.render(&ctx), "  [preprocess-failed: bad cmd]");
+    }
+
+    #[test]
+    fn render_file_index_tag_resolves_when_populated() {
+        let p = ParsedPrompt::parse("<file-index-tag>").unwrap();
+        let ctx = PromptContext {
+            file_index_tag: "  [2/3]".into(),
+            ..Default::default()
+        };
+        assert_eq!(p.render(&ctx), "  [2/3]");
+    }
+
+    #[test]
+    fn render_file_index_tag_empty_when_unset() {
+        let p = ParsedPrompt::parse("<file-index-tag>").unwrap();
+        let ctx = PromptContext::default();
+        assert_eq!(p.render(&ctx), "");
     }
 }

@@ -12,7 +12,7 @@ use crossterm::QueueableCommand;
 
 use crate::error::Result;
 use crate::input::{translate, Command};
-use crate::marks::{mark_set, mark_jump, jump_previous, update_prev_position, is_valid_mark_name};
+use crate::marks::{mark_set, mark_jump, jump_previous, update_prev_position, is_valid_mark_name, MarkTarget};
 use crate::line_index::LineIndex;
 use crate::prettify::PrettifyMode;
 use crate::render::Cell;
@@ -55,15 +55,248 @@ enum InputMode {
     MarkJumpPending,
     /// First half of the Ctrl-X Ctrl-X chord.
     CtrlXPending,
+    /// User pressed `:`. The next keystrokes build a colon command in
+    /// `buffer`; Enter dispatches, Esc cancels.
+    ColonPrompt { buffer: String, error: Option<String> },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ColonCommand {
+    Next,
+    Prev,
+    Edit(std::path::PathBuf),
+    ShowFile,
+    Quit,
+    Delete,
+    First,
+    Last,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ColonParseError {
+    UnknownCommand(String),
+    MissingPath,
+}
+
+impl std::fmt::Display for ColonParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ColonParseError::UnknownCommand(t) => write!(f, "unknown command: :{t}"),
+            ColonParseError::MissingPath => write!(f, ":e requires a path"),
+        }
+    }
+}
+
+fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonParseError> {
+    let buf = buf.trim();
+    if buf.is_empty() {
+        return Err(ColonParseError::UnknownCommand(String::new()));
+    }
+    let mut parts = buf.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap();
+    let rest = parts.next().unwrap_or("").trim();
+    match cmd {
+        "n" | "next" => Ok(ColonCommand::Next),
+        "p" | "prev" => Ok(ColonCommand::Prev),
+        "e" | "edit" => {
+            if rest.is_empty() {
+                Err(ColonParseError::MissingPath)
+            } else {
+                // Tilde expansion.
+                let expanded = if let Some(stripped) = rest.strip_prefix("~/") {
+                    if let Some(home) = std::env::var_os("HOME") {
+                        let mut p = std::path::PathBuf::from(home);
+                        p.push(stripped);
+                        p
+                    } else {
+                        std::path::PathBuf::from(rest)
+                    }
+                } else {
+                    std::path::PathBuf::from(rest)
+                };
+                Ok(ColonCommand::Edit(expanded))
+            }
+        }
+        "f" => Ok(ColonCommand::ShowFile),
+        "q" | "quit" => Ok(ColonCommand::Quit),
+        "d" | "delete" => Ok(ColonCommand::Delete),
+        "x" | "first" => Ok(ColonCommand::First),
+        "t" | "last" => Ok(ColonCommand::Last),
+        other => Err(ColonParseError::UnknownCommand(other.to_string())),
+    }
+}
+
+enum ColonOutcome {
+    Continue(Option<String>),  // Some(msg) = transient status to show
+    Quit,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn switch_file(
+    new_path: &std::path::Path,
+    new_file_index: usize,
+    total_files: usize,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    viewport: &mut crate::viewport::Viewport,
+    src: &mut Box<dyn crate::source::Source>,
+    idx: &mut crate::line_index::LineIndex,
+    record_start_regex: Option<&regex::bytes::Regex>,
+) -> crate::error::Result<()> {
+    let (new_src, new_label, new_failure) =
+        crate::open::open_source_for_path(new_path, args, preprocessor)?;
+
+    *src = new_src;
+    let mut new_idx = crate::line_index::LineIndex::new();
+    if let Some(re) = record_start_regex {
+        new_idx.set_record_start(re.clone());
+    }
+    *idx = new_idx;
+
+    viewport.set_source_label(new_label);
+    viewport.set_file_index(new_file_index, total_files);
+    viewport.set_preprocess_failure(new_failure);
+    viewport.goto_top();
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_colon_command(
+    cmd: ColonCommand,
+    file_set: &mut crate::file_set::FileSet,
+    current_file_index: &mut usize,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    viewport: &mut crate::viewport::Viewport,
+    src: &mut Box<dyn crate::source::Source>,
+    idx: &mut crate::line_index::LineIndex,
+) -> ColonOutcome {
+    match cmd {
+        ColonCommand::Next => {
+            match file_set.next() {
+                Ok(path) => {
+                    let path = path.to_path_buf();
+                    let new_idx_val = file_set.current_index();
+                    if let Err(e) = switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                        ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                    } else {
+                        *current_file_index = new_idx_val;
+                        ColonOutcome::Continue(None)
+                    }
+                }
+                Err(e) => ColonOutcome::Continue(Some(format!("[{e}]"))),
+            }
+        }
+        ColonCommand::Prev => {
+            match file_set.prev() {
+                Ok(path) => {
+                    let path = path.to_path_buf();
+                    let new_idx_val = file_set.current_index();
+                    if let Err(e) = switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                        ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                    } else {
+                        *current_file_index = new_idx_val;
+                        ColonOutcome::Continue(None)
+                    }
+                }
+                Err(e) => ColonOutcome::Continue(Some(format!("[{e}]"))),
+            }
+        }
+        ColonCommand::Edit(path) => {
+            // Try to open first; if successful, append + switch.
+            match crate::open::open_source_for_path(&path, args, preprocessor) {
+                Ok(_) => {
+                    // Successful open; commit to the FileSet.
+                    let final_path = file_set.append_and_switch(path.clone()).to_path_buf();
+                    let new_idx_val = file_set.current_index();
+                    if let Err(e) = switch_file(&final_path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                        ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                    } else {
+                        *current_file_index = new_idx_val;
+                        ColonOutcome::Continue(None)
+                    }
+                }
+                Err(e) => ColonOutcome::Continue(Some(format!("[open: {}: {e}]", path.display()))),
+            }
+        }
+        ColonCommand::ShowFile => {
+            let label = viewport.source_label_clone();
+            let cur = file_set.current_index() + 1;
+            let total = file_set.len();
+            let top = viewport.top_line() + 1;
+            let total_lines = idx.line_count();
+            let msg = if total > 1 {
+                format!("{label} (file {cur}/{total}): line {top}/{total_lines}")
+            } else {
+                format!("{label}: line {top}/{total_lines}")
+            };
+            ColonOutcome::Continue(Some(msg))
+        }
+        ColonCommand::Quit => ColonOutcome::Quit,
+        ColonCommand::Delete => {
+            match file_set.delete_current() {
+                Ok(path) => {
+                    let path = path.to_path_buf();
+                    let new_idx_val = file_set.current_index();
+                    if let Err(e) = switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                        ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                    } else {
+                        *current_file_index = new_idx_val;
+                        ColonOutcome::Continue(None)
+                    }
+                }
+                Err(e) => ColonOutcome::Continue(Some(format!("[{e}]"))),
+            }
+        }
+        ColonCommand::First => {
+            if file_set.current_index() == 0 {
+                ColonOutcome::Continue(None)  // silent no-op
+            } else if let Some(path) = file_set.first() {
+                let path = path.to_path_buf();
+                let new_idx_val = file_set.current_index();
+                if let Err(e) = switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                    ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                } else {
+                    *current_file_index = new_idx_val;
+                    ColonOutcome::Continue(None)
+                }
+            } else {
+                ColonOutcome::Continue(None)
+            }
+        }
+        ColonCommand::Last => {
+            if file_set.current_index() + 1 == file_set.len() {
+                ColonOutcome::Continue(None)
+            } else if let Some(path) = file_set.last() {
+                let path = path.to_path_buf();
+                let new_idx_val = file_set.current_index();
+                if let Err(e) = switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+                    ColonOutcome::Continue(Some(format!("[open: {e}]")))
+                } else {
+                    *current_file_index = new_idx_val;
+                    ColonOutcome::Continue(None)
+                }
+            } else {
+                ColonOutcome::Continue(None)
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments, clippy::collapsible_match)]
 pub fn run(
-    src: Box<dyn Source>,
+    mut src: Box<dyn Source>,
     mut viewport: Viewport,
     mut idx: LineIndex,
     sigterm: Arc<AtomicBool>,
     rebuild_spec: RebuildSpec,
     keymap: crate::keys::KeyMap,
+    mut file_set: crate::file_set::FileSet,
+    record_start_regex: Option<regex::bytes::Regex>,
+    args: crate::cli::Args,
+    preprocessor: Option<crate::preprocess::Preprocessor>,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -93,8 +326,10 @@ pub fn run(
     let mut needs_redraw = true;
     let mut mode = InputMode::Normal;
     let mut numeric_prefix: Option<usize> = None;
-    let mut marks: HashMap<char, usize> = HashMap::new();
-    let mut previous_position: Option<usize> = None;
+    let mut marks: HashMap<char, (usize, usize)> = HashMap::new();
+    let mut previous_position: Option<(usize, usize)> = None;
+    let mut current_file_index: usize = file_set.current_index();
+    let mut transient_status: Option<String> = None;
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -103,7 +338,8 @@ pub fn run(
 
         if needs_redraw {
             let mut frame = viewport.frame(src.as_ref(), &mut idx);
-            // Override the status row when we're in an interactive prompt.
+            // Override the status row when we're in an interactive prompt OR
+            // when a transient status message is pending.
             match &mode {
                 InputMode::SearchPrompt { direction, buffer, error } => {
                     let prefix = if matches!(direction, SearchDirection::Forward) { "/" } else { "?" };
@@ -118,7 +354,17 @@ pub fn run(
                         None => format!("!{buffer}"),
                     };
                 }
-                _ => {}
+                InputMode::ColonPrompt { buffer, error } => {
+                    frame.status = match error {
+                        Some(e) => format!(":{buffer}  [error: {e}]"),
+                        None => format!(":{buffer}"),
+                    };
+                }
+                _ => {
+                    if let Some(msg) = transient_status.take() {
+                        frame.status = msg;
+                    }
+                }
             }
             write_frame(&mut stdout, &frame, cols, rows)
                 .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
@@ -147,14 +393,14 @@ pub fn run(
                                                 (SearchDirection::Forward, SearchDirection::Forward)
                                                 | (SearchDirection::Backward, SearchDirection::Backward)
                                             );
-                                            update_prev_position(&mut previous_position, viewport.top_line());
+                                            update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                                             viewport.search_repeat(src.as_ref(), &mut idx, reverse);
                                         }
                                         mode = InputMode::Normal;
                                     } else {
                                         match viewport.set_search(buffer.clone(), *direction) {
                                             Ok(()) => {
-                                                update_prev_position(&mut previous_position, viewport.top_line());
+                                                update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                                                 viewport.search_repeat(src.as_ref(), &mut idx, false);
                                                 mode = InputMode::Normal;
                                             }
@@ -228,7 +474,7 @@ pub fn run(
                     InputMode::MarkSetPending => {
                         if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
                             if is_valid_mark_name(c) {
-                                mark_set(&mut marks, c, viewport.top_line());
+                                mark_set(&mut marks, c, current_file_index, viewport.top_line());
                             }
                         }
                         mode = InputMode::Normal;
@@ -237,12 +483,32 @@ pub fn run(
                     InputMode::MarkJumpPending => {
                         if let Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) = event {
                             if is_valid_mark_name(c) {
-                                if let Some(line) = mark_jump(
-                                    &marks, c, idx.line_count(),
-                                    &mut previous_position, viewport.top_line(),
-                                ) {
-                                    viewport.goto_line(line, src.as_ref(), &mut idx);
-                                    needs_redraw = true;
+                                match mark_jump(&marks, c, current_file_index, &mut previous_position, viewport.top_line()) {
+                                    Some(MarkTarget::SameFile { line }) => {
+                                        let clamped = line.min(idx.line_count().saturating_sub(1));
+                                        viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                                        needs_redraw = true;
+                                    }
+                                    Some(MarkTarget::OtherFile { file_index, line }) => {
+                                        if file_index < file_set.len() {
+                                            file_set.set_current_index(file_index);
+                                            let path = file_set.current().unwrap().to_path_buf();
+                                            if let Err(e) = switch_file(
+                                                &path, file_index, file_set.len(),
+                                                &args, preprocessor.as_ref(),
+                                                &mut viewport, &mut src, &mut idx,
+                                                record_start_regex.as_ref(),
+                                            ) {
+                                                transient_status = Some(format!("[open: {e}]"));
+                                            } else {
+                                                let clamped = line.min(idx.line_count().saturating_sub(1));
+                                                viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                                                current_file_index = file_index;
+                                                needs_redraw = true;
+                                            }
+                                        }
+                                    }
+                                    None => {}
                                 }
                             }
                         }
@@ -296,12 +562,32 @@ pub fn run(
                             })
                         );
                         if is_ctrl_x {
-                            if let Some(line) = jump_previous(
-                                &mut previous_position, viewport.top_line(),
-                            ) {
-                                let clamped = line.min(idx.line_count().saturating_sub(1));
-                                viewport.goto_line(clamped, src.as_ref(), &mut idx);
-                                needs_redraw = true;
+                            match jump_previous(&mut previous_position, current_file_index, viewport.top_line()) {
+                                Some(MarkTarget::SameFile { line }) => {
+                                    let clamped = line.min(idx.line_count().saturating_sub(1));
+                                    viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                                    needs_redraw = true;
+                                }
+                                Some(MarkTarget::OtherFile { file_index, line }) => {
+                                    if file_index < file_set.len() {
+                                        file_set.set_current_index(file_index);
+                                        let path = file_set.current().unwrap().to_path_buf();
+                                        if let Err(e) = switch_file(
+                                            &path, file_index, file_set.len(),
+                                            &args, preprocessor.as_ref(),
+                                            &mut viewport, &mut src, &mut idx,
+                                            record_start_regex.as_ref(),
+                                        ) {
+                                            transient_status = Some(format!("[open: {e}]"));
+                                        } else {
+                                            let clamped = line.min(idx.line_count().saturating_sub(1));
+                                            viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                                            current_file_index = file_index;
+                                            needs_redraw = true;
+                                        }
+                                    }
+                                }
+                                None => {}
                             }
                             mode = InputMode::Normal;
                             continue;
@@ -309,6 +595,60 @@ pub fn run(
                         // Anything else: cancel and fall through to normal dispatch.
                         mode = InputMode::Normal;
                         // Don't `continue` — let the event fall through.
+                    }
+                    InputMode::ColonPrompt { buffer, error } => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            match code {
+                                KeyCode::Esc => {
+                                    mode = InputMode::Normal;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Enter => {
+                                    if buffer.is_empty() {
+                                        mode = InputMode::Normal;
+                                    } else {
+                                        match parse_colon_command(buffer) {
+                                            Ok(cmd) => {
+                                                let outcome = dispatch_colon_command(
+                                                    cmd,
+                                                    &mut file_set,
+                                                    &mut current_file_index,
+                                                    &args,
+                                                    preprocessor.as_ref(),
+                                                    record_start_regex.as_ref(),
+                                                    &mut viewport,
+                                                    &mut src,
+                                                    &mut idx,
+                                                );
+                                                match outcome {
+                                                    ColonOutcome::Continue(msg) => {
+                                                        transient_status = msg;
+                                                    }
+                                                    ColonOutcome::Quit => break,
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Err(e) => {
+                                                *error = Some(e.to_string());
+                                            }
+                                        }
+                                    }
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Backspace => {
+                                    buffer.pop();
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char(c) => {
+                                    buffer.push(c);
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
                     }
                     InputMode::Normal => {}
                 }
@@ -357,7 +697,7 @@ pub fn run(
                         continue;
                     }
                     Command::GotoLine => {
-                        update_prev_position(&mut previous_position, viewport.top_line());
+                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         match prefix_at_cmd {
                             Some(line) if line > 0 => viewport.goto_line(line - 1, src.as_ref(), &mut idx),
                             _ => viewport.goto_top(),
@@ -365,7 +705,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::GotoRecord => {
-                        update_prev_position(&mut previous_position, viewport.top_line());
+                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         match prefix_at_cmd {
                             Some(rec) if rec > 0 => viewport.goto_record(rec - 1, src.as_ref(), &mut idx),
                             _ => viewport.goto_bottom(src.as_ref(), &mut idx),
@@ -373,7 +713,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::GotoPercent => {
-                        update_prev_position(&mut previous_position, viewport.top_line());
+                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         match prefix_at_cmd {
                             Some(p) if p <= 100 => viewport.goto_percent(p as u8, src.as_ref(), &mut idx),
                             _ => viewport.goto_top(),
@@ -490,14 +830,21 @@ pub fn run(
                         };
                         needs_redraw = true;
                     }
+                    Command::ColonPrompt => {
+                        mode = InputMode::ColonPrompt {
+                            buffer: String::new(),
+                            error: None,
+                        };
+                        needs_redraw = true;
+                    }
                     Command::NextMatch => {
-                        update_prev_position(&mut previous_position, viewport.top_line());
+                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         if viewport.search_repeat(src.as_ref(), &mut idx, false) {
                             needs_redraw = true;
                         }
                     }
                     Command::PreviousMatch => {
-                        update_prev_position(&mut previous_position, viewport.top_line());
+                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         if viewport.search_repeat(src.as_ref(), &mut idx, true) {
                             needs_redraw = true;
                         }
@@ -739,4 +1086,69 @@ fn write_row_with_highlights(
         if reversed { out.queue(SetAttribute(Attribute::NoReverse))?; }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_colon_n() {
+        assert_eq!(parse_colon_command("n").unwrap(), ColonCommand::Next);
+        assert_eq!(parse_colon_command("next").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn parse_colon_p() {
+        assert_eq!(parse_colon_command("p").unwrap(), ColonCommand::Prev);
+        assert_eq!(parse_colon_command("prev").unwrap(), ColonCommand::Prev);
+    }
+
+    #[test]
+    fn parse_colon_e_with_path() {
+        match parse_colon_command("e /tmp/foo.log").unwrap() {
+            ColonCommand::Edit(p) => assert_eq!(p, std::path::PathBuf::from("/tmp/foo.log")),
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_colon_e_with_tilde() {
+        std::env::set_var("HOME", "/home/user");
+        match parse_colon_command("e ~/foo.log").unwrap() {
+            ColonCommand::Edit(p) => assert_eq!(p, std::path::PathBuf::from("/home/user/foo.log")),
+            other => panic!("expected Edit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_colon_e_missing_path_errors() {
+        assert_eq!(parse_colon_command("e").unwrap_err(), ColonParseError::MissingPath);
+        assert_eq!(parse_colon_command("e ").unwrap_err(), ColonParseError::MissingPath);
+    }
+
+    #[test]
+    fn parse_colon_f_q_d_x_t() {
+        assert_eq!(parse_colon_command("f").unwrap(), ColonCommand::ShowFile);
+        assert_eq!(parse_colon_command("q").unwrap(), ColonCommand::Quit);
+        assert_eq!(parse_colon_command("d").unwrap(), ColonCommand::Delete);
+        assert_eq!(parse_colon_command("x").unwrap(), ColonCommand::First);
+        assert_eq!(parse_colon_command("t").unwrap(), ColonCommand::Last);
+    }
+
+    #[test]
+    fn parse_unknown_command_errors() {
+        let err = parse_colon_command("bogus").unwrap_err();
+        match err {
+            ColonParseError::UnknownCommand(name) => assert_eq!(name, "bogus"),
+            other => panic!("expected UnknownCommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_handles_whitespace() {
+        // Trailing whitespace OK.
+        assert_eq!(parse_colon_command("n  ").unwrap(), ColonCommand::Next);
+        assert_eq!(parse_colon_command("  n").unwrap(), ColonCommand::Next);
+    }
 }
