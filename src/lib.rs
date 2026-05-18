@@ -9,6 +9,7 @@ pub mod terminal;
 pub mod app;
 pub mod cli;
 pub mod format;
+pub mod file_set;
 pub mod filter;
 pub mod prompt;
 pub mod grep;
