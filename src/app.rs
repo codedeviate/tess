@@ -58,6 +58,9 @@ enum InputMode {
     /// User pressed `:`. The next keystrokes build a colon command in
     /// `buffer`; Enter dispatches, Esc cancels.
     ColonPrompt { buffer: String, error: Option<String> },
+    /// User pressed Ctrl-]. The next keystrokes build a tag name in
+    /// `buffer`; Enter dispatches, Esc cancels.
+    TagPrompt { buffer: String, error: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,8 +148,6 @@ enum ColonOutcome {
     Quit,
 }
 
-// Wired in Task 5.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 struct TagStack {
     /// Where we jumped FROM, in reverse-chronological order. Tuples are
@@ -157,8 +158,6 @@ struct TagStack {
     active: Option<ActiveMatches>,
 }
 
-// Wired in Task 5.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct ActiveMatches {
     name: String,
@@ -176,8 +175,6 @@ enum TagStepResult {
     NoActive,
 }
 
-// Wired in Task 5.
-#[allow(dead_code)]
 impl TagStack {
     fn push(&mut self, file_index: usize, top_line: usize) {
         self.history.push((file_index, top_line));
@@ -224,6 +221,141 @@ impl TagStack {
     }
 }
 
+/// Resolve a tag name to a list of matches, push the current position
+/// onto the tag stack, set it as the active match list, and dispatch
+/// the first match. Returns a transient status string when something
+/// goes wrong, or `None` on success.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_tag_jump(
+    name: &str,
+    tag_file: Option<&crate::tags::TagFile>,
+    tag_stack: &mut TagStack,
+    file_set: &mut crate::file_set::FileSet,
+    current_file_index: &mut usize,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    viewport: &mut crate::viewport::Viewport,
+    src: &mut Box<dyn crate::source::Source>,
+    idx: &mut crate::line_index::LineIndex,
+) -> Option<String> {
+    let Some(tf) = tag_file else {
+        return Some("[no tags file loaded]".into());
+    };
+    let matches = tf.lookup(name);
+    if matches.is_empty() {
+        return Some(format!("[tag not found: {name}]"));
+    }
+    let matches: Vec<crate::tags::TagEntry> = matches.to_vec();
+    tag_stack.push(*current_file_index, viewport.top_line());
+    tag_stack.set_active(name.to_string(), matches.clone());
+    let msg = dispatch_match(
+        &matches[0],
+        file_set,
+        current_file_index,
+        args,
+        preprocessor,
+        record_start_regex,
+        viewport,
+        src,
+        idx,
+    );
+    update_viewport_tag_indicator(tag_stack, viewport);
+    msg
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dispatch_match(
+    entry: &crate::tags::TagEntry,
+    file_set: &mut crate::file_set::FileSet,
+    current_file_index: &mut usize,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    viewport: &mut crate::viewport::Viewport,
+    src: &mut Box<dyn crate::source::Source>,
+    idx: &mut crate::line_index::LineIndex,
+) -> Option<String> {
+    let target_file = entry.file.as_path();
+    let already_current = file_set
+        .current()
+        .map(|p| p == target_file)
+        .unwrap_or(false);
+
+    if !already_current {
+        let existing_idx = (0..file_set.len()).find(|i| {
+            file_set
+                .nth(*i)
+                .map(|p| p == target_file)
+                .unwrap_or(false)
+        });
+        match existing_idx {
+            Some(i) => {
+                file_set.set_current_index(i);
+            }
+            None => {
+                file_set.append_and_switch(target_file.to_path_buf());
+            }
+        }
+        let path = file_set.current().unwrap().to_path_buf();
+        if let Err(e) = switch_file(
+            &path,
+            file_set.current_index(),
+            file_set.len(),
+            args,
+            preprocessor,
+            viewport,
+            src,
+            idx,
+            record_start_regex,
+        ) {
+            return Some(format!("[open: {e}]"));
+        }
+        *current_file_index = file_set.current_index();
+    }
+
+    let line = match &entry.address {
+        crate::tags::TagAddress::Line(n) => n.saturating_sub(1),
+        crate::tags::TagAddress::Pattern(p) => {
+            let re_src = crate::tags::pattern_to_regex(p);
+            let re = match regex::bytes::Regex::new(&re_src) {
+                Ok(r) => r,
+                Err(_) => return Some("[tag pattern not found]".into()),
+            };
+            match find_pattern_line(src.as_ref(), idx, &re) {
+                Some(l) => l,
+                None => return Some("[tag pattern not found]".into()),
+            }
+        }
+    };
+
+    let clamped = line.min(idx.line_count().saturating_sub(1));
+    viewport.goto_line(clamped, src.as_ref(), idx);
+    None
+}
+
+fn find_pattern_line(
+    src: &dyn crate::source::Source,
+    idx: &mut crate::line_index::LineIndex,
+    re: &regex::bytes::Regex,
+) -> Option<usize> {
+    idx.extend_to_end(src);
+    for line_no in 0..idx.line_count() {
+        let range = idx.line_range(line_no, src);
+        let bytes = src.bytes(range);
+        if re.is_match(&bytes) {
+            return Some(line_no);
+        }
+    }
+    None
+}
+
+fn update_viewport_tag_indicator(stack: &TagStack, viewport: &mut crate::viewport::Viewport) {
+    viewport.set_tag_active(stack.active.as_ref().map(|a| {
+        (a.name.clone(), a.cursor + 1, a.matches.len())
+    }));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn switch_file(
     new_path: &std::path::Path,
@@ -265,6 +397,8 @@ fn dispatch_colon_command(
     viewport: &mut crate::viewport::Viewport,
     src: &mut Box<dyn crate::source::Source>,
     idx: &mut crate::line_index::LineIndex,
+    tag_stack: &mut TagStack,
+    tag_file: Option<&crate::tags::TagFile>,
 ) -> ColonOutcome {
     match cmd {
         ColonCommand::Next => {
@@ -375,10 +509,64 @@ fn dispatch_colon_command(
                 ColonOutcome::Continue(None)
             }
         }
-        // Dispatch wired in Task 5.
-        ColonCommand::Tag(_) | ColonCommand::TagNext | ColonCommand::TagPrev => {
-            ColonOutcome::Continue(None)
+        ColonCommand::Tag(name) => {
+            match dispatch_tag_jump(
+                &name,
+                tag_file,
+                tag_stack,
+                file_set,
+                current_file_index,
+                args,
+                preprocessor,
+                record_start_regex,
+                viewport,
+                src,
+                idx,
+            ) {
+                Some(msg) => ColonOutcome::Continue(Some(msg)),
+                None => ColonOutcome::Continue(None),
+            }
         }
+        ColonCommand::TagNext => match tag_stack.next() {
+            TagStepResult::NoActive => ColonOutcome::Continue(Some("[no active tag]".into())),
+            TagStepResult::AtBoundary => ColonOutcome::Continue(Some("[no more matches]".into())),
+            TagStepResult::Moved(cur) => {
+                let entry = tag_stack.active.as_ref().unwrap().matches[cur].clone();
+                let msg = dispatch_match(
+                    &entry,
+                    file_set,
+                    current_file_index,
+                    args,
+                    preprocessor,
+                    record_start_regex,
+                    viewport,
+                    src,
+                    idx,
+                );
+                update_viewport_tag_indicator(tag_stack, viewport);
+                ColonOutcome::Continue(msg)
+            }
+        },
+        ColonCommand::TagPrev => match tag_stack.prev() {
+            TagStepResult::NoActive => ColonOutcome::Continue(Some("[no active tag]".into())),
+            TagStepResult::AtBoundary => ColonOutcome::Continue(Some("[at first match]".into())),
+            TagStepResult::Moved(cur) => {
+                let entry = tag_stack.active.as_ref().unwrap().matches[cur].clone();
+                let msg = dispatch_match(
+                    &entry,
+                    file_set,
+                    current_file_index,
+                    args,
+                    preprocessor,
+                    record_start_regex,
+                    viewport,
+                    src,
+                    idx,
+                );
+                update_viewport_tag_indicator(tag_stack, viewport);
+                ColonOutcome::Continue(msg)
+            }
+        },
     }
 }
 
@@ -394,6 +582,7 @@ pub fn run(
     record_start_regex: Option<regex::bytes::Regex>,
     args: crate::cli::Args,
     preprocessor: Option<crate::preprocess::Preprocessor>,
+    tag_file: Option<crate::tags::TagFile>,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -427,6 +616,25 @@ pub fn run(
     let mut previous_position: Option<(usize, usize)> = None;
     let mut current_file_index: usize = file_set.current_index();
     let mut transient_status: Option<String> = None;
+    let mut tag_stack = TagStack::default();
+
+    if let Some(tag_name) = args.tag.as_deref() {
+        if let Some(msg) = dispatch_tag_jump(
+            tag_name,
+            tag_file.as_ref(),
+            &mut tag_stack,
+            &mut file_set,
+            &mut current_file_index,
+            &args,
+            preprocessor.as_ref(),
+            record_start_regex.as_ref(),
+            &mut viewport,
+            &mut src,
+            &mut idx,
+        ) {
+            return Err(crate::error::Error::Runtime(format!("startup tag jump failed: {msg}")));
+        }
+    }
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -455,6 +663,12 @@ pub fn run(
                     frame.status = match error {
                         Some(e) => format!(":{buffer}  [error: {e}]"),
                         None => format!(":{buffer}"),
+                    };
+                }
+                InputMode::TagPrompt { buffer, error } => {
+                    frame.status = match error {
+                        Some(e) => format!("tag: {buffer}  [error: {e}]"),
+                        None => format!("tag: {buffer}"),
                     };
                 }
                 _ => {
@@ -716,6 +930,8 @@ pub fn run(
                                                     &mut viewport,
                                                     &mut src,
                                                     &mut idx,
+                                                    &mut tag_stack,
+                                                    tag_file.as_ref(),
                                                 );
                                                 match outcome {
                                                     ColonOutcome::Continue(msg) => {
@@ -729,6 +945,53 @@ pub fn run(
                                                 *error = Some(e.to_string());
                                             }
                                         }
+                                    }
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Backspace => {
+                                    buffer.pop();
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Char(c) => {
+                                    buffer.push(c);
+                                    *error = None;
+                                    needs_redraw = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        continue;
+                    }
+                    InputMode::TagPrompt { buffer, error } => {
+                        if let Event::Key(KeyEvent { code, .. }) = event {
+                            match code {
+                                KeyCode::Esc => {
+                                    mode = InputMode::Normal;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Enter => {
+                                    if buffer.is_empty() {
+                                        mode = InputMode::Normal;
+                                    } else {
+                                        let name = buffer.clone();
+                                        let msg = dispatch_tag_jump(
+                                            &name,
+                                            tag_file.as_ref(),
+                                            &mut tag_stack,
+                                            &mut file_set,
+                                            &mut current_file_index,
+                                            &args,
+                                            preprocessor.as_ref(),
+                                            record_start_regex.as_ref(),
+                                            &mut viewport,
+                                            &mut src,
+                                            &mut idx,
+                                        );
+                                        if let Some(m) = msg {
+                                            transient_status = Some(m);
+                                        }
+                                        mode = InputMode::Normal;
                                     }
                                     needs_redraw = true;
                                 }
@@ -962,8 +1225,49 @@ pub fn run(
                         // Resolved inside the CtrlXPending mode intercept; this
                         // arm is defensive and should never fire.
                     }
-                    // Dispatch wired in Task 5.
-                    Command::TagPrompt | Command::TagPop => {}
+                    Command::TagPrompt => {
+                        if tag_file.is_none() {
+                            transient_status = Some("[no tags file loaded]".into());
+                            needs_redraw = true;
+                        } else {
+                            mode = InputMode::TagPrompt {
+                                buffer: String::new(),
+                                error: None,
+                            };
+                            needs_redraw = true;
+                        }
+                    }
+                    Command::TagPop => match tag_stack.pop() {
+                        Some((file_index, line)) => {
+                            if file_index != current_file_index && file_index < file_set.len() {
+                                file_set.set_current_index(file_index);
+                                let path = file_set.current().unwrap().to_path_buf();
+                                if let Err(e) = switch_file(
+                                    &path,
+                                    file_index,
+                                    file_set.len(),
+                                    &args,
+                                    preprocessor.as_ref(),
+                                    &mut viewport,
+                                    &mut src,
+                                    &mut idx,
+                                    record_start_regex.as_ref(),
+                                ) {
+                                    transient_status = Some(format!("[open: {e}]"));
+                                } else {
+                                    current_file_index = file_index;
+                                }
+                            }
+                            let clamped = line.min(idx.line_count().saturating_sub(1));
+                            viewport.goto_line(clamped, src.as_ref(), &mut idx);
+                            update_viewport_tag_indicator(&tag_stack, &mut viewport);
+                            needs_redraw = true;
+                        }
+                        None => {
+                            transient_status = Some("[tag stack empty]".into());
+                            needs_redraw = true;
+                        }
+                    },
                     Command::Noop => {}
                 }
             }
