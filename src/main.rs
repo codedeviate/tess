@@ -163,6 +163,59 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
 /// Page an in-memory blob through tess itself. Used for `--manual` and
 /// `--examples` when stdout is a TTY: the user gets scroll/search instead of
 /// content scrolling off the top of their terminal.
+/// Open a single source file using the same pipeline as startup:
+/// preprocessor (if configured), live-mode wrapper (if --live).
+///
+/// Returns the boxed Source, the user-facing label, and any preprocess
+/// stderr that should be surfaced in the status line.
+///
+/// Content-type detection and the prettify wrapper are handled by the
+/// caller after this returns, since they can also apply to stdin.
+fn open_source_for_path(
+    path: &std::path::Path,
+    args: &tess::cli::Args,
+    preprocessor: Option<&tess::preprocess::Preprocessor>,
+) -> Result<(Box<dyn Source>, String, Option<String>)> {
+    let label = path.display().to_string();
+    if args.live {
+        let lfs = LiveFileSource::open(path).map_err(|source| {
+            if let std::io::ErrorKind::InvalidInput = source.kind() {
+                Error::NotAFile { path: path.to_path_buf() }
+            } else {
+                Error::OpenFile { path: path.to_path_buf(), source }
+            }
+        })?;
+        return Ok((Box::new(lfs), label, None));
+    }
+    if let Some(p) = preprocessor {
+        // Run the preprocessor. On success use MemorySource; on failure fall
+        // back to the raw file and stash the error for the status line.
+        match tess::preprocess::run(p, path) {
+            tess::preprocess::PreprocessResult::Bytes(bytes) => {
+                return Ok((Box::new(MemorySource::new(bytes)), label, None));
+            }
+            tess::preprocess::PreprocessResult::Failed { stderr } => {
+                let fs = FileSource::open(path).map_err(|source| {
+                    if let std::io::ErrorKind::InvalidInput = source.kind() {
+                        Error::NotAFile { path: path.to_path_buf() }
+                    } else {
+                        Error::OpenFile { path: path.to_path_buf(), source }
+                    }
+                })?;
+                return Ok((Box::new(fs), label, Some(stderr)));
+            }
+        }
+    }
+    let fs = FileSource::open(path).map_err(|source| {
+        if let std::io::ErrorKind::InvalidInput = source.kind() {
+            Error::NotAFile { path: path.to_path_buf() }
+        } else {
+            Error::OpenFile { path: path.to_path_buf(), source }
+        }
+    })?;
+    Ok((Box::new(fs), label, None))
+}
+
 fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let src = MockSource::new();
     src.append(content);
@@ -322,64 +375,33 @@ documents can't be parsed)".to_string(),
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
-    let (src, label): (Box<dyn Source>, String) = if let Some(path) = args.files.first() {
-        if args.files.len() > 1 {
-            eprintln!(
-                "tess: ignoring {} additional file(s) (multi-file navigation not yet supported)",
-                args.files.len() - 1
-            );
-        }
-        if args.live {
-            let lfs = LiveFileSource::open(path).map_err(|source| {
-                if let std::io::ErrorKind::InvalidInput = source.kind() {
-                    Error::NotAFile { path: path.clone() }
-                } else {
-                    Error::OpenFile { path: path.clone(), source }
-                }
-            })?;
-            (Box::new(lfs), path.display().to_string())
-        } else if let Some(p) = preprocessor.as_ref() {
-            // Run the preprocessor. On success use MemorySource; on failure fall
-            // back to the raw file and stash the error for the status line.
-            match tess::preprocess::run(p, path) {
-                tess::preprocess::PreprocessResult::Bytes(bytes) => {
-                    (Box::new(MemorySource::new(bytes)), path.display().to_string())
-                }
-                tess::preprocess::PreprocessResult::Failed { stderr } => {
-                    preprocess_failure = Some(stderr);
-                    let fs = FileSource::open(path).map_err(|source| {
-                        if let std::io::ErrorKind::InvalidInput = source.kind() {
-                            Error::NotAFile { path: path.clone() }
-                        } else {
-                            Error::OpenFile { path: path.clone(), source }
-                        }
-                    })?;
-                    (Box::new(fs), path.display().to_string())
-                }
+    let (src, label): (Box<dyn Source>, String) = match args.files.first() {
+        Some(path) => {
+            if args.files.len() > 1 {
+                eprintln!(
+                    "tess: ignoring {} additional file(s) (multi-file navigation not yet supported)",
+                    args.files.len() - 1
+                );
             }
-        } else {
-            let fs = FileSource::open(path).map_err(|source| {
-                if let std::io::ErrorKind::InvalidInput = source.kind() {
-                    Error::NotAFile { path: path.clone() }
-                } else {
-                    Error::OpenFile { path: path.clone(), source }
-                }
-            })?;
-            (Box::new(fs), path.display().to_string())
+            let (s, l, pf) = open_source_for_path(path, &args, preprocessor.as_ref())?;
+            preprocess_failure = pf;
+            (s, l)
         }
-    } else if !io::stdin().is_terminal() {
-        let ss = if args.follow {
-            source_supports_tail = false;
-            StdinSource::spawn_streaming()
-                .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
-        } else {
-            StdinSource::read_all()
-                .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
-        };
-        consumed_stdin = true;
-        (Box::new(ss), "(stdin)".to_string())
-    } else {
-        return Err(Error::NoInput);
+        None if !io::stdin().is_terminal() => {
+            let ss = if args.follow {
+                source_supports_tail = false;
+                StdinSource::spawn_streaming()
+                    .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
+            } else {
+                StdinSource::read_all()
+                    .map_err(|e| Error::Runtime(format!("stdin: {}", e)))?
+            };
+            consumed_stdin = true;
+            (Box::new(ss), "(stdin)".to_string())
+        }
+        None => {
+            return Err(Error::NoInput);
+        }
     };
 
     // If the user wants prettification, resolve the mode against the inner
