@@ -1,3 +1,4 @@
+pub mod ansi;
 pub mod error;
 pub mod render;
 pub mod source;
