@@ -1,10 +1,10 @@
 # `tess`
 
 [![GitHub](https://img.shields.io/badge/github-codedeviate%2Ftess-181717?logo=github)](https://github.com/codedeviate/tess)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?logo=opensourceinitiative)](LICENSE)
 [![Rust edition 2021](<https://img.shields.io/badge/rust-2021_edition_(MSRV_1.85)-CE422B?logo=rust>)](https://www.rust-lang.org)
 <br/>
-[![Latest release](https://img.shields.io/badge/release-v0.18.0-blue)](https://github.com/codedeviate/tess/releases)
+[![Latest release](https://img.shields.io/badge/release-v0.18.0-blue?logo=semanticrelease)](https://github.com/codedeviate/tess/releases)
 [![crates.io](https://img.shields.io/badge/crates.io-tess--cli-fc8d62?logo=rust)](https://crates.io/crates/tess-cli)
 [![Homebrew](https://img.shields.io/badge/homebrew-codedeviate%2Fcli%2Ftess-fbb040?logo=homebrew)](https://github.com/codedeviate/homebrew-cli)
 
