@@ -619,7 +619,7 @@ impl Viewport {
             } else {
                 raw.clone()
             };
-            let rows = render_line(&display_bytes, &r_opts);
+            let rows = render_line(&display_bytes, &r_opts, None);
             let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
                     if self.should_dim_line(line_n, idx, src) { RowStyle::Dim } else { RowStyle::Normal }
@@ -638,7 +638,7 @@ impl Viewport {
                 if gutter > 0 {
                     let label = if i == 0 { format!("{:>width$} ", line_n + 1, width = (gutter as usize - 1)) } else { " ".repeat(gutter as usize) };
                     for c in label.chars() {
-                        full.push(Cell::Char { ch: c, width: 1 });
+                        full.push(Cell::Char { ch: c, width: 1, style: crate::ansi::Style::default(), hyperlink: None });
                     }
                 }
                 full.append(&mut content_row);
@@ -731,7 +731,7 @@ impl Viewport {
         if !self.hide_mode() && self.top_row > 0 {
             let line_rows = if total > 0 {
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None)
             } else { 1 };
             s.push_str(&format!("  +{}/{}", self.top_row, line_rows));
         }
@@ -788,7 +788,7 @@ impl Viewport {
         let wrap_offset = if !self.hide_mode() && self.top_row > 0 {
             let line_rows = if total > 0 {
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None)
             } else { 1 };
             format!("+{}/{}", self.top_row, line_rows)
         } else {
@@ -874,7 +874,7 @@ impl Viewport {
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
 
-        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1 };
+        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict };
 
         for row_idx in 0..body_rows {
             let hex_row = self.top_line + row_idx;
@@ -885,7 +885,7 @@ impl Viewport {
                 let end = (offset + 16).min(total_bytes);
                 let bytes_cow = src.bytes(offset..end);
                 let text = format_hex_row(offset, &bytes_cow);
-                let rows = render_line(text.as_bytes(), &opts);
+                let rows = render_line(text.as_bytes(), &opts, None);
                 body.push(rows.into_iter().next().unwrap_or_else(|| {
                     vec![Cell::Empty; self.cols as usize]
                 }));
@@ -983,7 +983,7 @@ impl Viewport {
                 let total = idx.line_count();
                 if total == 0 { break; }
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None);
                 if self.top_row + 1 < line_rows {
                     self.top_row += 1;
                 } else if self.top_line + 1 < total {
@@ -1002,7 +1002,7 @@ impl Viewport {
                 } else if self.top_line > 0 {
                     self.top_line -= 1;
                     let bytes = self.line_display_bytes(src, idx, self.top_line);
-                    let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                    let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None);
                     self.top_row = line_rows.saturating_sub(1);
                 } else {
                     break;
@@ -1139,8 +1139,8 @@ mod tests {
         let v = Viewport::new(10, 5, "test".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert_eq!(frame.body.len(), 4);
-        assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1 });
-        assert_eq!(frame.body[3][0], Cell::Char { ch: 'd', width: 1 });
+        assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
+        assert_eq!(frame.body[3][0], Cell::Char { ch: 'd', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]
@@ -1386,8 +1386,8 @@ mod tests {
         v.toggle_line_numbers();
         let frame_on = v.frame(&m, &mut idx);
         // With gutter, first cell is a digit or space, not 'a'.
-        assert_eq!(frame_off.body[0][0], Cell::Char { ch: 'a', width: 1 });
-        assert_ne!(frame_on.body[0][0], Cell::Char { ch: 'a', width: 1 });
+        assert_eq!(frame_off.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
+        assert_ne!(frame_on.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]
@@ -1399,8 +1399,10 @@ mod tests {
         // After toggle_chop, the line is one row, not wrapped.
         // Body row 0 is "abcd"; rows 1..3 are blank fill.
         assert_eq!(frame.body[0][..4],
-            [Cell::Char { ch: 'a', width: 1 }, Cell::Char { ch: 'b', width: 1 },
-             Cell::Char { ch: 'c', width: 1 }, Cell::Char { ch: 'd', width: 1 }]);
+            [Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'b', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'c', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'd', width: 1, style: crate::ansi::Style::default(), hyperlink: None }]);
         // Row 1 should be all-empty (no wrap continuation).
         assert!(frame.body[1].iter().all(|c| matches!(c, Cell::Empty)));
     }
@@ -1535,7 +1537,7 @@ mod tests {
         // The bottom-most body row should now contain the last logical line ('8').
         // Find which row has '8'.
         let last_row = &frame.body[frame.body.len() - 1];
-        assert_eq!(last_row[0], Cell::Char { ch: '8', width: 1 });
+        assert_eq!(last_row[0], Cell::Char { ch: '8', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]

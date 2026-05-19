@@ -10,7 +10,7 @@ use tess::source::MockSource;
 
 fn opts_strategy() -> impl Strategy<Value = RenderOpts> {
     (1u16..200, any::<bool>(), 1u8..16).prop_map(|(cols, wrap, tab_width)| {
-        RenderOpts { cols, wrap, tab_width }
+        RenderOpts { cols, wrap, tab_width, ..RenderOpts::default() }
     })
 }
 
@@ -21,8 +21,8 @@ proptest! {
         bytes in proptest::collection::vec(any::<u8>(), 0..512),
         opts in opts_strategy(),
     ) {
-        let counted = count_rows(&bytes, &opts);
-        let rendered = render_line(&bytes, &opts).len();
+        let counted = count_rows(&bytes, &opts, None);
+        let rendered = render_line(&bytes, &opts, None).len();
         prop_assert_eq!(counted, rendered);
     }
 
@@ -33,9 +33,9 @@ proptest! {
         cols in 1u16..200,
         tab_width in 1u8..16,
     ) {
-        let opts = RenderOpts { cols, wrap: false, tab_width };
-        prop_assert_eq!(count_rows(&bytes, &opts), 1);
-        prop_assert_eq!(render_line(&bytes, &opts).len(), 1);
+        let opts = RenderOpts { cols, wrap: false, tab_width, ..RenderOpts::default() };
+        prop_assert_eq!(count_rows(&bytes, &opts, None), 1);
+        prop_assert_eq!(render_line(&bytes, &opts, None).len(), 1);
     }
 
     /// Totality: `render_line` must never panic, including on invalid
@@ -45,7 +45,7 @@ proptest! {
         bytes in proptest::collection::vec(any::<u8>(), 0..1024),
         opts in opts_strategy(),
     ) {
-        let _ = render_line(&bytes, &opts);
+        let _ = render_line(&bytes, &opts, None);
     }
 
     /// Every record contains at least one physical line, but a record can

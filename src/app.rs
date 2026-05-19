@@ -1471,7 +1471,7 @@ fn write_row_with_highlights(
         let mut s = String::new();
         while col < segment_end && i < row.len() {
             match &row[i] {
-                Cell::Char { ch, width } => {
+                Cell::Char { ch, width, .. } => {
                     s.push(*ch);
                     col += *width as usize;
                 }
