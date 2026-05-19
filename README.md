@@ -1,4 +1,4 @@
-# `tess`
+# tess
 
 [![GitHub](https://img.shields.io/badge/github-codedeviate%2Ftess-181717?logo=github)](https://github.com/codedeviate/tess)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?logo=opensourceinitiative)](LICENSE)
@@ -22,7 +22,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 
 ## Why?
 
-`less` is great, but it doesn't know what your data *is*. `tess` adds a small amount of structure-awareness without trying to be a log explorer:
+`less` is great, but it doesn't know what your data _is_. `tess` adds a small amount of structure-awareness without trying to be a log explorer:
 
 - **Parse-aware filtering.** Declare a log format once (built-in or your own regex), then keep only the lines whose parsed `status`, `ip`, `level`, etc. match a predicate. Hide them entirely or just dim them so context is preserved.
 - **Multi-line records.** Set `record_start` in formats.toml (or pass `--record-start REGEX`) to group continuation lines under their leading record — search, filter, and `--grep` then operate on whole records like PHP stack traces or Java exception dumps.
@@ -68,20 +68,20 @@ Requires **Rust 1.85+**. See [INSTALL.md](INSTALL.md) for full instructions, inc
 
 ## Quick start
 
-| Goal | Command |
-|---|---|
-| View a file | `tess Cargo.toml` |
-| View piped output | `git log \| tess` |
-| Watch a log live | `tess -f /var/log/syslog` |
-| Watch a file get rewritten | `tess --live src/main.rs` |
-| Pretty-print JSON / YAML / etc. | `tess --prettify config.json` |
-| Show line numbers | `tess -N script.sh` |
-| Don't wrap long lines | `tess -S /etc/hosts` |
-| Last 1000 lines (cheap on huge files) | `tess --tail 1000 huge.log` |
-| `tail -f` last 1000 | `tess -f --tail 1000 huge.log` |
-| First 50 lines | `tess --head 50 file.txt` |
-| Apache 5xx errors | `tess --format apache-combined --filter status~^5 access.log` |
-| Navigate multiple files | `tess foo.log bar.log baz.log` then `:n` / `:p` |
+| Goal                                  | Command                                                       |
+| ------------------------------------- | ------------------------------------------------------------- |
+| View a file                           | `tess Cargo.toml`                                             |
+| View piped output                     | `git log \| tess`                                             |
+| Watch a log live                      | `tess -f /var/log/syslog`                                     |
+| Watch a file get rewritten            | `tess --live src/main.rs`                                     |
+| Pretty-print JSON / YAML / etc.       | `tess --prettify config.json`                                 |
+| Show line numbers                     | `tess -N script.sh`                                           |
+| Don't wrap long lines                 | `tess -S /etc/hosts`                                          |
+| Last 1000 lines (cheap on huge files) | `tess --tail 1000 huge.log`                                   |
+| `tail -f` last 1000                   | `tess -f --tail 1000 huge.log`                                |
+| First 50 lines                        | `tess --head 50 file.txt`                                     |
+| Apache 5xx errors                     | `tess --format apache-combined --filter status~^5 access.log` |
+| Navigate multiple files               | `tess foo.log bar.log baz.log` then `:n` / `:p`               |
 
 Run `tess --examples` for a curated list, or `tess --manual` for the full manual paged through `tess` itself.
 
@@ -91,23 +91,23 @@ Run `tess --examples` for a curated list, or `tess --manual` for the full manual
 
 Vim-ish + `less`-ish hybrid. The full table is in [MANUAL.md](MANUAL.md); these are the ones you'll use:
 
-| Key(s) | Action |
-|---|---|
-| `↓` `j` `e` `Ctrl-E` `Return` | Scroll down one screen line (walks through wrap rows) |
-| `↑` `k` `y` `Ctrl-Y` | Scroll up one screen line |
-| `J` / `K` | Jump to next / previous *logical* line (skips wrap rows of long lines) |
-| `Space` `f` `Ctrl-F` `PgDn` | Page down |
-| `b` `Ctrl-B` `PgUp` | Page up |
-| `g` / `G` | Go to top / bottom |
-| `/` *pattern* `Enter` | Forward regex search; `Esc` cancels |
-| `?` *pattern* `Enter` | Backward regex search |
-| `n` / `N` | Repeat last search forward / backward |
-| `-N` / `-S` / `Shift-F` | Toggle line numbers / chop / follow mode |
-| `Shift-P` | Toggle pretty-print on/off |
-| `Shift-R` | Force reload from disk (with `--live`) |
-| `:n` / `:p` / `:e <path>` | Next file / previous file / open new file |
-| `Ctrl-]` / `Ctrl-T` | Tag jump / pop tag stack |
-| `q` `Q` `Ctrl-C` | Quit |
+| Key(s)                        | Action                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `↓` `j` `e` `Ctrl-E` `Return` | Scroll down one screen line (walks through wrap rows)                  |
+| `↑` `k` `y` `Ctrl-Y`          | Scroll up one screen line                                              |
+| `J` / `K`                     | Jump to next / previous _logical_ line (skips wrap rows of long lines) |
+| `Space` `f` `Ctrl-F` `PgDn`   | Page down                                                              |
+| `b` `Ctrl-B` `PgUp`           | Page up                                                                |
+| `g` / `G`                     | Go to top / bottom                                                     |
+| `/` _pattern_ `Enter`         | Forward regex search; `Esc` cancels                                    |
+| `?` _pattern_ `Enter`         | Backward regex search                                                  |
+| `n` / `N`                     | Repeat last search forward / backward                                  |
+| `-N` / `-S` / `Shift-F`       | Toggle line numbers / chop / follow mode                               |
+| `Shift-P`                     | Toggle pretty-print on/off                                             |
+| `Shift-R`                     | Force reload from disk (with `--live`)                                 |
+| `:n` / `:p` / `:e <path>`     | Next file / previous file / open new file                              |
+| `Ctrl-]` / `Ctrl-T`           | Tag jump / pop tag stack                                               |
+| `q` `Q` `Ctrl-C`              | Quit                                                                   |
 
 Pressing `/<Enter>` (or `?<Enter>`) with an empty pattern repeats the last search in the typed direction, the way `less` does it.
 
