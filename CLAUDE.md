@@ -73,6 +73,14 @@ Use [Semantic Versioning](https://semver.org). The single source of truth is `ve
 
 Bump the version in `Cargo.toml` as part of the same commit that introduces the change. Pre-1.0 we permit small breakage at MINOR boundaries when called for, but flag it in the commit message.
 
+**Tagging implies a GitHub release.** When you push a `vX.Y.Z` tag, immediately create the matching GitHub release:
+
+```
+gh release create vX.Y.Z --generate-notes
+```
+
+A tag without a release leaves the GitHub Releases page out of sync with tag history and hides the version from anyone browsing the repo's front page. Treat the release as part of the tag — same step, no follow-up commits needed.
+
 ## Build / packaging discipline
 
 After every commit on this branch:
