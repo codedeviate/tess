@@ -341,6 +341,30 @@ impl LineIndex {
         let r = self.record_range(n, src);
         src.bytes(r)
     }
+
+    /// Return the bytes of line `n` with SGR/CSI/OSC sequences stripped.
+    /// Borrows the source's bytes when no escape sequences are present
+    /// (common case); owns a new buffer otherwise.
+    pub fn line_bytes_stripped<'a>(
+        &self,
+        n: usize,
+        src: &'a dyn Source,
+    ) -> std::borrow::Cow<'a, [u8]> {
+        let range = self.line_range(n, src);
+        let raw = src.bytes(range);
+        crate::ansi::strip_sgr(&raw).into_owned().into()
+    }
+
+    /// Like `line_bytes_stripped` but for records (multi-line mode).
+    pub fn record_bytes_stripped<'a>(
+        &self,
+        n: usize,
+        src: &'a dyn Source,
+    ) -> std::borrow::Cow<'a, [u8]> {
+        let range = self.record_range(n, src);
+        let raw = src.bytes(range);
+        crate::ansi::strip_sgr(&raw).into_owned().into()
+    }
 }
 
 #[cfg(test)]
@@ -585,6 +609,26 @@ mod tests {
         assert_eq!(idx.line_count(), 4);
         assert_eq!(idx.record_count(), 2);
         assert_eq!(idx.record_line_range(0), 0..3);
+    }
+
+    #[test]
+    fn line_bytes_stripped_returns_visible_text() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31merror\x1b[0m\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let stripped = idx.line_bytes_stripped(0, &m);
+        assert_eq!(stripped.as_ref(), b"error");
+    }
+
+    #[test]
+    fn line_bytes_stripped_plain_input() {
+        let m = MockSource::new();
+        m.append(b"plain\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let stripped = idx.line_bytes_stripped(0, &m);
+        assert_eq!(stripped.as_ref(), b"plain");
     }
 
     #[test]

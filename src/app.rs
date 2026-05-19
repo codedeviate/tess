@@ -341,8 +341,7 @@ fn find_pattern_line(
 ) -> Option<usize> {
     idx.extend_to_end(src);
     for line_no in 0..idx.line_count() {
-        let range = idx.line_range(line_no, src);
-        let bytes = src.bytes(range);
+        let bytes = idx.line_bytes_stripped(line_no, src);
         if re.is_match(&bytes) {
             return Some(line_no);
         }

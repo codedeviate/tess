@@ -298,8 +298,8 @@ impl Viewport {
         };
 
         for r in range {
-            let bytes_cow = idx.record_bytes(r, src);
-            let text = String::from_utf8_lossy(&bytes_cow);
+            let bytes = idx.record_bytes_stripped(r, src);
+            let text = String::from_utf8_lossy(&bytes);
             if pattern.is_match(&text) {
                 let line_range = idx.record_line_range(r);
                 self.top_line = line_range.start;
@@ -313,8 +313,10 @@ impl Viewport {
     fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
         // Search runs against the *displayed* bytes so what the user sees is
         // what they can find. With a template active, that's the rendered form;
-        // otherwise the raw line.
-        let bytes = self.line_display_bytes(src, idx, line_n);
+        // otherwise the raw line. ANSI color sequences are stripped so that
+        // `/error` finds a red `error` regardless of escape codes.
+        let display = self.line_display_bytes(src, idx, line_n);
+        let bytes = crate::ansi::strip_sgr(&display);
         match std::str::from_utf8(&bytes) {
             Ok(s) => pattern.is_match(s),
             Err(_) => false,
@@ -419,8 +421,7 @@ impl Viewport {
         let total = idx.line_count();
         while self.visible_scanned < total {
             let line_n = self.visible_scanned;
-            let range = idx.line_range(line_n, src);
-            let bytes = src.bytes(range);
+            let bytes = idx.line_bytes_stripped(line_n, src);
             if self.line_passes(&bytes) {
                 self.visible_lines.push(line_n);
             }
@@ -439,9 +440,8 @@ impl Viewport {
         self.visible_scanned = 0; // not used by records path; reset for clarity
         let total_records = idx.record_count();
         for r in 0..total_records {
-            let bytes_cow = idx.record_bytes(r, src);
-            let bytes: &[u8] = &bytes_cow;
-            if self.line_passes(bytes) {
+            let bytes = idx.record_bytes_stripped(r, src);
+            if self.line_passes(&bytes) {
                 for line_n in idx.record_line_range(r) {
                     self.visible_lines.push(line_n);
                 }
@@ -475,12 +475,10 @@ impl Viewport {
         }
         if idx.records_mode() {
             let r = idx.line_to_record(line_n);
-            let bytes_cow = idx.record_bytes(r, src);
-            let bytes: &[u8] = &bytes_cow;
-            !self.line_passes(bytes)
+            let bytes = idx.record_bytes_stripped(r, src);
+            !self.line_passes(&bytes)
         } else {
-            let range = idx.line_range(line_n, src);
-            let bytes = src.bytes(range);
+            let bytes = idx.line_bytes_stripped(line_n, src);
             !self.line_passes(&bytes)
         }
     }
