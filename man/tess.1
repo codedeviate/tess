@@ -1,0 +1,99 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tess 1  "tess 0.17.0" 
+.SH NAME
+tess \- A less\-style terminal pager.
+.SH SYNOPSIS
+\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+.SH DESCRIPTION
+A less\-style terminal pager.
+.SH OPTIONS
+.TP
+\fB\-S\fR, \fB\-\-chop\-long\-lines\fR
+Chop long lines instead of wrapping
+.TP
+\fB\-\-content\-type\fR \fI<TYPE>\fR
+Force the content type for `\-\-prettify` (otherwise auto\-detected from the filename extension and the first bytes). Values: `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`. Setting this implies `\-\-prettify` (unless the value is `raw`/`auto`)
+.TP
+\fB\-\-dim\fR
+With `\-\-filter`, dim non\-matching lines instead of hiding them. Keeps surrounding context visible
+.TP
+\fB\-\-display\fR \fI<TEMPLATE>\fR
+Render each parsed line through this template instead of showing the raw line. Syntax: `<fieldname>` placeholders, `\\<` for literal `<`, `\\\\` for literal `\\`. Example: `\-\-display \*(Aq[<time>] <status> <msg>\*(Aq`. Overrides the format\*(Aqs `display` key (if set). Requires `\-\-format`. Search still matches against the raw line
+.TP
+\fB\-\-examples\fR
+Print a curated list of usage examples and exit
+.TP
+\fB\-\-filter\fR \fI<FIELD<op>VALUE>\fR
+Filter visible lines by parsed field. Repeatable; multiple filters AND. Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠), `<`, `<=`, `>`, `>=` (numeric if both sides parse as numbers, else lexicographic). Examples: `\-\-filter status=500`, `\-\-filter ip~^10\\.`, `\-\-filter \*(Aqstatus>=500\*(Aq` (quote `<` and `>` to avoid shell redirection). Requires `\-\-format`
+.TP
+\fB\-f\fR, \fB\-\-follow\fR
+Follow mode: keep watching the source for new bytes (like `tail \-f`). Jumps to the bottom on startup. Toggle with Shift\-F at runtime
+.TP
+\fB\-\-format\fR \fI<NAME>\fR
+Apply a named log format (built\-in or user\-defined in ~/.config/tess/formats.toml). Required by `\-\-filter`
+.TP
+\fB\-\-grep\fR \fI<PATTERN>\fR
+Filter visible lines by regex against the raw line. Repeatable; multiple `\-\-grep` arguments AND. Works on any input — no `\-\-format` required. Composes with `\-\-filter` (both must match) and with `\-\-dim` (non\-matches stay visible but faded). Example: `\-\-grep error \-\-grep \*(Aq^\\[\*(Aq`
+.TP
+\fB\-\-head\fR \fI<N>\fR
+Show only the first N lines of the source. Mutually exclusive with \-\-tail
+.TP
+\fB\-\-hex\fR
+Render the source as an xxd\-style hex dump instead of byte\-faithful text. 16 bytes per row, offset prefix, ASCII gutter. Mutually exclusive with parsing\- and rendering\-oriented flags
+.TP
+\fB\-N\fR, \fB\-\-LINE\-NUMBERS\fR
+Show line numbers
+.TP
+\fB\-\-list\-formats\fR
+Print available log formats and their named fields, then exit
+.TP
+\fB\-\-live\fR
+Live mode: re\-read the file when its on\-disk content changes (mtime, size, or inode). Use this for files rewritten in place — source files being edited, files saved by an editor or AI agent. Different from `\-\-follow` (which watches for *appended* bytes); the two are mutually exclusive. Press `R` inside the pager to force a reload
+.TP
+\fB\-\-manual\fR
+Print the full user manual and exit
+.TP
+\fB\-\-no\-preprocess\fR
+Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted for one invocation
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fI<FILE>\fR
+Non\-interactive batch mode: apply \-\-filter / \-\-grep / \-\-head / \-\-tail / \-\-prettify to the source and write the resulting raw bytes to FILE, then exit. Use `\-` for stdout (`\-\-stdout` is a synonym). Skips the alt\-screen and raw mode entirely. With `\-\-follow`, doesn\*(Aqt exit — keeps appending matching new bytes to FILE as they arrive (Ctrl\-C to stop). Not compatible with `\-\-live`
+.TP
+\fB\-\-preprocess\fR \fI<CMD>\fR
+Pipe the source file through this command before rendering. Must start with `|`; `%s` is substituted with the file path. Example: `\-\-preprocess \*(Aq|pdftotext %s \-\*(Aq`. Overrides $LESSOPEN
+.TP
+\fB\-\-prettify\fR
+Pretty\-print structured content (JSON, YAML, TOML, XML, HTML, CSV). Detects the type from the filename extension or the first bytes; use `\-\-content\-type=NAME` to override. Static files only — not allowed with `\-\-follow`, `\-\-live`, or `\-\-filter`. Toggle interactively with `Shift\-P`; force a type with `\-P` then a letter (j/y/t/x/h/c)
+.TP
+\fB\-\-prompt\fR \fI<TEMPLATE>\fR
+Replace the hardcoded status format with a templated string. Uses the same `<field>` syntax as `\-\-display`. Available fields: label, top, bottom, total, pct, rec\-top, rec\-bottom, rec\-total, rec\-block, wrap\-offset, format\-tag, filter\-tag, grep\-tag, hide\-tag, search\-tag, pretty\-tag, live\-tag, follow\-tag. Per\-format default can be set via `prompt = \*(Aq...\*(Aq` in formats.toml. Mutually exclusive with \-\-hex
+.TP
+\fB\-\-record\-start\fR \fI<REGEX>\fR
+Treat lines matching REGEX as record boundaries. Lines that don\*(Aqt match are joined to the preceding record. Affects search, filter, grep, and the status line — all operate on whole records when set. Overrides the active \-\-format\*(Aqs record_start if both are present. Without \-\-format, this is the only way to enable records mode for plain text. Example: \-\-record\-start \*(Aq^\\[\*(Aq
+.TP
+\fB\-\-stdout\fR
+Synonym for `\-\-output \-`: write the batch\-mode output to stdout
+.TP
+\fB\-\-tab\-width\fR \fI<TAB_WIDTH>\fR [default: 8]
+Tab stop width (default 8)
+.TP
+\fB\-t\fR, \fB\-\-tag\fR \fI<NAME>\fR
+Jump to the tag NAME at startup (requires a tags file)
+.TP
+\fB\-T\fR, \fB\-\-tag\-file\fR \fI<PATH>\fR
+Path to the tags file. Default: walk up from CWD looking for `tags`
+.TP
+\fB\-\-tail\fR \fI<N>\fR
+Show only the last N lines of the source. For files this skips most of the index work — useful for huge logs. Combine with `\-f` for `tail \-f`. Mutually exclusive with \-\-head. Streaming stdin is not supported
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.TP
+[\fIFILES\fR]
+Files to view (only the first is opened in MVP)
+.SH VERSION
+v0.17.0
