@@ -1,6 +1,6 @@
 [package]
 name = "tess-cli"
-version = "0.16.0"
+version = "0.17.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Less-style terminal pager with structured-log filtering and pretty-printing."
@@ -38,6 +38,8 @@ serde_json = "1"
 serde_yml = "0.0.12"
 quick-xml = { version = "0.36", features = ["serialize"] }
 csv = "1"
+colored = "2"
+clap_mangen = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
@@ -52,6 +54,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "tess"
 path = "src/main.rs"
+
+[[bin]]
+name = "gen-manpage"
+path = "src/bin/gen-manpage.rs"
 
 [[bench]]
 name = "render_bench"

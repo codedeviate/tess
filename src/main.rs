@@ -1,3 +1,4 @@
+use std::fmt::Write as FmtWrite;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
@@ -19,117 +20,148 @@ use clap::Parser;
 
 const MANUAL_TEXT: &str = include_str!("../MANUAL.md");
 
-const EXAMPLES_TEXT: &str = "\
-tess — usage examples
-=====================
+use colored::Colorize;
 
-Plain viewing
--------------
-  tess Cargo.toml                       # open a file
-  tess -N -S src/main.rs                # line numbers, no wrap
-  tess --tab-width 4 Makefile           # custom tab stops
+fn examples_section(buf: &mut String, title: &str) {
+    let _ = writeln!(buf, "  {}", title.yellow().bold());
+    let _ = writeln!(buf);
+}
 
-Piped input
------------
-  git log | tess                        # page through git log
-  cargo build 2>&1 | tess               # keep build output on screen
-  ls --color=always | tess              # ANSI passes through
+fn examples_example(buf: &mut String, desc: &str, commands: &[&str]) {
+    let _ = writeln!(buf, "    {}", desc.bold());
+    for cmd in commands {
+        let _ = writeln!(buf, "      {}", cmd.cyan());
+    }
+    let _ = writeln!(buf);
+}
 
-Big files: --head / --tail
---------------------------
-  tess --head 50 schema.sql             # first 50 lines
-  tess --tail 1000 huge.log             # last 1000 — opens instantly
-  tess -f --tail 1000 huge.log          # tail-follow last 1000
+fn examples_note(buf: &mut String, text: &str) {
+    let _ = writeln!(buf, "    {} {}", "note:".dimmed().bold(), text.dimmed());
+    let _ = writeln!(buf);
+}
 
-Pretty-printing structured files
---------------------------------
-  tess --prettify config.json           # detect from extension
-  tess --prettify schema.yaml
-  tess --prettify Cargo.toml
-  tess --prettify page.html             # lenient HTML mode
-  tess --prettify rows.csv              # column-aligned table
-  tess --content-type=json data.bin     # force when extension lies
-  # Inside the pager: Shift-P toggles, -Pj/y/t/x/h/c/a/r switches type.
+fn build_examples_text() -> String {
+    let mut buf = String::new();
+    let _ = writeln!(buf);
+    let _ = writeln!(buf, "{}", "tess — usage examples".bold());
+    let _ = writeln!(buf);
 
-Following live output
----------------------
-  tess -f /var/log/syslog               # watch a log file (appends)
-  tail -F /var/log/access.log | tess -f # streaming pipe with -f
-  tess --live src/main.rs               # watch a file rewritten in place
-  tess --live notes.md                  # follow saves from your editor / agent
+    examples_section(&mut buf, "Plain viewing");
+    examples_example(&mut buf, "Open a file", &[
+        "tess Cargo.toml",
+        "tess -N -S src/main.rs",
+        "tess --tab-width 4 Makefile",
+    ]);
 
-Plain-text grep (no format needed)
-----------------------------------
-  tess --grep error access.log                        # plain regex filter, no format needed
-  tess --grep error --grep '^\\[' access.log          # AND multiple --grep patterns
+    examples_section(&mut buf, "Piped input");
+    examples_example(&mut buf, "Pipe output through tess", &[
+        "git log | tess",
+        "cargo build 2>&1 | tess",
+        "ls --color=always | tess",
+    ]);
 
-Apache log analysis (built-in formats)
---------------------------------------
-  tess --format apache-combined --filter status~^5 access.log
-  tess --format apache-combined --filter status~^5 --filter url~^/api/ access.log
-  tess --format apache-combined --filter 'status!=200' access.log
-  tess --format apache-combined --filter 'status>=500' access.log
-  tess --format apache-combined --filter status~^5 --dim access.log
-  tess -f --tail 100 --format apache-combined --filter status~^5 access.log
-  tess --format apache-combined --filter status=500 --grep timeout access.log
+    examples_section(&mut buf, "Big files: --head / --tail");
+    examples_example(&mut buf, "Cheap views of large files", &[
+        "tess --head 50 schema.sql",
+        "tess --tail 1000 huge.log",
+        "tess -f --tail 1000 huge.log",
+    ]);
 
-Note: single-quote filters that use `!` or `<`/`>` — bash's history
-expansion eats `!`, and `<`/`>` are I/O redirection without quotes.
+    examples_section(&mut buf, "Pretty-printing structured files");
+    examples_example(&mut buf, "Auto-detect from extension or force a content type", &[
+        "tess --prettify config.json",
+        "tess --prettify schema.yaml",
+        "tess --prettify Cargo.toml",
+        "tess --prettify page.html",
+        "tess --prettify rows.csv",
+        "tess --content-type=json data.bin",
+    ]);
+    examples_note(&mut buf, "Inside the pager: Shift-P toggles, -Pj/y/t/x/h/c/a/r switches type.");
 
-Batch (non-interactive) output
-------------------------------
-  tess --filter status~^5 --format apache-combined -o errors.log access.log
-  tess --head 1000 --stdout huge.log | grep -c something
-  tess --prettify --stdout config.json > pretty.json
-  tess -f --format app --filter level=ERROR -o /tmp/live-errors.log app.log
+    examples_section(&mut buf, "Following live output");
+    examples_example(&mut buf, "Watch a log file or a file rewritten in place", &[
+        "tess -f /var/log/syslog",
+        "tail -F /var/log/access.log | tess -f",
+        "tess --live src/main.rs",
+        "tess --live notes.md",
+    ]);
 
-Display templates (reformat each line)
---------------------------------------
-  tess --format apache-combined --display '[<status>] <method> <url>' access.log
-  tess --format app --display '[<ts>] <level> <msg>' --filter 'level>=WARN' app.log
-  tess --format apache-combined --display '<status>: <url>' \
-       --filter 'status>=500' -o errors.log access.log
+    examples_section(&mut buf, "Plain-text grep (no format needed)");
+    examples_example(&mut buf, "Filter lines by regex — no format required", &[
+        r"tess --grep error access.log",
+        r"tess --grep error --grep '^\[' access.log",
+    ]);
 
-Or set the default per format in ~/.config/tess/formats.toml:
-  # [format.app]
-  # regex   = '...'
-  # display = '[<ts>] <level> <msg>'
+    examples_section(&mut buf, "Apache log analysis (built-in formats)");
+    examples_example(&mut buf, "Filter by status code, URL, or combine grep and filter", &[
+        "tess --format apache-combined --filter status~^5 access.log",
+        "tess --format apache-combined --filter status~^5 --filter url~^/api/ access.log",
+        "tess --format apache-combined --filter 'status!=200' access.log",
+        "tess --format apache-combined --filter 'status>=500' access.log",
+        "tess --format apache-combined --filter status~^5 --dim access.log",
+        "tess -f --tail 100 --format apache-combined --filter status~^5 access.log",
+        "tess --format apache-combined --filter status=500 --grep timeout access.log",
+    ]);
+    examples_note(&mut buf, "Single-quote filters that use `!` or `<`/`>` — bash's history expansion eats `!`, and `<`/`>` are I/O redirection without quotes.");
 
-Custom format (declare in ~/.config/tess/formats.toml)
-------------------------------------------------------
-  # ~/.config/tess/formats.toml
-  # [format.app]
-  # regex = '^(?P<ts>\\S+ \\S+) (?P<level>\\w+) \\[(?P<reqid>[0-9a-f]+)\\] (?P<msg>.*)$'
+    examples_section(&mut buf, "Batch (non-interactive) output");
+    examples_example(&mut buf, "Write filtered output to a file or stdout", &[
+        "tess --filter status~^5 --format apache-combined -o errors.log access.log",
+        "tess --head 1000 --stdout huge.log | grep -c something",
+        "tess --prettify --stdout config.json > pretty.json",
+        "tess -f --format app --filter level=ERROR -o /tmp/live-errors.log app.log",
+    ]);
 
-  tess --list-formats                                  # confirm it loaded
-  tess --format app --filter level=ERROR app.log
-  tess --format app --filter 'level~^(ERROR|WARN)$' app.log
-  tess -f --tail 200 --format app --filter level=ERROR app.log
+    examples_section(&mut buf, "Display templates (reformat each line)");
+    examples_example(&mut buf, "Reformat matched lines with a custom template", &[
+        "tess --format apache-combined --display '[<status>] <method> <url>' access.log",
+        "tess --format app --display '[<ts>] <level> <msg>' --filter 'level>=WARN' app.log",
+        r"tess --format apache-combined --display '<status>: <url>' \",
+        r"     --filter 'status>=500' -o errors.log access.log",
+    ]);
+    examples_note(&mut buf, "Or set the default per format: add `display = '[<ts>] <level> <msg>'` under `[format.app]` in ~/.config/tess/formats.toml.");
 
-Groups (shortcut bundles, also in formats.toml)
------------------------------------------------
-  # [group.errorlog]
-  # format = \"app\"
-  # file   = \"/var/log/myapp/app.log\"
-  # follow = true
-  # tail   = 1000
-  # filter = [\"level=ERROR\"]
+    examples_section(&mut buf, "Custom format (declare in ~/.config/tess/formats.toml)");
+    examples_example(&mut buf, "Define a named format with a regex and optional display template", &[
+        r"# [format.app]",
+        r"# regex = '^(?P<ts>\S+ \S+) (?P<level>\w+) \[(?P<reqid>[0-9a-f]+)\] (?P<msg>.*)$'",
+        "",
+        "tess --list-formats",
+        "tess --format app --filter level=ERROR app.log",
+        "tess --format app --filter 'level~^(ERROR|WARN)$' app.log",
+        "tess -f --tail 200 --format app --filter level=ERROR app.log",
+    ]);
 
-  tess --errorlog                       # expands to the full command above
-  tess --errorlog 'msg~timeout'         # bare positional becomes --filter
-  tess --errorlog --tail 50             # CLI flag overrides group's tail
+    examples_section(&mut buf, "Groups (shortcut bundles, also in formats.toml)");
+    examples_example(&mut buf, "Expand --<groupname> into a fixed flag bundle", &[
+        "# [group.errorlog]",
+        r#"# format = "app""#,
+        r#"# file   = "/var/log/myapp/app.log""#,
+        "# follow = true",
+        "# tail   = 1000",
+        r#"# filter = ["level=ERROR"]"#,
+        "",
+        "tess --errorlog",
+        "tess --errorlog 'msg~timeout'",
+        "tess --errorlog --tail 50",
+    ]);
 
-Interactive keys (inside tess)
-------------------------------
-  / pat <Enter>     forward regex search       n / N    repeat search
-  ? pat <Enter>     backward regex search      g / G    top / bottom
-  Space / b         page down / up             Shift-F  toggle follow
-  -N / -S / -F      toggle line numbers / chop / follow
-  R                 force-reload from disk (with --live)
-  q                 quit
+    examples_section(&mut buf, "Interactive keys (inside tess)");
+    examples_example(&mut buf, "Search, scroll, and toggle display options", &[
+        "/ pat <Enter>     forward regex search       n / N    repeat search",
+        "? pat <Enter>     backward regex search      g / G    top / bottom",
+        "Space / b         page down / up             Shift-F  toggle follow",
+        "-N / -S / -F      toggle line numbers / chop / follow",
+        "R                 force-reload from disk (with --live)",
+        "q                 quit",
+    ]);
 
-See `tess --manual` for the full reference, or `tess --help` for a flag list.
-";
+    let _ = writeln!(buf, "  {}", "See `tess --manual` for the full reference, or `tess --help` for a flag list.".dimmed());
+    let _ = writeln!(buf);
+
+    buf
+}
+
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -206,10 +238,13 @@ fn real_main() -> Result<()> {
         return Ok(());
     }
     if args.examples {
-        if io::stdout().is_terminal() {
-            return page_bytes("(examples)", EXAMPLES_TEXT.as_bytes());
+        let is_tty = io::stdout().is_terminal();
+        colored::control::set_override(is_tty);
+        let text = build_examples_text();
+        if is_tty {
+            return page_bytes("(examples)", text.as_bytes());
         }
-        print!("{}", EXAMPLES_TEXT);
+        print!("{}", text);
         return Ok(());
     }
     if args.list_formats {
