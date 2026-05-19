@@ -29,6 +29,15 @@ should be added without their own spec → plan cycle.
 
 ## Deferred
 
+### ANSI color follow-ups — **S each**
+
+- Interactive runtime toggle of `AnsiMode` (bind a key to flip between Strict / Interpret / Raw).
+- 24-bit-to-256 truecolor downsampling for terminals that don't natively support truecolor.
+- Custom status-row / prompt theming (`--status-color`, `--prompt-color` flags or config).
+- ANSI color awareness in `--display` templates (M — colored field tokens).
+- ANSI color awareness in `--prompt` templates (S — colored placeholders).
+- Full -r passthrough that bypasses the cell pipeline (current MVP treats Raw like Strict in the writer).
+
 ### Tag-feature follow-ups — **S each**
 
 - Tag-name completion in the `:tag` / `Ctrl-]` prompt.
@@ -60,6 +69,12 @@ The handwritten `enum Error` works for MVP but the boilerplate grows linearly wi
 ### Cell representation — **S**
 
 `Cell::Char { ch: char, width: u8 }` is fine for MVP but a screen-buffer of `Cell` is a lot of bytes. If memory becomes a concern, consider a denser representation (e.g., parallel `Vec<char>` and `Vec<u8>` for widths). Not before measurement.
+
+### Sixel / Kitty image protocols — **L**
+
+Render inline images via the Sixel or Kitty terminal graphics protocols.
+Substantial work; would need a new image-decoding dependency and a Cell
+variant for image references.
 
 ---
 

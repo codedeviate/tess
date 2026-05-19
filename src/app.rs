@@ -1424,11 +1424,11 @@ fn emit_style_diff<W: Write>(
     if (fg_changed && next.fg.is_none()) || (bg_changed && next.bg.is_none()) {
         out.queue(ResetColor)?;
         // After ResetColor, re-emit any color that should remain set.
-        if next.fg.is_some() {
-            out.queue(SetForegroundColor(to_crossterm_color(next.fg.unwrap())))?;
+        if let Some(c) = next.fg {
+            out.queue(SetForegroundColor(to_crossterm_color(c)))?;
         }
-        if next.bg.is_some() {
-            out.queue(SetBackgroundColor(to_crossterm_color(next.bg.unwrap())))?;
+        if let Some(c) = next.bg {
+            out.queue(SetBackgroundColor(to_crossterm_color(c)))?;
         }
     } else {
         if fg_changed {

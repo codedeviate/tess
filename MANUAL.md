@@ -556,6 +556,56 @@ otherwise.
 
 ---
 
+## Color and ANSI escapes
+
+`tess` interprets ANSI SGR escape sequences (colors, bold, italic,
+underline, dim, reverse, strike) and OSC 8 hyperlinks by default. Non-SGR
+CSI sequences (cursor moves, screen clears, mouse mode setup) are parsed
+and discarded silently so they can't corrupt the pager layout.
+
+This means colored output flows through cleanly:
+
+```sh
+ls --color=always | tess
+git --no-pager diff --color=always | tess
+bat --color=always file.rs | tess
+```
+
+The 16 named colors, xterm-256 indexed colors, and 24-bit truecolor are
+all recognized.
+
+### Opting out
+
+| Flag | Behavior |
+|------|----------|
+| `--no-color` | Show raw control bytes as `^X` glyphs (pre-0.18 behavior). |
+| `-r` / `--raw-control-chars` | Pass every byte verbatim to the terminal — including cursor moves. Risky: long-line wrap math may break. less-style `-r`. |
+
+The `NO_COLOR` environment variable (any non-empty value) and `CLICOLOR=0`
+also force `--no-color` behavior. Explicit flags always win over env.
+
+### What patterns see
+
+`/search`, `--filter`, and `--grep` always match against the SGR-stripped
+visible text — even in default `Interpret` mode. So `/error` finds 'error'
+in a red `\x1b[31merror\x1b[0m` regardless of whether colors are showing.
+
+### Color state across lines
+
+SGR state persists across newlines until explicitly reset (just like a
+terminal). When scrolling backward, `tess` walks up to 256 lines back
+looking for a reset point and replays state forward; if no reset is
+found within the cap, the first visible lines may show default colors
+until a reset appears.
+
+### Output to non-TTY
+
+When stdout is a file or pipe (`tess --stdout`, `-o file`, `| grep`),
+ANSI escapes are stripped automatically. Use `--no-color` to also strip
+when sending TTY output that you'll forward to a non-color-aware tool.
+
+---
+
 ## Running shell commands
 
 Press `!` inside the pager to enter a shell command. The prompt shows

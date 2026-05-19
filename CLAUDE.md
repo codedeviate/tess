@@ -22,6 +22,7 @@ cli (clap parsing) ─→ main ─→ app (event loop) ─→ viewport (scroll s
                                                     ├→ source (FileSource mmap, StdinSource buffer, MockSource)
                                                     └→ line_index (lazy line-start offsets)
 
+ansi   (parser: SGR, CSI, OSC 8; Style/Color types)           used by render + line_index
 terminal (RAII guard, panic hook, signal flag)        used by main + app
 error (Error enum, exit codes)                        used everywhere
 input (KeyEvent → Command translation)                used by app
@@ -45,7 +46,7 @@ tags   (ctags/etags parser, tag-stack, multi-match cursor)        used by app
 
 - **`crossterm` uses the `use-dev-tty` feature.** The default mio-based event source in 0.27 fails on macOS with piped stdin (`Failed to initialize input reader`). The `use-dev-tty` alternative uses `poll(2)` + `signal-hook` pipes and works in both file and pipe modes.
 - **Stdin path uses `dup2` to redirect fd 0 to `/dev/tty`** *only when stdin was actually drained from a pipe*. In file mode we leave fd 0 alone — replacing the shell's healthy tty fd breaks crossterm's event source init.
-- **Byte-faithful rendering, not lossy decode.** Real `less` shows `\x1b` as `^[` and stray `0xFF` as `<FF>`. We do too. UTF-8 grapheme clusters are decoded via `unicode-segmentation`; widths via `unicode-width`.
+- **Byte-faithful rendering is now opt-in via `--no-color`.** By default we interpret ANSI SGR escapes (colors, bold, underline, etc.) and OSC 8 hyperlinks; non-SGR CSI (cursor moves, screen clears) is silently stripped to protect layout. UTF-8 grapheme clusters still decoded via `unicode-segmentation`; widths via `unicode-width`. Pre-0.18 byte-faithful behavior is one flag (`--no-color`) away.
 - **Body height = `rows - 1`.** Last row is the status line (`<label>  <top>-<bottom>/<total>  <pct>%`, `+` suffix on total when source is incomplete).
 - **No async runtime.** Sync main loop. Without `--follow`, stdin is read synchronously up-front. With `--follow`, a background thread reads from a duped stdin fd into a shared buffer, and the main loop's timeout branch calls `src.pump()` to fold any new bytes into the index, auto-scrolling to bottom when the viewport was at bottom before the growth.
 

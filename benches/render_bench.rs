@@ -50,7 +50,7 @@ fn bench_scroll_page(c: &mut Criterion) {
     let mut idx = LineIndex::new();
     idx.extend_to_end(&src);
 
-    let viewport = Viewport::new(80, 24, String::from("bench"));
+    let mut viewport = Viewport::new(80, 24, String::from("bench"));
     c.bench_function("scroll_page_compose_frame", |b| {
         b.iter(|| {
             let frame = viewport.frame(&src, &mut idx);
