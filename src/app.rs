@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use crossterm::cursor::MoveTo;
 use crossterm::event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::style::{Print, ResetColor, SetAttribute, Attribute};
+use crossterm::style::{Print, ResetColor, SetAttribute, SetForegroundColor, SetBackgroundColor, Attribute};
 use crossterm::terminal::{Clear, ClearType, size};
 use crossterm::QueueableCommand;
 
@@ -341,8 +341,7 @@ fn find_pattern_line(
 ) -> Option<usize> {
     idx.extend_to_end(src);
     for line_no in 0..idx.line_count() {
-        let range = idx.line_range(line_no, src);
-        let bytes = src.bytes(range);
+        let bytes = idx.line_bytes_stripped(line_no, src);
         if re.is_match(&bytes) {
             return Some(line_no);
         }
@@ -1377,7 +1376,121 @@ fn rebuild_after_replace(
     viewport.clamp_top_line(idx.line_count());
 }
 
+fn to_crossterm_color(c: crate::ansi::Color) -> crossterm::style::Color {
+    use crossterm::style::Color as CC;
+    use crate::ansi::Color;
+    match c {
+        Color::Ansi(0) => CC::Black,
+        Color::Ansi(1) => CC::DarkRed,
+        Color::Ansi(2) => CC::DarkGreen,
+        Color::Ansi(3) => CC::DarkYellow,
+        Color::Ansi(4) => CC::DarkBlue,
+        Color::Ansi(5) => CC::DarkMagenta,
+        Color::Ansi(6) => CC::DarkCyan,
+        Color::Ansi(7) => CC::Grey,
+        Color::Ansi(8) => CC::DarkGrey,
+        Color::Ansi(9) => CC::Red,
+        Color::Ansi(10) => CC::Green,
+        Color::Ansi(11) => CC::Yellow,
+        Color::Ansi(12) => CC::Blue,
+        Color::Ansi(13) => CC::Magenta,
+        Color::Ansi(14) => CC::Cyan,
+        Color::Ansi(15) => CC::White,
+        Color::Ansi(_) => CC::Reset,
+        Color::Indexed(n) => CC::AnsiValue(n),
+        Color::Rgb(r, g, b) => CC::Rgb { r, g, b },
+        Color::Default => CC::Reset,
+    }
+}
+
+/// Emit crossterm commands to transition `prev` → `next`. Caller must
+/// already have written prior cells using `prev`'s state.
+fn emit_style_diff<W: Write>(
+    out: &mut W,
+    prev: &crate::ansi::Style,
+    next: &crate::ansi::Style,
+) -> io::Result<()> {
+    // For attribute toggles, crossterm has individual on/off pairs.
+    // `NormalIntensity` cancels both bold AND dim — handle them together
+    // to avoid emitting it twice when only one changed.
+    let intensity_changed = prev.bold != next.bold || prev.dim != next.dim;
+
+    // Color changes. ResetColor clears BOTH fg and bg simultaneously, so
+    // if either changed to None we emit ResetColor first and then re-emit
+    // the other if it's Some.
+    let fg_changed = prev.fg != next.fg;
+    let bg_changed = prev.bg != next.bg;
+
+    if (fg_changed && next.fg.is_none()) || (bg_changed && next.bg.is_none()) {
+        out.queue(ResetColor)?;
+        // After ResetColor, re-emit any color that should remain set.
+        if let Some(c) = next.fg {
+            out.queue(SetForegroundColor(to_crossterm_color(c)))?;
+        }
+        if let Some(c) = next.bg {
+            out.queue(SetBackgroundColor(to_crossterm_color(c)))?;
+        }
+    } else {
+        if fg_changed {
+            if let Some(c) = next.fg {
+                out.queue(SetForegroundColor(to_crossterm_color(c)))?;
+            }
+        }
+        if bg_changed {
+            if let Some(c) = next.bg {
+                out.queue(SetBackgroundColor(to_crossterm_color(c)))?;
+            }
+        }
+    }
+
+    if intensity_changed {
+        if next.bold {
+            out.queue(SetAttribute(Attribute::Bold))?;
+        } else if next.dim {
+            out.queue(SetAttribute(Attribute::Dim))?;
+        } else {
+            out.queue(SetAttribute(Attribute::NormalIntensity))?;
+        }
+    }
+    if prev.italic != next.italic {
+        out.queue(SetAttribute(if next.italic { Attribute::Italic } else { Attribute::NoItalic }))?;
+    }
+    if prev.underline != next.underline {
+        out.queue(SetAttribute(if next.underline { Attribute::Underlined } else { Attribute::NoUnderline }))?;
+    }
+    if prev.reverse != next.reverse {
+        out.queue(SetAttribute(if next.reverse { Attribute::Reverse } else { Attribute::NoReverse }))?;
+    }
+    if prev.strike != next.strike {
+        out.queue(SetAttribute(if next.strike { Attribute::CrossedOut } else { Attribute::NotCrossedOut }))?;
+    }
+    Ok(())
+}
+
+fn emit_hyperlink_diff<W: Write>(
+    out: &mut W,
+    prev: &Option<Arc<str>>,
+    next: &Option<Arc<str>>,
+) -> io::Result<()> {
+    if prev == next {
+        return Ok(());
+    }
+    if prev.is_some() {
+        out.write_all(b"\x1b]8;;\x1b\\")?;
+    }
+    if let Some(uri) = next {
+        out.write_all(b"\x1b]8;;")?;
+        out.write_all(uri.as_bytes())?;
+        out.write_all(b"\x1b\\")?;
+    }
+    Ok(())
+}
+
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io::Result<()> {
+    // Raw mode: in the kernel and writer, Raw is treated like Strict for
+    // MVP. Full -r passthrough (bypass cell pipeline entirely, emit source
+    // bytes raw) is parked as a follow-up.
+
     // Reset attributes once before clear so the cleared cells inherit a
     // clean state (some terminals fill cleared cells with the current
     // attribute, which caused reverse-video bleed in earlier versions).
@@ -1389,14 +1502,20 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
         // Defensive: every row begins with a full attribute reset, so a
         // mis-handled reset on the previous row can't bleed forward.
         out.queue(SetAttribute(Attribute::Reset))?;
-        let style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
-        if matches!(style, RowStyle::Dim) {
+        let row_style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
+        // Build the base style representing the terminal state after the
+        // defensive reset above. Dim rows get a dim base so the style-diff
+        // tracker inside write_row_with_highlights starts from the correct
+        // live terminal state.
+        let base_style = if matches!(row_style, RowStyle::Dim) {
             out.queue(SetAttribute(Attribute::Dim))?;
-        }
+            crate::ansi::Style { dim: true, ..Default::default() }
+        } else {
+            crate::ansi::Style::default()
+        };
         let no_highlights = Vec::new();
         let highlights = frame.highlights.get(i).unwrap_or(&no_highlights);
-        write_row_with_highlights(out, row, cols, highlights)?;
-        out.queue(SetAttribute(Attribute::Reset))?;
+        write_row_with_highlights(out, row, cols, highlights, base_style)?;
     }
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
@@ -1414,35 +1533,26 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
     out.flush()
 }
 
-fn cells_to_string(row: &[Cell], cols: u16) -> String {
-    let mut s = String::with_capacity(cols as usize);
-    for cell in row.iter().take(cols as usize) {
-        match cell {
-            Cell::Char { ch, .. } => s.push(*ch),
-            Cell::Continuation => { /* width-2 char already pushed */ }
-            Cell::Empty => s.push(' '),
-        }
-    }
-    s
-}
 
-/// Emit a single row with per-substring reverse-video highlights. Highlight
-/// ranges are in cell columns; any segment outside a highlight prints with
-/// the row's already-applied base attribute. Reverse is toggled on/off
-/// segment-by-segment with explicit `NoReverse` so a base attribute like
-/// `Dim` stays in effect for un-highlighted text.
+/// Emit a single row with per-cell color/attribute transitions and
+/// reverse-video highlights. Walks each cell, diffing style and hyperlink
+/// from the previous cell, emitting only the transitions needed.
+///
+/// `base_style` is the terminal's live style state when this function is
+/// entered (reflects any row-level attribute the caller already emitted,
+/// e.g. `Dim` for `--dim` rows).
+///
+/// Highlight ranges toggle each cell's `reverse` attribute so highlights
+/// compose correctly with cells that are already reverse-video.
 fn write_row_with_highlights(
     out: &mut impl Write,
     row: &[Cell],
     cols: u16,
     highlights: &[std::ops::Range<usize>],
+    base_style: crate::ansi::Style,
 ) -> io::Result<()> {
     let cols_usize = cols as usize;
-    if highlights.is_empty() {
-        out.queue(Print(cells_to_string(row, cols)))?;
-        return Ok(());
-    }
-    // Sort and clamp; assume non-overlapping (viewport produces them this way).
+
     let mut ranges: Vec<std::ops::Range<usize>> = highlights
         .iter()
         .filter_map(|r| {
@@ -1453,41 +1563,55 @@ fn write_row_with_highlights(
         .collect();
     ranges.sort_by_key(|r| r.start);
 
+    // Style register starts at `base_style` — what the terminal currently
+    // has live after any row-level attribute the caller emitted.
+    let mut prev_style = base_style;
+    let mut prev_link: Option<Arc<str>> = None;
+
     let mut col = 0usize;
     let mut i = 0usize;
     while col < cols_usize && i < row.len() {
-        // Find which range (if any) covers this column.
-        let active = ranges.iter().find(|r| r.start <= col && col < r.end);
-        let (segment_end, reversed) = match active {
-            Some(r) => (r.end.min(cols_usize), true),
-            None => {
-                // Plain segment until the next highlight or row end.
-                let next = ranges.iter().find(|r| r.start > col).map(|r| r.start);
-                (next.unwrap_or(cols_usize), false)
+        let in_highlight = ranges.iter().any(|r| r.start <= col && col < r.end);
+
+        match &row[i] {
+            Cell::Char { ch, width, style, hyperlink } => {
+                // Effective style: cell's style with reverse toggled when in
+                // a highlight, so highlight composes with already-reverse content.
+                let mut eff = *style;
+                if in_highlight {
+                    eff.reverse = !eff.reverse;
+                }
+                emit_style_diff(out, &prev_style, &eff)?;
+                emit_hyperlink_diff(out, &prev_link, hyperlink)?;
+                out.queue(Print(*ch))?;
+                prev_style = eff;
+                prev_link = hyperlink.clone();
+                col += *width as usize;
             }
-        };
-        if reversed { out.queue(SetAttribute(Attribute::Reverse))?; }
-        // Collect cells for this segment from `col` to `segment_end`.
-        let mut s = String::new();
-        while col < segment_end && i < row.len() {
-            match &row[i] {
-                Cell::Char { ch, width } => {
-                    s.push(*ch);
-                    col += *width as usize;
-                }
-                Cell::Continuation => {
-                    // Already accounted for by the preceding wide char's width.
-                }
-                Cell::Empty => {
-                    s.push(' ');
-                    col += 1;
-                }
+            Cell::Continuation => {
+                // Already accounted for by the preceding wide char.
             }
-            i += 1;
+            Cell::Empty => {
+                // Background padding. Reset style to default so we don't
+                // paint the rest of the line in the last active color.
+                let default = crate::ansi::Style::default();
+                emit_style_diff(out, &prev_style, &default)?;
+                emit_hyperlink_diff(out, &prev_link, &None)?;
+                out.queue(Print(' '))?;
+                prev_style = default;
+                prev_link = None;
+                col += 1;
+            }
         }
-        out.queue(Print(s))?;
-        if reversed { out.queue(SetAttribute(Attribute::NoReverse))?; }
+        i += 1;
     }
+
+    // End-of-row: close any open hyperlink and reset color/attrs so the
+    // next row's defensive Reset is a true no-op.
+    emit_hyperlink_diff(out, &prev_link, &None)?;
+    out.queue(ResetColor)?;
+    out.queue(SetAttribute(Attribute::Reset))?;
+
     Ok(())
 }
 
@@ -1682,5 +1806,38 @@ mod tests {
         assert_eq!(active.name, "bar");
         assert_eq!(active.matches.len(), 2);
         assert_eq!(active.cursor, 0);
+    }
+
+    #[test]
+    fn writer_emits_color_for_red_cell() {
+        let cells = vec![Cell::Char {
+            ch: 'h',
+            width: 1,
+            style: crate::ansi::Style {
+                fg: Some(crate::ansi::Color::Ansi(1)),
+                ..Default::default()
+            },
+            hyperlink: None,
+        }];
+        let mut buf: Vec<u8> = Vec::new();
+        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default()).unwrap();
+        let s = String::from_utf8_lossy(&buf);
+        assert!(s.contains("\x1b["), "expected ANSI escape in output: {s:?}");
+        assert!(s.contains('h'));
+    }
+
+    #[test]
+    fn writer_emits_osc8_for_hyperlink_cell() {
+        let link: std::sync::Arc<str> = std::sync::Arc::from("https://example.com");
+        let cells = vec![Cell::Char {
+            ch: 'c',
+            width: 1,
+            style: crate::ansi::Style::default(),
+            hyperlink: Some(link),
+        }];
+        let mut buf: Vec<u8> = Vec::new();
+        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default()).unwrap();
+        let s = String::from_utf8_lossy(&buf);
+        assert!(s.contains("\x1b]8;;https://example.com\x1b\\"), "got: {s:?}");
     }
 }

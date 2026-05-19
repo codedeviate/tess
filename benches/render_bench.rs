@@ -50,7 +50,7 @@ fn bench_scroll_page(c: &mut Criterion) {
     let mut idx = LineIndex::new();
     idx.extend_to_end(&src);
 
-    let viewport = Viewport::new(80, 24, String::from("bench"));
+    let mut viewport = Viewport::new(80, 24, String::from("bench"));
     c.bench_function("scroll_page_compose_frame", |b| {
         b.iter(|| {
             let frame = viewport.frame(&src, &mut idx);
@@ -78,17 +78,17 @@ fn bench_regex_search(c: &mut Criterion) {
 }
 
 fn bench_render_line(c: &mut Criterion) {
-    let opts = RenderOpts { tab_width: 8, wrap: true, cols: 80 };
+    let opts = RenderOpts { tab_width: 8, wrap: true, cols: 80, mode: tess::render::AnsiMode::Strict };
     let line: &[u8] = b"a fairly long line with \t tabs and \x1b control bytes and \xff invalid \xfe utf8 to stress decoding";
     c.bench_function("render_line_80cols", |b| {
         b.iter(|| {
-            let rows = render_line(black_box(line), black_box(&opts));
+            let rows = render_line(black_box(line), black_box(&opts), None);
             black_box(rows.len());
         });
     });
     c.bench_function("count_rows_80cols", |b| {
         b.iter(|| {
-            let n = count_rows(black_box(line), black_box(&opts));
+            let n = count_rows(black_box(line), black_box(&opts), None);
             black_box(n);
         });
     });

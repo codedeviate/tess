@@ -8,6 +8,39 @@ use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
 
+/// Maximum number of lines to walk backwards when reconstructing SGR state
+/// for a scroll-up. Picked to comfortably cover a screen-height plus
+/// headroom; bounds cost so that scrolling in huge files stays snappy.
+const MAX_RECONSTRUCT_LINES: usize = 256;
+
+/// Reconstruct the SGR state at the start of `target_line` by walking up
+/// to MAX_RECONSTRUCT_LINES lines back and replaying byte-by-byte through
+/// the ANSI parser. Lines beyond the cap are skipped: if there's an
+/// unclosed SGR more than 256 lines above the top, the reconstruction starts
+/// from default — first visible lines may render in default colors until a
+/// reset appears (rare for normal log files).
+fn reconstruct_render_state(
+    src: &dyn Source,
+    idx: &crate::line_index::LineIndex,
+    target_line: usize,
+) -> crate::render::RenderState {
+    let start = target_line.saturating_sub(MAX_RECONSTRUCT_LINES);
+    let mut state = crate::render::RenderState::default();
+    for line_no in start..target_line {
+        let range = idx.line_range(line_no, src);
+        let raw = src.bytes(range);
+        for &b in raw.as_ref() {
+            let _ = crate::ansi::step(
+                &mut state.parse,
+                &mut state.style,
+                &mut state.hyperlink,
+                b,
+            );
+        }
+    }
+    state
+}
+
 /// Build the rendered text of a display row plus a `starts` table mapping
 /// each char index in that text back to its starting cell column. The last
 /// entry is a sentinel pointing one past the row's width, so a match's
@@ -144,6 +177,15 @@ pub struct Viewport {
     file_index: Option<(usize, usize)>,
     /// When set, status line and prompt context include `[tag: <name> (N/M)]`.
     tag_active: Option<(String, usize, usize)>,  // (name, cursor+1, total)
+    /// ANSI interpretation mode, resolved from --no-color / -r / env at startup.
+    ansi_mode: crate::render::AnsiMode,
+    /// Cached SGR/hyperlink state at the start of `render_state_for`.
+    /// Invalidated when top_line changes or source grows; reconstructed
+    /// by walking up to MAX_RECONSTRUCT_LINES lines back.
+    render_state: crate::render::RenderState,
+    /// Line number that `render_state` matches the start of. Sentinel
+    /// `usize::MAX` means "invalid, must reconstruct".
+    render_state_for: usize,
 }
 
 impl Viewport {
@@ -173,6 +215,9 @@ impl Viewport {
             preprocess_failure: None,
             file_index: None,
             tag_active: None,
+            ansi_mode: crate::render::AnsiMode::Strict,
+            render_state: crate::render::RenderState::default(),
+            render_state_for: usize::MAX,
         }
     }
 
@@ -202,6 +247,10 @@ impl Viewport {
 
     pub fn set_tag_active(&mut self, info: Option<(String, usize, usize)>) {
         self.tag_active = info;
+    }
+
+    pub fn set_ansi_mode(&mut self, mode: crate::render::AnsiMode) {
+        self.ansi_mode = mode;
     }
 
     pub fn set_source_label(&mut self, label: String) {
@@ -298,8 +347,8 @@ impl Viewport {
         };
 
         for r in range {
-            let bytes_cow = idx.record_bytes(r, src);
-            let text = String::from_utf8_lossy(&bytes_cow);
+            let bytes = idx.record_bytes_stripped(r, src);
+            let text = String::from_utf8_lossy(&bytes);
             if pattern.is_match(&text) {
                 let line_range = idx.record_line_range(r);
                 self.top_line = line_range.start;
@@ -313,8 +362,10 @@ impl Viewport {
     fn line_matches(&self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, line_n: usize) -> bool {
         // Search runs against the *displayed* bytes so what the user sees is
         // what they can find. With a template active, that's the rendered form;
-        // otherwise the raw line.
-        let bytes = self.line_display_bytes(src, idx, line_n);
+        // otherwise the raw line. ANSI color sequences are stripped so that
+        // `/error` finds a red `error` regardless of escape codes.
+        let display = self.line_display_bytes(src, idx, line_n);
+        let bytes = crate::ansi::strip_sgr(&display);
         match std::str::from_utf8(&bytes) {
             Ok(s) => pattern.is_match(s),
             Err(_) => false,
@@ -419,8 +470,7 @@ impl Viewport {
         let total = idx.line_count();
         while self.visible_scanned < total {
             let line_n = self.visible_scanned;
-            let range = idx.line_range(line_n, src);
-            let bytes = src.bytes(range);
+            let bytes = idx.line_bytes_stripped(line_n, src);
             if self.line_passes(&bytes) {
                 self.visible_lines.push(line_n);
             }
@@ -439,9 +489,8 @@ impl Viewport {
         self.visible_scanned = 0; // not used by records path; reset for clarity
         let total_records = idx.record_count();
         for r in 0..total_records {
-            let bytes_cow = idx.record_bytes(r, src);
-            let bytes: &[u8] = &bytes_cow;
-            if self.line_passes(bytes) {
+            let bytes = idx.record_bytes_stripped(r, src);
+            if self.line_passes(&bytes) {
                 for line_n in idx.record_line_range(r) {
                     self.visible_lines.push(line_n);
                 }
@@ -475,12 +524,10 @@ impl Viewport {
         }
         if idx.records_mode() {
             let r = idx.line_to_record(line_n);
-            let bytes_cow = idx.record_bytes(r, src);
-            let bytes: &[u8] = &bytes_cow;
-            !self.line_passes(bytes)
+            let bytes = idx.record_bytes_stripped(r, src);
+            !self.line_passes(&bytes)
         } else {
-            let range = idx.line_range(line_n, src);
-            let bytes = src.bytes(range);
+            let bytes = idx.line_bytes_stripped(line_n, src);
             !self.line_passes(&bytes)
         }
     }
@@ -559,10 +606,11 @@ impl Viewport {
     fn render_opts(&self, gutter: u16) -> RenderOpts {
         let mut o = self.opts.clone();
         o.cols = self.cols.saturating_sub(gutter);
+        o.mode = self.ansi_mode;
         o
     }
 
-    pub fn frame(&self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
+    pub fn frame(&mut self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
         if self.hex_mode {
             return self.frame_hex(src);
         }
@@ -571,6 +619,18 @@ impl Viewport {
 
         let gutter = self.gutter_width(idx);
         let r_opts = self.render_opts(gutter);
+
+        // Reconstruct per-line SGR state for the start of the visible window so
+        // that unclosed SGR sequences on lines above top_line carry through.
+        // Only meaningful in Interpret mode; harmless (and cheap) to skip otherwise.
+        let mut render_state = if self.ansi_mode == crate::render::AnsiMode::Interpret {
+            reconstruct_render_state(src, idx, self.top_line)
+        } else {
+            crate::render::RenderState::default()
+        };
+        // Store in the struct field for future cache use; mark current top_line.
+        self.render_state = render_state.clone();
+        self.render_state_for = self.top_line;
 
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
@@ -619,7 +679,12 @@ impl Viewport {
             } else {
                 raw.clone()
             };
-            let rows = render_line(&display_bytes, &r_opts);
+            let state_arg = if self.ansi_mode == crate::render::AnsiMode::Interpret {
+                Some(&mut render_state)
+            } else {
+                None
+            };
+            let rows = render_line(&display_bytes, &r_opts, state_arg);
             let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
                     if self.should_dim_line(line_n, idx, src) { RowStyle::Dim } else { RowStyle::Normal }
@@ -638,7 +703,7 @@ impl Viewport {
                 if gutter > 0 {
                     let label = if i == 0 { format!("{:>width$} ", line_n + 1, width = (gutter as usize - 1)) } else { " ".repeat(gutter as usize) };
                     for c in label.chars() {
-                        full.push(Cell::Char { ch: c, width: 1 });
+                        full.push(Cell::Char { ch: c, width: 1, style: crate::ansi::Style::default(), hyperlink: None });
                     }
                 }
                 full.append(&mut content_row);
@@ -663,6 +728,10 @@ impl Viewport {
                 line_n += 1;
             }
         }
+
+        // After walking through the frame, render_state has been advanced past
+        // top_line. Invalidate the cached sentinel so next frame re-reconstructs.
+        self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
         Frame { body, row_styles, highlights, status }
@@ -731,7 +800,7 @@ impl Viewport {
         if !self.hide_mode() && self.top_row > 0 {
             let line_rows = if total > 0 {
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None)
             } else { 1 };
             s.push_str(&format!("  +{}/{}", self.top_row, line_rows));
         }
@@ -788,7 +857,7 @@ impl Viewport {
         let wrap_offset = if !self.hide_mode() && self.top_row > 0 {
             let line_rows = if total > 0 {
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)))
+                count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None)
             } else { 1 };
             format!("+{}/{}", self.top_row, line_rows)
         } else {
@@ -874,7 +943,7 @@ impl Viewport {
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
 
-        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1 };
+        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict };
 
         for row_idx in 0..body_rows {
             let hex_row = self.top_line + row_idx;
@@ -885,7 +954,7 @@ impl Viewport {
                 let end = (offset + 16).min(total_bytes);
                 let bytes_cow = src.bytes(offset..end);
                 let text = format_hex_row(offset, &bytes_cow);
-                let rows = render_line(text.as_bytes(), &opts);
+                let rows = render_line(text.as_bytes(), &opts, None);
                 body.push(rows.into_iter().next().unwrap_or_else(|| {
                     vec![Cell::Empty; self.cols as usize]
                 }));
@@ -983,7 +1052,7 @@ impl Viewport {
                 let total = idx.line_count();
                 if total == 0 { break; }
                 let bytes = self.line_display_bytes(src, idx, self.top_line);
-                let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None);
                 if self.top_row + 1 < line_rows {
                     self.top_row += 1;
                 } else if self.top_line + 1 < total {
@@ -1002,7 +1071,7 @@ impl Viewport {
                 } else if self.top_line > 0 {
                     self.top_line -= 1;
                     let bytes = self.line_display_bytes(src, idx, self.top_line);
-                    let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)));
+                    let line_rows = count_rows(&bytes, &self.render_opts(self.gutter_width(idx)), None);
                     self.top_row = line_rows.saturating_sub(1);
                 } else {
                     break;
@@ -1136,11 +1205,11 @@ mod tests {
     #[test]
     fn frame_renders_body_height_rows() {
         let (m, mut idx) = setup(b"a\nb\nc\nd\ne\n");
-        let v = Viewport::new(10, 5, "test".into());  // body = 4
+        let mut v = Viewport::new(10, 5, "test".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert_eq!(frame.body.len(), 4);
-        assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1 });
-        assert_eq!(frame.body[3][0], Cell::Char { ch: 'd', width: 1 });
+        assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
+        assert_eq!(frame.body[3][0], Cell::Char { ch: 'd', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]
@@ -1237,7 +1306,7 @@ mod tests {
     #[test]
     fn status_line_shows_range_and_pct() {
         let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
-        let v = Viewport::new(20, 5, "f".into());  // body = 4
+        let mut v = Viewport::new(20, 5, "f".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.starts_with("f  1-4/10"));
     }
@@ -1386,8 +1455,8 @@ mod tests {
         v.toggle_line_numbers();
         let frame_on = v.frame(&m, &mut idx);
         // With gutter, first cell is a digit or space, not 'a'.
-        assert_eq!(frame_off.body[0][0], Cell::Char { ch: 'a', width: 1 });
-        assert_ne!(frame_on.body[0][0], Cell::Char { ch: 'a', width: 1 });
+        assert_eq!(frame_off.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
+        assert_ne!(frame_on.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]
@@ -1399,8 +1468,10 @@ mod tests {
         // After toggle_chop, the line is one row, not wrapped.
         // Body row 0 is "abcd"; rows 1..3 are blank fill.
         assert_eq!(frame.body[0][..4],
-            [Cell::Char { ch: 'a', width: 1 }, Cell::Char { ch: 'b', width: 1 },
-             Cell::Char { ch: 'c', width: 1 }, Cell::Char { ch: 'd', width: 1 }]);
+            [Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'b', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'c', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+             Cell::Char { ch: 'd', width: 1, style: crate::ansi::Style::default(), hyperlink: None }]);
         // Row 1 should be all-empty (no wrap continuation).
         assert!(frame.body[1].iter().all(|c| matches!(c, Cell::Empty)));
     }
@@ -1535,7 +1606,7 @@ mod tests {
         // The bottom-most body row should now contain the last logical line ('8').
         // Find which row has '8'.
         let last_row = &frame.body[frame.body.len() - 1];
-        assert_eq!(last_row[0], Cell::Char { ch: '8', width: 1 });
+        assert_eq!(last_row[0], Cell::Char { ch: '8', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
     }
 
     #[test]
@@ -1870,7 +1941,7 @@ mod tests {
     #[test]
     fn status_unchanged_when_records_inactive() {
         let (m, mut idx) = setup(b"a\nb\nc\n");
-        let v = Viewport::new(20, 5, "f".into());
+        let mut v = Viewport::new(20, 5, "f".into());
         let frame = v.frame(&m, &mut idx);
         let status = &frame.status;
         // Default format: <label>  <top>-<bot>/<total>  <pct>%
@@ -1887,7 +1958,7 @@ mod tests {
         let mut idx = LineIndex::new();
         idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
         idx.extend_to_end(&m);
-        let v = Viewport::new(20, 5, "f".into());
+        let mut v = Viewport::new(20, 5, "f".into());
         let frame = v.frame(&m, &mut idx);
         let status = &frame.status;
         assert!(status.contains("L1-3/3"), "lines block missing or wrong: {status}");
@@ -1975,5 +2046,49 @@ mod tests {
             "should not show indicator for single match: {}",
             frame.status
         );
+    }
+
+    // ----- SGR state reconstruction tests -----
+
+    #[test]
+    fn reconstruct_picks_up_state_from_prior_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mline 1\n");
+        m.append(b"line 2 (still red, no reset)\n");
+        m.append(b"line 3\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let state = reconstruct_render_state(&m, &idx, 2);
+        assert_eq!(
+            state.style.fg,
+            Some(crate::ansi::Color::Ansi(1)),
+            "red SGR from line 0 should persist to line 2"
+        );
+    }
+
+    #[test]
+    fn reconstruct_respects_reset_between_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mline 1\x1b[0m\n");
+        m.append(b"line 2 (default)\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let state = reconstruct_render_state(&m, &idx, 1);
+        assert_eq!(state.style.fg, None);
+    }
+
+    #[test]
+    fn reconstruct_caps_walkback_at_max_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mvery early\n");
+        for _ in 0..300 {
+            m.append(b"line\n");
+        }
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        // Line 290 is 290 lines past the red SGR. We cap at 256, so the
+        // anchor we'd pick is line 34 (290 - 256), which is past the red.
+        let state = reconstruct_render_state(&m, &idx, 290);
+        assert_eq!(state.style.fg, None);
     }
 }

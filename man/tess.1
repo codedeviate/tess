@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.17.0" 
+.TH tess 1  "tess 0.18.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -54,6 +54,9 @@ Live mode: re\-read the file when its on\-disk content changes (mtime, size, or 
 \fB\-\-manual\fR
 Print the full user manual and exit
 .TP
+\fB\-\-no\-color\fR
+Show raw control bytes as `^X` glyphs (pre\-0.18 default). Disables SGR / OSC interpretation. Honoured also by the `NO_COLOR` environment variable (any non\-empty value) and `CLICOLOR=0`
+.TP
 \fB\-\-no\-preprocess\fR
 Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted for one invocation
 .TP
@@ -68,6 +71,9 @@ Pretty\-print structured content (JSON, YAML, TOML, XML, HTML, CSV). Detects the
 .TP
 \fB\-\-prompt\fR \fI<TEMPLATE>\fR
 Replace the hardcoded status format with a templated string. Uses the same `<field>` syntax as `\-\-display`. Available fields: label, top, bottom, total, pct, rec\-top, rec\-bottom, rec\-total, rec\-block, wrap\-offset, format\-tag, filter\-tag, grep\-tag, hide\-tag, search\-tag, pretty\-tag, live\-tag, follow\-tag. Per\-format default can be set via `prompt = \*(Aq...\*(Aq` in formats.toml. Mutually exclusive with \-\-hex
+.TP
+\fB\-r\fR, \fB\-\-raw\-control\-chars\fR
+Pass every byte to the terminal raw, including cursor moves and non\-SGR escape sequences. Risky: scroll math may break on long lines. Less\-style \-r. Mutually exclusive with \-\-no\-color
 .TP
 \fB\-\-record\-start\fR \fI<REGEX>\fR
 Treat lines matching REGEX as record boundaries. Lines that don\*(Aqt match are joined to the preceding record. Affects search, filter, grep, and the status line — all operate on whole records when set. Overrides the active \-\-format\*(Aqs record_start if both are present. Without \-\-format, this is the only way to enable records mode for plain text. Example: \-\-record\-start \*(Aq^\\[\*(Aq
@@ -96,4 +102,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.17.0
+v0.18.0

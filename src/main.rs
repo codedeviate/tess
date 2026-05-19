@@ -192,7 +192,26 @@ fn redirect_stdin_to_tty() -> std::io::Result<()> {
     Ok(())
 }
 
-fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
+fn resolve_ansi_mode(args: &Args) -> tess::render::AnsiMode {
+    use tess::render::AnsiMode;
+    if args.raw_control_chars {
+        return AnsiMode::Raw;
+    }
+    if args.no_color {
+        return AnsiMode::Strict;
+    }
+    if let Ok(v) = std::env::var("NO_COLOR") {
+        if !v.is_empty() {
+            return AnsiMode::Strict;
+        }
+    }
+    if std::env::var("CLICOLOR").as_deref() == Ok("0") {
+        return AnsiMode::Strict;
+    }
+    AnsiMode::Interpret
+}
+
+fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) -> Result<()> {
     let src = MockSource::new();
     src.append(content);
     src.finish();
@@ -208,7 +227,8 @@ fn page_bytes(label: &str, content: &[u8]) -> Result<()> {
     let _guard = TerminalGuard::enter()
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-    let viewport = Viewport::new(cols, rows, label.to_string());
+    let mut viewport = Viewport::new(cols, rows, label.to_string());
+    viewport.set_ansi_mode(ansi_mode);
     let idx = LineIndex::new();
     let keymap = tess::keys::KeyMap::load_from_default_path()
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
@@ -230,9 +250,10 @@ fn real_main() -> Result<()> {
     // Info-only flags. When stdout is a TTY, page through tess itself so the
     // content doesn't fly past — the user gets scroll/search/quit. When stdout
     // is redirected (`tess --manual | grep …`, `> out.txt`), print plain text.
+    let ansi_mode = resolve_ansi_mode(&args);
     if args.manual {
         if io::stdout().is_terminal() {
-            return page_bytes("(manual)", MANUAL_TEXT.as_bytes());
+            return page_bytes("(manual)", MANUAL_TEXT.as_bytes(), ansi_mode);
         }
         print!("{}", MANUAL_TEXT);
         return Ok(());
@@ -242,7 +263,7 @@ fn real_main() -> Result<()> {
         colored::control::set_override(is_tty);
         let text = build_examples_text();
         if is_tty {
-            return page_bytes("(examples)", text.as_bytes());
+            return page_bytes("(examples)", text.as_bytes(), ansi_mode);
         }
         print!("{}", text);
         return Ok(());
@@ -548,6 +569,7 @@ showing raw (use --content-type=NAME to override)"
     if args.hex {
         viewport.set_hex_mode(true);
     }
+    viewport.set_ansi_mode(ansi_mode);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

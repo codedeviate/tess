@@ -1,9 +1,41 @@
+use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// How the renderer treats escape sequences in input bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnsiMode {
+    /// Pre-0.18 default. ESC renders as `^[` caret form; CSI bytes show as
+    /// `^[` + literal text. Used when `--no-color` is set.
+    #[default]
+    Strict,
+    /// Default at app level. SGR sequences update cell styles (zero columns
+    /// consumed); non-SGR CSI is parsed and discarded silently; OSC 8 wraps
+    /// hyperlinks.
+    Interpret,
+    /// `-r` / `--raw-control-chars`. Identical to Strict in the render
+    /// kernel — the writer handles raw passthrough.
+    Raw,
+}
+
+/// Per-source rendering state that persists across line renders. Carries the
+/// SGR style register and the current OSC 8 hyperlink so that an unclosed
+/// `\x1b[31m` on line N keeps line N+1 red until reset.
+#[derive(Debug, Default, Clone)]
+pub struct RenderState {
+    pub style: crate::ansi::Style,
+    pub hyperlink: Option<String>,
+    pub parse: crate::ansi::ParseState,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cell {
-    Char { ch: char, width: u8 },
+    Char {
+        ch: char,
+        width: u8,
+        style: crate::ansi::Style,
+        hyperlink: Option<Arc<str>>,
+    },
     Continuation,
     Empty,
 }
@@ -13,11 +45,12 @@ pub struct RenderOpts {
     pub tab_width: u8,
     pub wrap: bool,
     pub cols: u16,
+    pub mode: AnsiMode,
 }
 
 impl Default for RenderOpts {
     fn default() -> Self {
-        Self { tab_width: 8, wrap: true, cols: 80 }
+        Self { tab_width: 8, wrap: true, cols: 80, mode: AnsiMode::Strict }
     }
 }
 
@@ -74,10 +107,62 @@ fn decode_cluster(bytes: &[u8], i: usize) -> Option<(&str, usize)> {
     Some((std::str::from_utf8(&bytes[i..probe_end]).unwrap(), probe_end - i))
 }
 
-pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
+/// In `AnsiMode::Interpret`, pre-filter the raw byte stream through the ANSI
+/// parser and return a list of `(byte, style_at_byte, hyperlink_at_byte)` for
+/// printable bytes only. ESC sequences consume bytes but produce no entries.
+///
+/// In `AnsiMode::Strict` / `AnsiMode::Raw`, every byte is printable (no
+/// pre-filtering). Style is default and hyperlink is None for all entries.
+fn prefilter(
+    bytes: &[u8],
+    mode: AnsiMode,
+    state: Option<&mut RenderState>,
+) -> Vec<(u8, crate::ansi::Style, Option<Arc<str>>)> {
+    match mode {
+        AnsiMode::Strict | AnsiMode::Raw => {
+            // Bypass: every byte is printable with default style. Raw passthrough
+            // is handled by the writer layer, not the render kernel.
+            bytes
+                .iter()
+                .map(|&b| (b, crate::ansi::Style::default(), None))
+                .collect()
+        }
+        AnsiMode::Interpret => {
+            use crate::ansi::ParseStep;
+            // Use a temporary local state when the caller passes None.
+            let mut tmp;
+            let st: &mut RenderState = match state {
+                Some(s) => s,
+                None => {
+                    tmp = RenderState::default();
+                    &mut tmp
+                }
+            };
+            let mut out = Vec::with_capacity(bytes.len());
+            for &b in bytes {
+                let step =
+                    crate::ansi::step(&mut st.parse, &mut st.style, &mut st.hyperlink, b);
+                if let ParseStep::Printable(pb) = step {
+                    let hl = st.hyperlink.as_deref().map(Arc::from);
+                    out.push((pb, st.style, hl));
+                }
+            }
+            out
+        }
+    }
+}
+
+pub fn render_line(
+    bytes: &[u8],
+    opts: &RenderOpts,
+    state: Option<&mut RenderState>,
+) -> Vec<Vec<Cell>> {
     let cols = opts.cols as usize;
     let mut rows: Vec<Vec<Cell>> = Vec::new();
     let mut current: Vec<Cell> = Vec::with_capacity(cols);
+
+    // Pre-filter: resolve styles and strip escape sequences for Interpret mode.
+    let filtered = prefilter(bytes, opts.mode, state);
 
     fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts) {
         if current.len() >= opts.cols as usize {
@@ -92,9 +177,21 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
         current.push(cell);
     }
 
-    fn push_str(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, s: &str, opts: &RenderOpts) {
+    fn push_str(
+        current: &mut Vec<Cell>,
+        rows: &mut Vec<Vec<Cell>>,
+        s: &str,
+        style: crate::ansi::Style,
+        hyperlink: Option<Arc<str>>,
+        opts: &RenderOpts,
+    ) {
         for c in s.chars() {
-            push(current, rows, Cell::Char { ch: c, width: 1 }, opts);
+            push(
+                current,
+                rows,
+                Cell::Char { ch: c, width: 1, style, hyperlink: hyperlink.clone() },
+                opts,
+            );
         }
     }
 
@@ -103,6 +200,8 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
         rows: &mut Vec<Vec<Cell>>,
         ch: char,
         width: u8,
+        style: crate::ansi::Style,
+        hyperlink: Option<Arc<str>>,
         opts: &RenderOpts,
     ) {
         let cols = opts.cols as usize;
@@ -116,48 +215,76 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
                 return; // chop
             }
         }
-        current.push(Cell::Char { ch, width });
+        current.push(Cell::Char { ch, width, style, hyperlink });
         for _ in 1..width {
             current.push(Cell::Continuation);
         }
     }
 
+    // Walk filtered bytes (raw bytes for Strict, printable-only for Interpret).
     let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
+    while i < filtered.len() {
+        let (b, style, hyperlink) = filtered[i].clone();
         if b == b'\t' {
             let stop = opts.tab_width.max(1) as usize;
             let cur_col = current.len();
             let next_stop = ((cur_col / stop) + 1) * stop;
             for _ in cur_col..next_stop {
-                push(&mut current, &mut rows, Cell::Char { ch: ' ', width: 1 }, opts);
+                push(
+                    &mut current,
+                    &mut rows,
+                    Cell::Char { ch: ' ', width: 1, style, hyperlink: hyperlink.clone() },
+                    opts,
+                );
             }
             i += 1;
         } else if b == b'\n' {
             i += 1;
         } else if b < 0x20 || b == 0x7F {
             let printable = if b == 0x7F { '?' } else { (b ^ 0x40) as char };
-            push(&mut current, &mut rows, Cell::Char { ch: '^', width: 1 }, opts);
-            push(&mut current, &mut rows, Cell::Char { ch: printable, width: 1 }, opts);
+            push(
+                &mut current,
+                &mut rows,
+                Cell::Char { ch: '^', width: 1, style, hyperlink: hyperlink.clone() },
+                opts,
+            );
+            push(
+                &mut current,
+                &mut rows,
+                Cell::Char { ch: printable, width: 1, style, hyperlink },
+                opts,
+            );
             i += 1;
         } else {
-            // Try to decode a UTF-8 grapheme cluster starting at i.
-            match decode_cluster(bytes, i) {
+            // Try to decode a UTF-8 grapheme cluster. We reconstruct raw bytes
+            // from the filtered stream for cluster decoding.
+            let raw_bytes: Vec<u8> = filtered[i..].iter().map(|(b, _, _)| *b).collect();
+            match decode_cluster(&raw_bytes, 0) {
                 Some((cluster, consumed)) => {
                     let w = UnicodeWidthStr::width(cluster) as u8;
                     let base_char = cluster.chars().next().unwrap_or('\u{FFFD}');
                     if w == 0 {
                         // Lone combining mark with no base — emit replacement.
-                        push(&mut current, &mut rows, Cell::Char { ch: '\u{FFFD}', width: 1 }, opts);
+                        push(
+                            &mut current,
+                            &mut rows,
+                            Cell::Char {
+                                ch: '\u{FFFD}',
+                                width: 1,
+                                style,
+                                hyperlink,
+                            },
+                            opts,
+                        );
                     } else {
-                        push_wide(&mut current, &mut rows, base_char, w, opts);
+                        push_wide(&mut current, &mut rows, base_char, w, style, hyperlink, opts);
                     }
                     i += consumed;
                 }
                 None => {
                     // Invalid byte: emit <HH>, advance one byte.
                     let s = format!("<{:02X}>", b);
-                    push_str(&mut current, &mut rows, &s, opts);
+                    push_str(&mut current, &mut rows, &s, style, hyperlink, opts);
                     i += 1;
                 }
             }
@@ -171,7 +298,11 @@ pub fn render_line(bytes: &[u8], opts: &RenderOpts) -> Vec<Vec<Cell>> {
     rows
 }
 
-pub fn count_rows(bytes: &[u8], opts: &RenderOpts) -> usize {
+pub fn count_rows(
+    bytes: &[u8],
+    opts: &RenderOpts,
+    state: Option<&mut RenderState>,
+) -> usize {
     if !opts.wrap {
         return 1;
     }
@@ -187,9 +318,12 @@ pub fn count_rows(bytes: &[u8], opts: &RenderOpts) -> usize {
         *col += w;
     };
 
+    // Pre-filter: only printable bytes contribute to column count.
+    let filtered = prefilter(bytes, opts.mode, state);
+
     let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
+    while i < filtered.len() {
+        let (b, _, _) = filtered[i];
         if b == b'\t' {
             let stop = opts.tab_width.max(1) as usize;
             let next_stop = ((col / stop) + 1) * stop;
@@ -206,7 +340,8 @@ pub fn count_rows(bytes: &[u8], opts: &RenderOpts) -> usize {
             bump(1, &mut col, &mut rows); // X
             i += 1;
         } else {
-            match decode_cluster(bytes, i) {
+            let raw_bytes: Vec<u8> = filtered[i..].iter().map(|(b, _, _)| *b).collect();
+            match decode_cluster(&raw_bytes, 0) {
                 Some((cluster, consumed)) => {
                     let w = UnicodeWidthStr::width(cluster);
                     let w = if w == 0 { 1 } else { w };
@@ -229,34 +364,36 @@ mod tests {
     use super::*;
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict }
     }
 
-    fn ch(c: char) -> Cell { Cell::Char { ch: c, width: 1 } }
+    fn ch(c: char) -> Cell {
+        Cell::Char { ch: c, width: 1, style: crate::ansi::Style::default(), hyperlink: None }
+    }
 
     #[test]
     fn ascii_short_line_pads_to_cols() {
-        let rows = render_line(b"hi", &opts(5, true));
+        let rows = render_line(b"hi", &opts(5, true), None);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec![ch('h'), ch('i'), Cell::Empty, Cell::Empty, Cell::Empty]);
     }
 
     #[test]
     fn ascii_exact_width() {
-        let rows = render_line(b"hello", &opts(5, true));
+        let rows = render_line(b"hello", &opts(5, true), None);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec![ch('h'), ch('e'), ch('l'), ch('l'), ch('o')]);
     }
 
     #[test]
     fn empty_input_yields_one_empty_row() {
-        let rows = render_line(b"", &opts(3, true));
+        let rows = render_line(b"", &opts(3, true), None);
         assert_eq!(rows, vec![vec![Cell::Empty, Cell::Empty, Cell::Empty]]);
     }
 
     #[test]
     fn tab_at_col_zero_expands_to_eight() {
-        let rows = render_line(b"\tx", &opts(20, true));
+        let rows = render_line(b"\tx", &opts(20, true), None);
         // Eight spaces, then 'x', then padding.
         for (i, cell) in rows[0].iter().take(8).enumerate() {
             assert_eq!(*cell, ch(' '), "col {i} should be space");
@@ -267,7 +404,7 @@ mod tests {
     #[test]
     fn tab_at_col_three_advances_to_next_stop() {
         // "abc\tx" → cols 0,1,2 = a,b,c; tab fills to col 8 with spaces; col 8 = x
-        let rows = render_line(b"abc\tx", &opts(20, true));
+        let rows = render_line(b"abc\tx", &opts(20, true), None);
         assert_eq!(rows[0][0], ch('a'));
         assert_eq!(rows[0][2], ch('c'));
         for cell in rows[0].iter().skip(3).take(5) {
@@ -281,7 +418,7 @@ mod tests {
         let mut input = vec![b'a'; 8];
         input.push(b'\t');
         input.push(b'x');
-        let rows = render_line(&input, &opts(20, true));
+        let rows = render_line(&input, &opts(20, true), None);
         for cell in rows[0].iter().skip(8).take(8) {
             assert_eq!(*cell, ch(' '));
         }
@@ -290,28 +427,28 @@ mod tests {
 
     #[test]
     fn null_renders_as_caret_at() {
-        let rows = render_line(b"\0", &opts(5, true));
+        let rows = render_line(b"\0", &opts(5, true), None);
         assert_eq!(rows[0][0], ch('^'));
         assert_eq!(rows[0][1], ch('@'));
     }
 
     #[test]
     fn esc_renders_as_caret_lbracket() {
-        let rows = render_line(b"\x1b", &opts(5, true));
+        let rows = render_line(b"\x1b", &opts(5, true), None);
         assert_eq!(rows[0][0], ch('^'));
         assert_eq!(rows[0][1], ch('['));
     }
 
     #[test]
     fn del_renders_as_caret_question() {
-        let rows = render_line(b"\x7f", &opts(5, true));
+        let rows = render_line(b"\x7f", &opts(5, true), None);
         assert_eq!(rows[0][0], ch('^'));
         assert_eq!(rows[0][1], ch('?'));
     }
 
     #[test]
     fn invalid_utf8_byte_renders_as_angle_hex() {
-        let rows = render_line(&[0xFF], &opts(8, true));
+        let rows = render_line(&[0xFF], &opts(8, true), None);
         assert_eq!(rows[0][0], ch('<'));
         assert_eq!(rows[0][1], ch('F'));
         assert_eq!(rows[0][2], ch('F'));
@@ -321,7 +458,7 @@ mod tests {
     #[test]
     fn partial_multibyte_each_byte_renders_separately() {
         // 0xC3 starts a 2-byte sequence; alone it's invalid → <C3>
-        let rows = render_line(&[0xC3], &opts(8, true));
+        let rows = render_line(&[0xC3], &opts(8, true), None);
         assert_eq!(rows[0][0], ch('<'));
         assert_eq!(rows[0][1], ch('C'));
         assert_eq!(rows[0][2], ch('3'));
@@ -330,22 +467,28 @@ mod tests {
 
     #[test]
     fn single_byte_utf8_e_acute() {
-        let rows = render_line("é".as_bytes(), &opts(5, true));
-        assert_eq!(rows[0][0], Cell::Char { ch: 'é', width: 1 });
+        let rows = render_line("é".as_bytes(), &opts(5, true), None);
+        assert_eq!(
+            rows[0][0],
+            Cell::Char { ch: 'é', width: 1, style: crate::ansi::Style::default(), hyperlink: None }
+        );
     }
 
     #[test]
     fn cjk_char_takes_two_columns() {
         // 日 is width 2.
-        let rows = render_line("日".as_bytes(), &opts(5, true));
-        assert_eq!(rows[0][0], Cell::Char { ch: '日', width: 2 });
+        let rows = render_line("日".as_bytes(), &opts(5, true), None);
+        assert_eq!(
+            rows[0][0],
+            Cell::Char { ch: '日', width: 2, style: crate::ansi::Style::default(), hyperlink: None }
+        );
         assert_eq!(rows[0][1], Cell::Continuation);
         assert_eq!(rows[0][2], Cell::Empty);
     }
 
     #[test]
     fn emoji_takes_two_columns() {
-        let rows = render_line("🦀".as_bytes(), &opts(5, true));
+        let rows = render_line("🦀".as_bytes(), &opts(5, true), None);
         // Width depends on unicode-width; crab emoji is width 2.
         assert!(matches!(rows[0][0], Cell::Char { width: 2, .. }));
         assert_eq!(rows[0][1], Cell::Continuation);
@@ -354,7 +497,7 @@ mod tests {
     #[test]
     fn combining_mark_folds_into_prior_cell() {
         // "e\u{0301}" is one grapheme cluster (e with combining acute).
-        let rows = render_line("e\u{0301}".as_bytes(), &opts(5, true));
+        let rows = render_line("e\u{0301}".as_bytes(), &opts(5, true), None);
         // Cluster renders as a single cell carrying base char.
         assert!(matches!(rows[0][0], Cell::Char { width: 1, .. }));
         assert_eq!(rows[0][1], Cell::Empty);
@@ -362,7 +505,7 @@ mod tests {
 
     #[test]
     fn wrap_long_line_into_multiple_rows() {
-        let rows = render_line(b"abcdefghij", &opts(4, true));
+        let rows = render_line(b"abcdefghij", &opts(4, true), None);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0], vec![ch('a'), ch('b'), ch('c'), ch('d')]);
         assert_eq!(rows[1], vec![ch('e'), ch('f'), ch('g'), ch('h')]);
@@ -371,7 +514,7 @@ mod tests {
 
     #[test]
     fn chop_long_line_truncates() {
-        let rows = render_line(b"abcdefghij", &opts(4, false));
+        let rows = render_line(b"abcdefghij", &opts(4, false), None);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec![ch('a'), ch('b'), ch('c'), ch('d')]);
     }
@@ -380,10 +523,13 @@ mod tests {
     fn wide_char_at_boundary_pushed_to_next_row() {
         // cols=3, content "ab日" — 日 is width 2, doesn't fit at col 2,
         // so row 0 = a, b, Empty; row 1 = 日(continuation), Empty.
-        let rows = render_line("ab日".as_bytes(), &opts(3, true));
+        let rows = render_line("ab日".as_bytes(), &opts(3, true), None);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], vec![ch('a'), ch('b'), Cell::Empty]);
-        assert_eq!(rows[1][0], Cell::Char { ch: '日', width: 2 });
+        assert_eq!(
+            rows[1][0],
+            Cell::Char { ch: '日', width: 2, style: crate::ansi::Style::default(), hyperlink: None }
+        );
         assert_eq!(rows[1][1], Cell::Continuation);
         assert_eq!(rows[1][2], Cell::Empty);
     }
@@ -392,27 +538,149 @@ mod tests {
     fn count_rows_matches_render_line_for_short() {
         let o = opts(80, true);
         let bytes = b"hello world";
-        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
+        assert_eq!(count_rows(bytes, &o, None), render_line(bytes, &o, None).len());
     }
 
     #[test]
     fn count_rows_matches_render_line_for_long_wrap() {
         let o = opts(4, true);
         let bytes = b"abcdefghij";
-        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
+        assert_eq!(count_rows(bytes, &o, None), render_line(bytes, &o, None).len());
     }
 
     #[test]
     fn count_rows_chop_is_one() {
         let o = opts(4, false);
         let bytes = b"abcdefghij";
-        assert_eq!(count_rows(bytes, &o), 1);
+        assert_eq!(count_rows(bytes, &o, None), 1);
     }
 
     #[test]
     fn count_rows_handles_wide_char() {
         let o = opts(3, true);
         let bytes = "ab日".as_bytes();
-        assert_eq!(count_rows(bytes, &o), render_line(bytes, &o).len());
+        assert_eq!(count_rows(bytes, &o, None), render_line(bytes, &o, None).len());
+    }
+
+    // ---- Interpret-mode tests ----
+
+    fn interpret_opts() -> RenderOpts {
+        RenderOpts { mode: AnsiMode::Interpret, ..Default::default() }
+    }
+
+    #[test]
+    fn interpret_red_text() {
+        let mut state = RenderState::default();
+        let rows = render_line(b"\x1b[31mhi", &interpret_opts(), Some(&mut state));
+        let cells: Vec<&Cell> =
+            rows.iter().flatten().filter(|c| matches!(c, Cell::Char { .. })).collect();
+        assert_eq!(cells.len(), 2);
+        for c in cells {
+            if let Cell::Char { style, .. } = c {
+                assert_eq!(style.fg, Some(crate::ansi::Color::Ansi(1)));
+            }
+        }
+    }
+
+    #[test]
+    fn interpret_truecolor() {
+        let mut state = RenderState::default();
+        let rows =
+            render_line(b"\x1b[38;2;255;0;0mfoo", &interpret_opts(), Some(&mut state));
+        let cells: Vec<&Cell> =
+            rows.iter().flatten().filter(|c| matches!(c, Cell::Char { .. })).collect();
+        for c in cells {
+            if let Cell::Char { style, .. } = c {
+                assert_eq!(style.fg, Some(crate::ansi::Color::Rgb(255, 0, 0)));
+            }
+        }
+    }
+
+    #[test]
+    fn interpret_wide_char_carries_color() {
+        let mut state = RenderState::default();
+        let rows =
+            render_line("\x1b[31m日".as_bytes(), &interpret_opts(), Some(&mut state));
+        let jp_cell = rows.iter().flatten().find_map(|c| match c {
+            Cell::Char { ch: '日', style, width, .. } => Some((style, *width)),
+            _ => None,
+        });
+        let (style, width) = jp_cell.expect("expected 日 cell");
+        assert_eq!(style.fg, Some(crate::ansi::Color::Ansi(1)));
+        assert_eq!(width, 2);
+    }
+
+    #[test]
+    fn interpret_state_persists_across_calls() {
+        let mut state = RenderState::default();
+        let _ = render_line(b"\x1b[31mline1", &interpret_opts(), Some(&mut state));
+        let rows = render_line(b"line2", &interpret_opts(), Some(&mut state));
+        let l_cell = rows.iter().flatten().find_map(|c| match c {
+            Cell::Char { ch: 'l', style, .. } => Some(style),
+            _ => None,
+        });
+        assert_eq!(
+            l_cell.expect("expected l cell").fg,
+            Some(crate::ansi::Color::Ansi(1))
+        );
+    }
+
+    #[test]
+    fn interpret_reset_clears_state() {
+        let mut state = RenderState::default();
+        let _ =
+            render_line(b"\x1b[31mline1\x1b[0m", &interpret_opts(), Some(&mut state));
+        let rows = render_line(b"line2", &interpret_opts(), Some(&mut state));
+        let l_cell = rows.iter().flatten().find_map(|c| match c {
+            Cell::Char { ch: 'l', style, .. } => Some(style),
+            _ => None,
+        });
+        assert_eq!(l_cell.expect("expected l cell"), &crate::ansi::Style::default());
+    }
+
+    #[test]
+    fn interpret_non_sgr_csi_is_zero_width() {
+        let mut state = RenderState::default();
+        let rows = render_line(b"\x1b[2Jdata", &interpret_opts(), Some(&mut state));
+        let chars: String = rows
+            .iter()
+            .flatten()
+            .filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chars, "data");
+    }
+
+    #[test]
+    fn strict_mode_esc_still_renders_as_caret_lbracket() {
+        // LOCKDOWN: pre-0.18 behavior must survive.
+        let rows = render_line(b"\x1b[31mhi", &RenderOpts::default(), None);
+        let chars: String = rows
+            .iter()
+            .flatten()
+            .filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            })
+            .collect();
+        assert!(chars.starts_with("^["), "got: {chars:?}");
+    }
+
+    #[test]
+    fn osc8_hyperlink_attached_to_cells() {
+        let mut state = RenderState::default();
+        let rows = render_line(
+            b"\x1b]8;;https://example.com\x07click\x1b]8;;\x07",
+            &interpret_opts(),
+            Some(&mut state),
+        );
+        let click_cell = rows.iter().flatten().find_map(|c| match c {
+            Cell::Char { ch: 'c', hyperlink, .. } => Some(hyperlink.clone()),
+            _ => None,
+        });
+        let link = click_cell.expect("expected c cell").expect("expected hyperlink");
+        assert_eq!(link.as_ref(), "https://example.com");
     }
 }

@@ -295,6 +295,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "prompt",
     "preprocess",
     "no-preprocess",
+    "no-color",
+    "raw-control-chars",
     "tag",
     "tag-file",
 ];
