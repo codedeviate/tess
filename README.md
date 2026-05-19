@@ -1,11 +1,12 @@
 # `tess`
 
 [![GitHub](https://img.shields.io/badge/github-codedeviate%2Ftess-181717?logo=github)](https://github.com/codedeviate/tess)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Rust edition 2021](<https://img.shields.io/badge/rust-2021_edition_(MSRV_1.85)-CE422B?logo=rust>)](https://www.rust-lang.org)
+<br/>
 [![Latest release](https://img.shields.io/badge/release-v0.18.0-blue)](https://github.com/codedeviate/tess/releases)
-[![Rust edition 2021](https://img.shields.io/badge/rust-2021_edition_(MSRV_1.85)-dea584?logo=rust)](https://www.rust-lang.org)
-[![crates.io](https://img.shields.io/crates/v/tess-cli?logo=rust&label=crates.io)](https://crates.io/crates/tess-cli)
-[![Homebrew tap](https://img.shields.io/badge/homebrew-codedeviate%2Fcli%2Ftess-fbb040?logo=homebrew)](https://github.com/codedeviate/homebrew-cli)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![crates.io](https://img.shields.io/badge/crates.io-tess--cli-fc8d62?logo=rust)](https://crates.io/crates/tess-cli)
+[![Homebrew](https://img.shields.io/badge/homebrew-codedeviate%2Fcli%2Ftess-fbb040?logo=homebrew)](https://github.com/codedeviate/homebrew-cli)
 
 A `less`-style terminal pager for files, pipes, and live logs — with first-class support for **structured-log filtering**, **pretty-printing** of JSON/YAML/TOML/XML/HTML/CSV, **ANSI color passthrough** for piped tools that emit colored output, **wrap-aware scrolling** of long lines, **multi-file navigation** with `:n`/`:p`/`:e` colon commands, and **ctags/etags tag jumping** (`-t NAME`, `Ctrl-]`/`Ctrl-T`). Escape to the shell with `!cmd`, preprocess inputs (`$LESSOPEN` / `--preprocess`), and remap keys via `~/.config/tess/keys.toml`. Written in Rust. macOS + Linux.
 
