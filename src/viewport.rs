@@ -144,6 +144,8 @@ pub struct Viewport {
     file_index: Option<(usize, usize)>,
     /// When set, status line and prompt context include `[tag: <name> (N/M)]`.
     tag_active: Option<(String, usize, usize)>,  // (name, cursor+1, total)
+    /// ANSI interpretation mode, resolved from --no-color / -r / env at startup.
+    ansi_mode: crate::render::AnsiMode,
 }
 
 impl Viewport {
@@ -173,6 +175,7 @@ impl Viewport {
             preprocess_failure: None,
             file_index: None,
             tag_active: None,
+            ansi_mode: crate::render::AnsiMode::Strict,
         }
     }
 
@@ -202,6 +205,10 @@ impl Viewport {
 
     pub fn set_tag_active(&mut self, info: Option<(String, usize, usize)>) {
         self.tag_active = info;
+    }
+
+    pub fn set_ansi_mode(&mut self, mode: crate::render::AnsiMode) {
+        self.ansi_mode = mode;
     }
 
     pub fn set_source_label(&mut self, label: String) {
@@ -557,6 +564,7 @@ impl Viewport {
     fn render_opts(&self, gutter: u16) -> RenderOpts {
         let mut o = self.opts.clone();
         o.cols = self.cols.saturating_sub(gutter);
+        o.mode = self.ansi_mode;
         o
     }
 
