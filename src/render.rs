@@ -113,10 +113,10 @@ fn decode_cluster(bytes: &[u8], i: usize) -> Option<(&str, usize)> {
 ///
 /// In `AnsiMode::Strict` / `AnsiMode::Raw`, every byte is printable (no
 /// pre-filtering). Style is default and hyperlink is None for all entries.
-fn prefilter<'a>(
+fn prefilter(
     bytes: &[u8],
     mode: AnsiMode,
-    state: Option<&'a mut RenderState>,
+    state: Option<&mut RenderState>,
 ) -> Vec<(u8, crate::ansi::Style, Option<Arc<str>>)> {
     match mode {
         AnsiMode::Strict | AnsiMode::Raw => {

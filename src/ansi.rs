@@ -28,18 +28,13 @@ pub enum Color {
     Default,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ParseState {
+    #[default]
     Normal,
     EscSeen,
     CsiBuilding(Vec<u8>),
     OscBuilding(Vec<u8>),
-}
-
-impl Default for ParseState {
-    fn default() -> Self {
-        ParseState::Normal
-    }
 }
 
 /// Single-step transition driven by one input byte.
