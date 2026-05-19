@@ -8,6 +8,39 @@ use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
 
+/// Maximum number of lines to walk backwards when reconstructing SGR state
+/// for a scroll-up. Picked to comfortably cover a screen-height plus
+/// headroom; bounds cost so that scrolling in huge files stays snappy.
+const MAX_RECONSTRUCT_LINES: usize = 256;
+
+/// Reconstruct the SGR state at the start of `target_line` by walking up
+/// to MAX_RECONSTRUCT_LINES lines back and replaying byte-by-byte through
+/// the ANSI parser. Lines beyond the cap are skipped: if there's an
+/// unclosed SGR more than 256 lines above the top, the reconstruction starts
+/// from default — first visible lines may render in default colors until a
+/// reset appears (rare for normal log files).
+fn reconstruct_render_state(
+    src: &dyn Source,
+    idx: &crate::line_index::LineIndex,
+    target_line: usize,
+) -> crate::render::RenderState {
+    let start = target_line.saturating_sub(MAX_RECONSTRUCT_LINES);
+    let mut state = crate::render::RenderState::default();
+    for line_no in start..target_line {
+        let range = idx.line_range(line_no, src);
+        let raw = src.bytes(range);
+        for &b in raw.as_ref() {
+            let _ = crate::ansi::step(
+                &mut state.parse,
+                &mut state.style,
+                &mut state.hyperlink,
+                b,
+            );
+        }
+    }
+    state
+}
+
 /// Build the rendered text of a display row plus a `starts` table mapping
 /// each char index in that text back to its starting cell column. The last
 /// entry is a sentinel pointing one past the row's width, so a match's
@@ -146,6 +179,13 @@ pub struct Viewport {
     tag_active: Option<(String, usize, usize)>,  // (name, cursor+1, total)
     /// ANSI interpretation mode, resolved from --no-color / -r / env at startup.
     ansi_mode: crate::render::AnsiMode,
+    /// Cached SGR/hyperlink state at the start of `render_state_for`.
+    /// Invalidated when top_line changes or source grows; reconstructed
+    /// by walking up to MAX_RECONSTRUCT_LINES lines back.
+    render_state: crate::render::RenderState,
+    /// Line number that `render_state` matches the start of. Sentinel
+    /// `usize::MAX` means "invalid, must reconstruct".
+    render_state_for: usize,
 }
 
 impl Viewport {
@@ -176,6 +216,8 @@ impl Viewport {
             file_index: None,
             tag_active: None,
             ansi_mode: crate::render::AnsiMode::Strict,
+            render_state: crate::render::RenderState::default(),
+            render_state_for: usize::MAX,
         }
     }
 
@@ -568,7 +610,7 @@ impl Viewport {
         o
     }
 
-    pub fn frame(&self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
+    pub fn frame(&mut self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
         if self.hex_mode {
             return self.frame_hex(src);
         }
@@ -577,6 +619,18 @@ impl Viewport {
 
         let gutter = self.gutter_width(idx);
         let r_opts = self.render_opts(gutter);
+
+        // Reconstruct per-line SGR state for the start of the visible window so
+        // that unclosed SGR sequences on lines above top_line carry through.
+        // Only meaningful in Interpret mode; harmless (and cheap) to skip otherwise.
+        let mut render_state = if self.ansi_mode == crate::render::AnsiMode::Interpret {
+            reconstruct_render_state(src, idx, self.top_line)
+        } else {
+            crate::render::RenderState::default()
+        };
+        // Store in the struct field for future cache use; mark current top_line.
+        self.render_state = render_state.clone();
+        self.render_state_for = self.top_line;
 
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
@@ -625,7 +679,12 @@ impl Viewport {
             } else {
                 raw.clone()
             };
-            let rows = render_line(&display_bytes, &r_opts, None);
+            let state_arg = if self.ansi_mode == crate::render::AnsiMode::Interpret {
+                Some(&mut render_state)
+            } else {
+                None
+            };
+            let rows = render_line(&display_bytes, &r_opts, state_arg);
             let style = if self.filter.is_some() || self.grep.is_some() {
                 if self.dim_mode {
                     if self.should_dim_line(line_n, idx, src) { RowStyle::Dim } else { RowStyle::Normal }
@@ -669,6 +728,10 @@ impl Viewport {
                 line_n += 1;
             }
         }
+
+        // After walking through the frame, render_state has been advanced past
+        // top_line. Invalidate the cached sentinel so next frame re-reconstructs.
+        self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
         Frame { body, row_styles, highlights, status }
@@ -1142,7 +1205,7 @@ mod tests {
     #[test]
     fn frame_renders_body_height_rows() {
         let (m, mut idx) = setup(b"a\nb\nc\nd\ne\n");
-        let v = Viewport::new(10, 5, "test".into());  // body = 4
+        let mut v = Viewport::new(10, 5, "test".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert_eq!(frame.body.len(), 4);
         assert_eq!(frame.body[0][0], Cell::Char { ch: 'a', width: 1, style: crate::ansi::Style::default(), hyperlink: None });
@@ -1243,7 +1306,7 @@ mod tests {
     #[test]
     fn status_line_shows_range_and_pct() {
         let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n");
-        let v = Viewport::new(20, 5, "f".into());  // body = 4
+        let mut v = Viewport::new(20, 5, "f".into());  // body = 4
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.starts_with("f  1-4/10"));
     }
@@ -1878,7 +1941,7 @@ mod tests {
     #[test]
     fn status_unchanged_when_records_inactive() {
         let (m, mut idx) = setup(b"a\nb\nc\n");
-        let v = Viewport::new(20, 5, "f".into());
+        let mut v = Viewport::new(20, 5, "f".into());
         let frame = v.frame(&m, &mut idx);
         let status = &frame.status;
         // Default format: <label>  <top>-<bot>/<total>  <pct>%
@@ -1895,7 +1958,7 @@ mod tests {
         let mut idx = LineIndex::new();
         idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
         idx.extend_to_end(&m);
-        let v = Viewport::new(20, 5, "f".into());
+        let mut v = Viewport::new(20, 5, "f".into());
         let frame = v.frame(&m, &mut idx);
         let status = &frame.status;
         assert!(status.contains("L1-3/3"), "lines block missing or wrong: {status}");
@@ -1983,5 +2046,49 @@ mod tests {
             "should not show indicator for single match: {}",
             frame.status
         );
+    }
+
+    // ----- SGR state reconstruction tests -----
+
+    #[test]
+    fn reconstruct_picks_up_state_from_prior_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mline 1\n");
+        m.append(b"line 2 (still red, no reset)\n");
+        m.append(b"line 3\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let state = reconstruct_render_state(&m, &idx, 2);
+        assert_eq!(
+            state.style.fg,
+            Some(crate::ansi::Color::Ansi(1)),
+            "red SGR from line 0 should persist to line 2"
+        );
+    }
+
+    #[test]
+    fn reconstruct_respects_reset_between_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mline 1\x1b[0m\n");
+        m.append(b"line 2 (default)\n");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        let state = reconstruct_render_state(&m, &idx, 1);
+        assert_eq!(state.style.fg, None);
+    }
+
+    #[test]
+    fn reconstruct_caps_walkback_at_max_lines() {
+        let m = MockSource::new();
+        m.append(b"\x1b[31mvery early\n");
+        for _ in 0..300 {
+            m.append(b"line\n");
+        }
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        // Line 290 is 290 lines past the red SGR. We cap at 256, so the
+        // anchor we'd pick is line 34 (290 - 256), which is past the red.
+        let state = reconstruct_render_state(&m, &idx, 290);
+        assert_eq!(state.style.fg, None);
     }
 }

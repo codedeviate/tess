@@ -5,7 +5,7 @@ use tess::render::Cell;
 use tess::source::FileSource;
 use tess::viewport::Viewport;
 
-fn render_to_strings(viewport: &Viewport, src: &dyn tess::source::Source) -> (Vec<String>, String) {
+fn render_to_strings(viewport: &mut Viewport, src: &dyn tess::source::Source) -> (Vec<String>, String) {
     let mut idx = LineIndex::new();
     let frame = viewport.frame(src, &mut idx);
     let body: Vec<String> = frame.body.iter().map(|row| {
@@ -26,8 +26,8 @@ fn render_to_strings(viewport: &Viewport, src: &dyn tess::source::Source) -> (Ve
 fn first_frame_no_options() {
     let path = Path::new("tests/fixtures/small.txt");
     let src = FileSource::open(path).unwrap();
-    let v = Viewport::new(20, 6, path.display().to_string());  // body = 5
-    let (body, status) = render_to_strings(&v, &src);
+    let mut v = Viewport::new(20, 6, path.display().to_string());  // body = 5
+    let (body, status) = render_to_strings(&mut v, &src);
     assert_eq!(body, vec![
         "alpha",
         "beta",
@@ -44,7 +44,7 @@ fn first_frame_with_line_numbers() {
     let src = FileSource::open(path).unwrap();
     let mut v = Viewport::new(20, 6, path.display().to_string());
     v.toggle_line_numbers();
-    let (body, _) = render_to_strings(&v, &src);
+    let (body, _) = render_to_strings(&mut v, &src);
     assert_eq!(body, vec![
         " 1 alpha",
         " 2 beta",
