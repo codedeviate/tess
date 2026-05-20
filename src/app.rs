@@ -1486,19 +1486,36 @@ fn emit_hyperlink_diff<W: Write>(
     Ok(())
 }
 
+/// DEC private mode 2026: synchronized output. Terminals that support it
+/// (iTerm2, Kitty, WezTerm, Alacritty, Ghostty, foot, recent VTE,
+/// Windows Terminal) buffer everything between `BEGIN` and `END` and
+/// present the whole frame atomically; terminals that don't recognize the
+/// sequence silently ignore it. This kills the flicker that would
+/// otherwise appear during a frame's per-row repaint.
+const SYNC_UPDATE_BEGIN: &[u8] = b"\x1b[?2026h";
+const SYNC_UPDATE_END: &[u8] = b"\x1b[?2026l";
+
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io::Result<()> {
     // Raw mode: in the kernel and writer, Raw is treated like Strict for
     // MVP. Full -r passthrough (bypass cell pipeline entirely, emit source
     // bytes raw) is parked as a follow-up.
 
-    // Reset attributes once before clear so the cleared cells inherit a
-    // clean state (some terminals fill cleared cells with the current
-    // attribute, which caused reverse-video bleed in earlier versions).
+    // Begin a synchronized update so the whole frame is presented atomically
+    // (see SYNC_UPDATE_BEGIN). Paired with per-row `Clear(UntilNewLine)`
+    // below, this replaces the previous global `Clear(All)` redraw and
+    // eliminates the visible blank-frame flicker on every scroll keystroke.
+    out.write_all(SYNC_UPDATE_BEGIN)?;
+
+    // Reset attributes once before drawing so the first row starts clean.
     out.queue(SetAttribute(Attribute::Reset))?;
     out.queue(ResetColor)?;
-    out.queue(Clear(ClearType::All))?;
+
     for (i, row) in frame.body.iter().enumerate() {
         out.queue(MoveTo(0, i as u16))?;
+        // Wipe whatever was on this row in the previous frame. Cursor is
+        // at col 0 so UntilNewLine clears the full row width, which also
+        // covers the shrink-on-resize case (old cells past the new edge).
+        out.queue(Clear(ClearType::UntilNewLine))?;
         // Defensive: every row begins with a full attribute reset, so a
         // mis-handled reset on the previous row can't bleed forward.
         out.queue(SetAttribute(Attribute::Reset))?;
@@ -1519,6 +1536,7 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
     }
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
+    out.queue(Clear(ClearType::UntilNewLine))?;
     out.queue(SetAttribute(Attribute::Reverse))?;
     let mut status = frame.status.clone();
     if status.len() > cols as usize {
@@ -1530,6 +1548,10 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
     out.queue(Print(status))?;
     out.queue(ResetColor)?;
     out.queue(SetAttribute(Attribute::Reset))?;
+
+    // End the synchronized update. The terminal flushes the buffered frame
+    // atomically on receipt of this sequence.
+    out.write_all(SYNC_UPDATE_END)?;
     out.flush()
 }
 
@@ -1635,6 +1657,47 @@ mod tests {
     fn parse_colon_n() {
         assert_eq!(parse_colon_command("n").unwrap(), ColonCommand::Next);
         assert_eq!(parse_colon_command("next").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn write_frame_brackets_with_sync_update_and_no_full_clear() {
+        // Locks in the flicker fix: every frame is wrapped in DEC mode 2026
+        // begin/end escapes, and the previous global `Clear(All)` is gone
+        // (replaced by per-row `Clear(UntilNewLine)`). If any of these
+        // assumptions changes, flicker is likely to come back.
+        use crate::ansi::Style;
+        use crate::render::Cell;
+        use crate::viewport::{Frame, RowStyle};
+
+        let row: Vec<Cell> = (0..3)
+            .map(|_| Cell::Char { ch: 'a', width: 1, style: Style::default(), hyperlink: None })
+            .collect();
+        let frame = Frame {
+            body: vec![row.clone(), row],
+            row_styles: vec![RowStyle::Normal, RowStyle::Normal],
+            highlights: vec![Vec::new(), Vec::new()],
+            status: "status".into(),
+        };
+
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame(&mut buf, &frame, 3, 3).unwrap();
+        let s = std::str::from_utf8(&buf).expect("ascii");
+
+        // Begin and end synchronized-update markers, in that order.
+        let begin = s.find("\x1b[?2026h").expect("begin sync update");
+        let end = s.find("\x1b[?2026l").expect("end sync update");
+        assert!(begin < end, "begin must precede end");
+        // Body content must sit between the markers.
+        let first_a = s.find('a').expect("body char");
+        assert!(begin < first_a && first_a < end, "body must be inside sync update");
+
+        // Full-screen `Clear(All)` (`\x1b[2J`) must NOT appear — it was the
+        // source of the flicker. Per-row clear-to-EOL (`\x1b[K`) is fine.
+        assert!(
+            !s.contains("\x1b[2J"),
+            "full-screen Clear(All) reintroduced — flicker fix regressed: {s:?}",
+        );
+        assert!(s.contains("\x1b[K"), "expected at least one Clear(UntilNewLine)");
     }
 
     #[test]

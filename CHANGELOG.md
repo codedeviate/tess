@@ -17,6 +17,23 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.19.0] — 2026-05-20
+
+### Changed
+
+- Frame rendering uses **synchronized output** (DEC private mode 2026):
+  every frame is wrapped in `\x1b[?2026h` … `\x1b[?2026l` so terminals
+  that support it (iTerm2, Kitty, WezTerm, Alacritty, Ghostty, foot,
+  recent VTE, Windows Terminal) buffer the whole frame and present it
+  atomically. Terminals that don't recognize the sequence ignore it.
+- The previous full-screen `Clear(All)` before each redraw is gone.
+  Each row now does its own `Clear(UntilNewLine)` after `MoveTo(0, i)`
+  immediately before painting, which also covers the shrink-on-resize
+  case (old cells past the new edge are wiped).
+- Together these eliminate the visible flicker that used to appear on
+  every `j` / `k` / arrow keystroke, every poll tick in follow mode,
+  and during resizes.
+
 ## [0.18.5] — 2026-05-20
 
 ### Documentation
@@ -375,7 +392,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.5...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/codedeviate/tess/compare/v0.18.5...v0.19.0
 [0.18.5]: https://github.com/codedeviate/tess/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/codedeviate/tess/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/codedeviate/tess/compare/v0.18.2...v0.18.3
