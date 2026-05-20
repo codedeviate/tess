@@ -514,25 +514,28 @@ impl Viewport {
         filter_ok && grep_ok
     }
 
-    /// Records-mode predicate. Filter is evaluated against the record's
-    /// header line because the format regex it's bound to was written for a
-    /// single line and typically anchors with `$`. Grep is evaluated against
-    /// the full multi-line record bytes, so patterns like `(?s)foo.*bar`
-    /// can match across continuation lines.
+    /// Records-mode predicate. Both filter and grep are evaluated against
+    /// the full multi-line record bytes. Filter uses the format regex with
+    /// dotall + multi-line semantics so greedy captures like
+    /// `(?P<message>.*)$` span the whole record body — `--filter
+    /// message~foo` matches when `foo` appears anywhere in the record, not
+    /// only on the header. Grep matches anywhere in the record bytes too,
+    /// so `(?s)foo.*bar` keeps working across continuation lines.
     fn record_passes(&self, idx: &LineIndex, src: &dyn Source, r: usize) -> bool {
+        let bytes = if self.filter.is_some() || self.grep.is_some() {
+            Some(idx.record_bytes_stripped(r, src))
+        } else {
+            None
+        };
         let filter_ok = match self.filter.as_ref() {
-            Some(f) => {
-                let head_line = idx.record_line_range(r).start;
-                let head_bytes = idx.line_bytes_stripped(head_line, src);
-                matches!(f.evaluate(&head_bytes), FilterMatch::Matched)
-            }
+            Some(f) => matches!(
+                f.evaluate_record(bytes.as_deref().unwrap()),
+                FilterMatch::Matched,
+            ),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => {
-                let bytes = idx.record_bytes_stripped(r, src);
-                g.matches(&bytes)
-            }
+            Some(g) => g.matches(bytes.as_deref().unwrap()),
             None => true,
         };
         filter_ok && grep_ok

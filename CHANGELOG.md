@@ -17,6 +17,27 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.18.4] — 2026-05-20
+
+### Changed
+
+- Records-mode `--filter` now evaluates the format regex against the full
+  multi-line record bytes with dotall + multi-line flags enabled, instead
+  of just the record's header line. Greedy captures such as
+  `(?P<message>.*)$` consume the entire record body across newlines, so
+  `--filter message~foo` matches when `foo` appears anywhere in the
+  record (header *or* continuation lines), which is how a user thinks
+  about a multi-line record. The 0.18.2 header-only behavior was a too
+  conservative first cut — fields that are bounded by line-end patterns
+  (`[^\]]+`, `\w+`, etc.) keep their old semantics because the bound is
+  honored regardless of dotall.
+
+### Fixed
+
+- `--stdout` / `--output` no longer drops records where the filter
+  predicate only matches text in the body, mirroring the same change in
+  the interactive viewport.
+
 ## [0.18.3] — 2026-05-20
 
 ### Fixed
@@ -346,7 +367,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.3...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.4...HEAD
+[0.18.4]: https://github.com/codedeviate/tess/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/codedeviate/tess/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/codedeviate/tess/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/codedeviate/tess/compare/v0.18.0...v0.18.1

@@ -177,9 +177,11 @@ fn emit_pending(
     }
 }
 
-/// Records-mode predicate for batch: filter evaluates against the record's
-/// header line, grep against the full multi-line record bytes. Mirrors
-/// `Viewport::record_passes` so the interactive and batch paths agree.
+/// Records-mode predicate for batch: both filter and grep evaluate against
+/// the full multi-line record bytes. Filter uses the format regex with
+/// dotall + multi-line semantics so greedy captures span the whole record
+/// body. Mirrors `Viewport::record_passes` so the interactive and batch
+/// paths agree.
 fn record_passes_batch(
     idx: &LineIndex,
     src: &dyn Source,
@@ -187,19 +189,16 @@ fn record_passes_batch(
     filter: Option<&CompiledFilter>,
     grep: Option<&GrepPredicate>,
 ) -> bool {
+    if filter.is_none() && grep.is_none() {
+        return true;
+    }
+    let bytes = idx.record_bytes_stripped(r, src);
     let filter_ok = match filter {
-        Some(f) => {
-            let head_line = idx.record_line_range(r).start;
-            let head_bytes = idx.line_bytes_stripped(head_line, src);
-            matches!(f.evaluate(&head_bytes), FilterMatch::Matched)
-        }
+        Some(f) => matches!(f.evaluate_record(&bytes), FilterMatch::Matched),
         None => true,
     };
     let grep_ok = match grep {
-        Some(g) => {
-            let bytes = idx.record_bytes_stripped(r, src);
-            g.matches(&bytes)
-        }
+        Some(g) => g.matches(&bytes),
         None => true,
     };
     filter_ok && grep_ok
@@ -390,6 +389,44 @@ mod tests {
             b"[1] kind=category\n  body a\n  body a2\n\
               [3] kind=category\n  body c\n",
         );
+    }
+
+    #[test]
+    fn filter_in_records_mode_matches_pattern_in_body() {
+        // The user's real case: format captures `message` as the tail after
+        // the timestamp; the record body holds the searched-for token on a
+        // continuation line, not the header. Records-mode evaluation runs
+        // the format regex with dotall+multiline so `(?P<message>.*)$`
+        // captures the whole body across newlines.
+        let m = MockSource::new();
+        m.append(
+            b"[23-Jul-2025 10:41:20 Europe/Stockholm] SourceFactory::getSource - sourceId: category, {\n    \"config\": \"[]\",\n    \"count\": \"0\"\n[23-Jul-2025 10:41:20 Europe/Stockholm] SourceFactory::getSource - sourceId: rule, {\n    \"rule_id\": \"1\",\n    \"count\": \"0\"\n",
+        );
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.set_record_start(
+            regex::bytes::Regex::new(r"^\[\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2} [^\]]+\]").unwrap(),
+        );
+
+        let fmt = LogFormat::compile(
+            "swerror",
+            r"^\[(?P<timestamp>(?P<day>\d{1,2})-(?P<month>[A-Za-z]+)-(?P<year>\d{4})\s(?P<hour>\d{2}):(?P<minute>\d{2}):(?P<second>\d{2})\s(?P<timezone>[^\]]+))\]\s(?P<message>.*)$",
+        )
+        .unwrap();
+        let f = CompiledFilter::compile(
+            &fmt,
+            vec![FilterSpec::parse("message~config").unwrap()],
+        )
+        .unwrap();
+
+        let out = run_to_vec(Box::new(m), idx, Some(f), None, None);
+        let s = std::str::from_utf8(&out).unwrap();
+        // Only the first record contains "config" — but it's in the body,
+        // not the header. The whole record (including the rule_id record that
+        // doesn't contain "config") should emit exactly the first record.
+        assert!(s.contains("sourceId: category"), "expected category record, got: {s}");
+        assert!(s.contains("\"config\":"), "expected body line with \"config\", got: {s}");
+        assert!(!s.contains("sourceId: rule"), "rule record should be filtered out, got: {s}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 
 use crate::format::LogFormat;
 
@@ -79,10 +79,17 @@ struct CompiledPredicate {
 /// A compiled filter bound to a specific format. Evaluating a line runs the
 /// format's regex once and applies all predicates against the resulting
 /// captures. AND semantics: a line matches iff every predicate matches.
+///
+/// `format_regex_record` is a sibling compiled from the same source pattern
+/// with dotall + multi-line flags enabled. Records-mode callers use it so
+/// greedy `.` / `.+` captures span across newlines within a single record
+/// (e.g. `(?P<message>.*)$` captures the entire record body instead of
+/// failing because the original `$` only matches end-of-input).
 #[derive(Debug)]
 pub struct CompiledFilter {
     pub format_name: String,
     format_regex: Regex,
+    format_regex_record: Regex,
     predicates: Vec<CompiledPredicate>,
 }
 
@@ -133,9 +140,18 @@ impl CompiledFilter {
                 regex,
             });
         }
+        let format_regex_record = RegexBuilder::new(format.regex.as_str())
+            .dot_matches_new_line(true)
+            .multi_line(true)
+            .build()
+            .map_err(|e| {
+                format!("format `{}`: rebuilding regex for records mode: {e}", format.name)
+            })?;
+
         Ok(Self {
             format_name: format.name.clone(),
             format_regex: format.regex.clone(),
+            format_regex_record,
             predicates,
         })
     }
@@ -144,11 +160,23 @@ impl CompiledFilter {
     /// line as UTF-8 with a lossy fallback so non-UTF-8 bytes can still flow
     /// through (they just won't match string-equal predicates).
     pub fn evaluate(&self, line: &[u8]) -> FilterMatch {
-        let line_str = match std::str::from_utf8(line) {
+        self.evaluate_with(&self.format_regex, line)
+    }
+
+    /// Records-mode evaluation: runs the format regex with dotall + multi-line
+    /// flags enabled against the full multi-line record bytes. Greedy
+    /// captures like `(?P<message>.*)$` consume the whole body of the record,
+    /// so predicates can match content on any continuation line.
+    pub fn evaluate_record(&self, record: &[u8]) -> FilterMatch {
+        self.evaluate_with(&self.format_regex_record, record)
+    }
+
+    fn evaluate_with(&self, regex: &Regex, bytes: &[u8]) -> FilterMatch {
+        let line_str = match std::str::from_utf8(bytes) {
             Ok(s) => s,
             Err(_) => return FilterMatch::NotParsed,
         };
-        let Some(caps) = self.format_regex.captures(line_str) else {
+        let Some(caps) = regex.captures(line_str) else {
             return FilterMatch::NotParsed;
         };
         for p in &self.predicates {
