@@ -17,6 +17,22 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.18.2] — 2026-05-20
+
+### Fixed
+
+- `--filter` in records mode now keeps the entire matching record visible,
+  not just the header line. The filter is evaluated against the record's
+  header line (where the format regex was designed to anchor with `$`) and,
+  on a match, all of the record's physical lines are kept. Previously the
+  format regex was applied to the full multi-line record bytes; the `$`
+  anchor never matched, the predicate returned `NotParsed`, and every
+  record was hidden — or, in batch mode, only the header line was emitted.
+- Batch mode (`--stdout` / `--output`) is now records-aware. It walks
+  records (not lines), evaluates the filter against the header and grep
+  against the full record bytes, and emits every physical line of each
+  matching record.
+
 ## [0.18.1] — 2026-05-20
 
 ### Fixed
@@ -314,7 +330,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.1...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.2...HEAD
+[0.18.2]: https://github.com/codedeviate/tess/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/codedeviate/tess/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/codedeviate/tess/releases/tag/v0.18.0
 [0.17.0]: https://github.com/codedeviate/tess/releases/tag/v0.17.0

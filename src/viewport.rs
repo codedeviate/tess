@@ -489,8 +489,7 @@ impl Viewport {
         self.visible_scanned = 0; // not used by records path; reset for clarity
         let total_records = idx.record_count();
         for r in 0..total_records {
-            let bytes = idx.record_bytes_stripped(r, src);
-            if self.line_passes(&bytes) {
+            if self.record_passes(idx, src, r) {
                 for line_n in idx.record_line_range(r) {
                     self.visible_lines.push(line_n);
                 }
@@ -500,9 +499,9 @@ impl Viewport {
 
     /// Combined predicate: bytes pass iff the (optional) filter matches AND
     /// the (optional) grep matches. Missing predicates vacuously pass.
-    /// In line mode, `bytes` is a single line. In records mode, `bytes` is
-    /// the full record (with embedded `\n`s) — callers are responsible for
-    /// passing the right granularity.
+    /// `bytes` is always a single logical line — records-mode callers go
+    /// through `record_passes` instead because the two predicates have
+    /// different granularity (filter = header line, grep = whole record).
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
@@ -510,6 +509,30 @@ impl Viewport {
         };
         let grep_ok = match self.grep.as_ref() {
             Some(g) => g.matches(line),
+            None => true,
+        };
+        filter_ok && grep_ok
+    }
+
+    /// Records-mode predicate. Filter is evaluated against the record's
+    /// header line because the format regex it's bound to was written for a
+    /// single line and typically anchors with `$`. Grep is evaluated against
+    /// the full multi-line record bytes, so patterns like `(?s)foo.*bar`
+    /// can match across continuation lines.
+    fn record_passes(&self, idx: &LineIndex, src: &dyn Source, r: usize) -> bool {
+        let filter_ok = match self.filter.as_ref() {
+            Some(f) => {
+                let head_line = idx.record_line_range(r).start;
+                let head_bytes = idx.line_bytes_stripped(head_line, src);
+                matches!(f.evaluate(&head_bytes), FilterMatch::Matched)
+            }
+            None => true,
+        };
+        let grep_ok = match self.grep.as_ref() {
+            Some(g) => {
+                let bytes = idx.record_bytes_stripped(r, src);
+                g.matches(&bytes)
+            }
             None => true,
         };
         filter_ok && grep_ok
@@ -524,8 +547,7 @@ impl Viewport {
         }
         if idx.records_mode() {
             let r = idx.line_to_record(line_n);
-            let bytes = idx.record_bytes_stripped(r, src);
-            !self.line_passes(&bytes)
+            !self.record_passes(idx, src, r)
         } else {
             let bytes = idx.line_bytes_stripped(line_n, src);
             !self.line_passes(&bytes)
@@ -1896,6 +1918,37 @@ mod tests {
         // Record 0 ([1] head + cont a) matches; lines 0 and 1 visible.
         // Record 1 ([2] head + cont b) does not match; lines 2 and 3 hidden.
         assert_eq!(v.visible_lines(), &[0usize, 1]);
+    }
+
+    #[test]
+    fn filter_in_records_mode_keeps_whole_record_when_header_matches() {
+        // The format regex is designed for the header line (it ends with `$`).
+        // Applied to the full multi-line record bytes it would never match
+        // because `$` doesn't match before a non-final `\n`. Records-mode
+        // filter must evaluate against the first line of the record, then
+        // include all of the record's lines when it matches.
+        let m = MockSource::new();
+        m.append(
+            b"[1] kind=category\n  body a\n  body a2\n[2] kind=rule\n  body b\n",
+        );
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+        let fmt = crate::format::LogFormat::compile(
+            "rec",
+            r"^\[(?P<id>\d+)\] kind=(?P<kind>.+)$",
+        )
+        .unwrap();
+        let f = crate::filter::CompiledFilter::compile(
+            &fmt,
+            vec![crate::filter::FilterSpec::parse("kind~category").unwrap()],
+        )
+        .unwrap();
+        let mut v = Viewport::new(40, 10, "f".into());
+        v.set_filter(Some(f));
+        v.extend_visible_lines(&idx, &m);
+        // Record 0 (lines 0, 1, 2) matches; record 1 (lines 3, 4) does not.
+        assert_eq!(v.visible_lines(), &[0usize, 1, 2]);
     }
 
     #[test]

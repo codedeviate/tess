@@ -111,11 +111,17 @@ pub fn run(
     Ok(())
 }
 
-/// Emit lines `[next_line, idx.line_count())` that pass the filter (or all of
-/// them if no filter is bound). Returns the new `next_line` cursor. When a
-/// `DisplayRenderer` is supplied, parsed lines are written through the
-/// template; lines that don't parse fall back to the raw bytes so no data is
-/// silently lost.
+/// Emit pending output that passes the filter (or all of it if no filter
+/// is bound). In line mode the cursor is a logical-line index; in records
+/// mode the predicates evaluate per record (filter on the header line,
+/// grep on the full multi-line record bytes) and all physical lines of a
+/// matching record are emitted. When a `DisplayRenderer` is supplied,
+/// parsed lines are written through the template; lines that don't parse
+/// fall back to the raw bytes so no data is silently lost.
+///
+/// `next_line` is always advanced to one-past the last emitted physical
+/// line so the follow-mode caller can pick up cleanly when new bytes
+/// arrive.
 fn emit_pending(
     src: &dyn Source,
     idx: &mut LineIndex,
@@ -126,31 +132,98 @@ fn emit_pending(
     mut next_line: usize,
 ) -> Result<usize> {
     let total = idx.line_count();
-    while next_line < total {
-        let range = idx.line_range(next_line, src);
-        let bytes = src.bytes(range);
-        let filter_ok = match filter {
-            None => true,
-            Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
-        };
-        let grep_ok = match grep {
-            None => true,
-            Some(g) => g.matches(&bytes),
-        };
-        if filter_ok && grep_ok {
-            match display.and_then(|r| r.render_line(&bytes)) {
-                Some(rendered) => {
-                    out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
-                }
-                None => {
-                    out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+    if idx.records_mode() {
+        // Walk records that overlap `[next_line, total)`. Skip records whose
+        // entire line range lies before `next_line` (already emitted). For
+        // each remaining record, evaluate the predicates once and, if the
+        // record passes, emit *all* of its physical lines.
+        let total_records = idx.record_count();
+        let start_record = idx.line_to_record(next_line);
+        for r in start_record..total_records {
+            let range = idx.record_line_range(r);
+            if range.end <= next_line {
+                continue;
+            }
+            let passes = record_passes_batch(idx, src, r, filter, grep);
+            if passes {
+                for line_n in range.clone() {
+                    if line_n < next_line {
+                        continue;
+                    }
+                    emit_line(src, idx, line_n, display, out)?;
                 }
             }
-            out.write_all(b"\n").map_err(|e| Error::Runtime(format!("write: {e}")))?;
+            next_line = range.end;
         }
-        next_line += 1;
+        Ok(next_line)
+    } else {
+        while next_line < total {
+            let range = idx.line_range(next_line, src);
+            let bytes = src.bytes(range);
+            let filter_ok = match filter {
+                None => true,
+                Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
+            };
+            let grep_ok = match grep {
+                None => true,
+                Some(g) => g.matches(&bytes),
+            };
+            if filter_ok && grep_ok {
+                emit_line(src, idx, next_line, display, out)?;
+            }
+            next_line += 1;
+        }
+        Ok(next_line)
     }
-    Ok(next_line)
+}
+
+/// Records-mode predicate for batch: filter evaluates against the record's
+/// header line, grep against the full multi-line record bytes. Mirrors
+/// `Viewport::record_passes` so the interactive and batch paths agree.
+fn record_passes_batch(
+    idx: &LineIndex,
+    src: &dyn Source,
+    r: usize,
+    filter: Option<&CompiledFilter>,
+    grep: Option<&GrepPredicate>,
+) -> bool {
+    let filter_ok = match filter {
+        Some(f) => {
+            let head_line = idx.record_line_range(r).start;
+            let head_bytes = idx.line_bytes_stripped(head_line, src);
+            matches!(f.evaluate(&head_bytes), FilterMatch::Matched)
+        }
+        None => true,
+    };
+    let grep_ok = match grep {
+        Some(g) => {
+            let bytes = idx.record_bytes_stripped(r, src);
+            g.matches(&bytes)
+        }
+        None => true,
+    };
+    filter_ok && grep_ok
+}
+
+fn emit_line(
+    src: &dyn Source,
+    idx: &LineIndex,
+    line_n: usize,
+    display: Option<&DisplayRenderer>,
+    out: &mut dyn Write,
+) -> Result<()> {
+    let range = idx.line_range(line_n, src);
+    let bytes = src.bytes(range);
+    match display.and_then(|r| r.render_line(&bytes)) {
+        Some(rendered) => {
+            out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+        }
+        None => {
+            out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+        }
+    }
+    out.write_all(b"\n").map_err(|e| Error::Runtime(format!("write: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -282,6 +355,60 @@ mod tests {
         let g = GrepPredicate::compile(&["error".to_string()]).unwrap();
         let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(g), None);
         assert_eq!(out, b"keep error one\nkeep error two\n");
+    }
+
+    #[test]
+    fn filter_in_records_mode_emits_all_lines_of_matching_record() {
+        // The format regex ends with `$`; applied to a multi-line record blob
+        // it would never match. Batch must evaluate the filter against the
+        // first line of each record, then emit *all* of the record's lines
+        // when it matches.
+        let m = MockSource::new();
+        m.append(
+            b"[1] kind=category\n  body a\n  body a2\n\
+              [2] kind=rule\n  body b\n\
+              [3] kind=category\n  body c\n",
+        );
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+
+        let fmt = LogFormat::compile(
+            "rec",
+            r"^\[(?P<id>\d+)\] kind=(?P<kind>.+)$",
+        )
+        .unwrap();
+        let f = CompiledFilter::compile(
+            &fmt,
+            vec![FilterSpec::parse("kind~category").unwrap()],
+        )
+        .unwrap();
+
+        let out = run_to_vec(Box::new(m), idx, Some(f), None, None);
+        assert_eq!(
+            out,
+            b"[1] kind=category\n  body a\n  body a2\n\
+              [3] kind=category\n  body c\n",
+        );
+    }
+
+    #[test]
+    fn grep_in_records_mode_emits_all_lines_of_matching_record() {
+        use crate::grep::GrepPredicate;
+        let m = MockSource::new();
+        m.append(
+            b"[1] head\n  Renderer.php\n  more body\n\
+              [2] other\n  unrelated\n",
+        );
+        m.finish();
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+
+        // Pattern matches a continuation line, not the header. Records-aware
+        // grep should pull in the whole record.
+        let g = GrepPredicate::compile(&["Renderer".to_string()]).unwrap();
+        let out = run_to_vec(Box::new(m), idx, None, Some(g), None);
+        assert_eq!(out, b"[1] head\n  Renderer.php\n  more body\n");
     }
 
     #[test]
