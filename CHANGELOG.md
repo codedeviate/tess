@@ -17,6 +17,14 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.18.5] — 2026-05-20
+
+### Documentation
+
+- CLAUDE.md: the post-commit build chore skips the debug profile by
+  default; only `cargo build --release` runs. Debug is built only when
+  actually needed or on explicit request.
+
 ## [0.18.4] — 2026-05-20
 
 ### Changed
@@ -367,7 +375,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.5...HEAD
+[0.18.5]: https://github.com/codedeviate/tess/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/codedeviate/tess/compare/v0.18.3...v0.18.4
 [0.18.3]: https://github.com/codedeviate/tess/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/codedeviate/tess/compare/v0.18.1...v0.18.2
