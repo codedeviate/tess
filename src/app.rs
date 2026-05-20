@@ -1577,9 +1577,15 @@ fn write_row_with_highlights(
             Cell::Char { ch, width, style, hyperlink } => {
                 // Effective style: cell's style with reverse toggled when in
                 // a highlight, so highlight composes with already-reverse content.
+                // Row-level dim (from `--dim` non-matching rows) is OR'd into
+                // each cell unless the cell explicitly sets bold (bold and dim
+                // share the SGR intensity slot; bold wins).
                 let mut eff = *style;
                 if in_highlight {
                     eff.reverse = !eff.reverse;
+                }
+                if base_style.dim && !eff.bold {
+                    eff.dim = true;
                 }
                 emit_style_diff(out, &prev_style, &eff)?;
                 emit_hyperlink_diff(out, &prev_link, hyperlink)?;
@@ -1593,8 +1599,14 @@ fn write_row_with_highlights(
             }
             Cell::Empty => {
                 // Background padding. Reset style to default so we don't
-                // paint the rest of the line in the last active color.
-                let default = crate::ansi::Style::default();
+                // paint the rest of the line in the last active color —
+                // but preserve the row-level dim so trailing padding on a
+                // dim row stays dim.
+                let default = if base_style.dim {
+                    crate::ansi::Style { dim: true, ..Default::default() }
+                } else {
+                    crate::ansi::Style::default()
+                };
                 emit_style_diff(out, &prev_style, &default)?;
                 emit_hyperlink_diff(out, &prev_link, &None)?;
                 out.queue(Print(' '))?;
@@ -1623,6 +1635,68 @@ mod tests {
     fn parse_colon_n() {
         assert_eq!(parse_colon_command("n").unwrap(), ColonCommand::Next);
         assert_eq!(parse_colon_command("next").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn dim_row_keeps_dim_through_plain_cells_and_padding() {
+        // Regression: a row with base_style.dim=true and Cell::Char carrying
+        // Style::default() used to emit `\x1b[22m` (NormalIntensity) on the
+        // first char, killing the row-level dim and rendering the whole
+        // line at normal intensity. Same for Cell::Empty padding cells.
+        use crate::ansi::Style;
+        use crate::render::Cell;
+        let row = vec![
+            Cell::Char { ch: 'h', width: 1, style: Style::default(), hyperlink: None },
+            Cell::Char { ch: 'i', width: 1, style: Style::default(), hyperlink: None },
+            Cell::Empty,
+            Cell::Empty,
+        ];
+        let mut buf: Vec<u8> = Vec::new();
+        let base = Style { dim: true, ..Default::default() };
+        write_row_with_highlights(&mut buf, &row, 4, &[], base).unwrap();
+        let s = String::from_utf8_lossy(&buf);
+
+        // Locate every emitted character; before any of them is printed, the
+        // dim attribute must NOT have been cleared.
+        for needle in ['h', 'i'] {
+            let pos = s.find(needle).expect("char printed");
+            let before = &s[..pos];
+            assert!(
+                !before.contains("\x1b[22m"),
+                "dim cleared before {needle:?}: {before:?}",
+            );
+        }
+        // The Cell::Empty padding shouldn't clear dim either. Look at the
+        // bytes between 'i' and the end-of-row Reset.
+        let after_i = s.find('i').unwrap() + 1;
+        let eor = s[after_i..].find("\x1b[0m").unwrap_or(s.len() - after_i);
+        let pad = &s[after_i..after_i + eor];
+        assert!(
+            !pad.contains("\x1b[22m"),
+            "dim cleared in padding region: {pad:?}",
+        );
+    }
+
+    #[test]
+    fn dim_row_yields_to_explicit_bold_cell() {
+        // If a cell carries bold=true from ANSI, that wins over row-level
+        // dim (bold and dim share the SGR intensity slot).
+        use crate::ansi::Style;
+        use crate::render::Cell;
+        let row = vec![
+            Cell::Char {
+                ch: 'B',
+                width: 1,
+                style: Style { bold: true, ..Default::default() },
+                hyperlink: None,
+            },
+        ];
+        let mut buf: Vec<u8> = Vec::new();
+        let base = Style { dim: true, ..Default::default() };
+        write_row_with_highlights(&mut buf, &row, 1, &[], base).unwrap();
+        let s = String::from_utf8_lossy(&buf);
+        // Bold should be emitted (\x1b[1m); dim should not re-appear.
+        assert!(s.contains("\x1b[1m"), "expected Bold escape, got {s:?}");
     }
 
     #[test]
