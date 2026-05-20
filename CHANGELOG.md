@@ -17,6 +17,22 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.18.3] — 2026-05-20
+
+### Fixed
+
+- Records-mode status line no longer produces inverted record ranges like
+  `R290-8/538631`. In hide mode (filter / grep without `--dim`) the
+  status-line `bottom` is a position in `visible_lines`, not a logical
+  line index. The R-block was passing that position into `line_to_record`,
+  which resolved to an early record in the file (`8`) instead of the
+  record actually visible at the bottom of the viewport. A new
+  `bottom_visible_line()` helper resolves the real logical line at the
+  bottom of the body — `visible_lines[cur + body_rows - 1]` in hide mode,
+  `top_line + body_rows - 1` otherwise — and the R-block is derived from
+  that. A defensive clamp keeps `rec_bottom >= rec_top` against future
+  regressions.
+
 ## [0.18.2] — 2026-05-20
 
 ### Fixed
@@ -330,7 +346,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.18.3...HEAD
+[0.18.3]: https://github.com/codedeviate/tess/compare/v0.18.2...v0.18.3
 [0.18.2]: https://github.com/codedeviate/tess/compare/v0.18.1...v0.18.2
 [0.18.1]: https://github.com/codedeviate/tess/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/codedeviate/tess/releases/tag/v0.18.0

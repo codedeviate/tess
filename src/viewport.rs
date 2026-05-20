@@ -554,6 +554,31 @@ impl Viewport {
         }
     }
 
+    /// Logical line index of the *last* row drawn in the body, given the
+    /// current `top_line` and `body_rows`. In line mode this is just
+    /// `top_line + body_rows - 1` clamped to the indexed line count. In hide
+    /// mode it's the logical line that sits at the bottom of the visible
+    /// slice — i.e. `visible_lines[cur + body_rows - 1]`. Always returns a
+    /// value `>= self.top_line`, so callers passing it to `line_to_record`
+    /// never get a "bottom record < top record" inversion.
+    fn bottom_visible_line(&self, idx: &LineIndex) -> usize {
+        let body_rows = self.body_rows() as usize;
+        if self.hide_mode() && !self.visible_lines.is_empty() {
+            let cur = self
+                .visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(self.visible_lines.len().saturating_sub(1));
+            let last_pos = (cur + body_rows.saturating_sub(1)).min(self.visible_lines.len() - 1);
+            return self.visible_lines[last_pos];
+        }
+        let total = idx.line_count();
+        if total == 0 {
+            return self.top_line;
+        }
+        (self.top_line + body_rows.saturating_sub(1)).min(total - 1)
+    }
+
     pub fn body_rows(&self) -> u16 { self.rows.saturating_sub(1).max(1) }
 
     pub fn follow_mode(&self) -> bool { self.follow_mode }
@@ -792,6 +817,9 @@ impl Viewport {
         };
         let pct = (bottom * 100).checked_div(total_for_pct).unwrap_or(0);
         // In records mode, prefix line numbers with 'L' and append an 'R' record block.
+        // The R block always refers to logical lines on screen, which in hide
+        // mode is *not* the same as `bottom` (which counts visible matches).
+        let bottom_line = self.bottom_visible_line(idx);
         let (line_prefix, records_block) = if idx.records_mode() {
             let line_total = idx.line_count();
             let rec_total = idx.record_count();
@@ -799,7 +827,15 @@ impl Viewport {
                 format!("R0-0/{}", rec_total)
             } else {
                 let rec_top = idx.line_to_record(self.top_line) + 1;
-                let rec_bottom = idx.line_to_record(bottom.saturating_sub(1)) + 1;
+                let rec_bottom = idx.line_to_record(bottom_line) + 1;
+                let (rec_top, rec_bottom) = if rec_bottom < rec_top {
+                    // Defensive: should be unreachable given `bottom_visible_line`
+                    // is always `>= self.top_line`, but guard against future
+                    // regressions producing nonsense like `R290-8/...`.
+                    (rec_top, rec_top)
+                } else {
+                    (rec_top, rec_bottom)
+                };
                 format!("R{}-{}/{}", rec_top, rec_bottom, rec_total)
             };
             ("L", Some(rec_block))
@@ -866,11 +902,13 @@ impl Viewport {
         let top = self.top_line + 1;
         let bottom = (self.top_line + body_rows).min(total.max(1));
         let pct = (bottom * 100).checked_div(total).unwrap_or(0);
+        let bottom_line = self.bottom_visible_line(idx);
 
         let records_mode = idx.records_mode();
         let (rec_top, rec_bottom, rec_total) = if records_mode {
             let rt = idx.line_to_record(self.top_line) + 1;
-            let rb = idx.line_to_record(bottom.saturating_sub(1)) + 1;
+            let rb_raw = idx.line_to_record(bottom_line) + 1;
+            let rb = if rb_raw < rt { rt } else { rb_raw };
             (rt, rb, idx.record_count())
         } else {
             (0, 0, 0)
@@ -2001,6 +2039,60 @@ mod tests {
         assert!(status.contains("1-3/3"), "got: {status}");
         assert!(!status.contains("L1"), "no L block in line-mode: {status}");
         assert!(!status.contains("R1"), "no R block in line-mode: {status}");
+    }
+
+    #[test]
+    fn status_r_block_uses_real_lines_in_hide_mode() {
+        // Regression: in hide mode `bottom` is a position in visible_lines
+        // (i.e. a count of *visible* matches), not a logical line index.
+        // The R-block was passing that position into `line_to_record`, which
+        // resolved to whatever record contained logical line `bottom-1` —
+        // typically a very early record, producing nonsense like `R290-8`
+        // where the bottom record is *before* the top record on screen.
+        // Build a scenario: many records, only the last few match the filter,
+        // and the viewport is scrolled to the matching tail.
+        let m = MockSource::new();
+        // 10 records, two physical lines each. Record N's header has `kind=A`
+        // for N < 8 and `kind=B` for N >= 8 (so only records 8 and 9 match).
+        let mut buf = Vec::new();
+        for n in 0..10 {
+            let kind = if n >= 8 { "B" } else { "A" };
+            buf.extend_from_slice(format!("[{}] kind={}\n  body {}\n", n, kind, n).as_bytes());
+        }
+        m.append(&buf);
+        m.finish();
+
+        let mut idx = LineIndex::new();
+        idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
+        idx.extend_to_end(&m);
+
+        let fmt = crate::format::LogFormat::compile(
+            "rec",
+            r"^\[(?P<id>\d+)\] kind=(?P<kind>.+)$",
+        )
+        .unwrap();
+        let f = crate::filter::CompiledFilter::compile(
+            &fmt,
+            vec![crate::filter::FilterSpec::parse("kind=B").unwrap()],
+        )
+        .unwrap();
+
+        // 5-row terminal: 4 body rows + 1 status row. With 4 visible-matches
+        // rows of body and 4 visible lines, the whole filtered set fits.
+        let mut v = Viewport::new(80, 5, "f".into());
+        v.set_filter(Some(f));
+        v.extend_visible_lines(&idx, &m);
+
+        // Jump to the first matching record (record 8, 0-indexed).
+        v.goto_record(8, &m, &mut idx);
+
+        let frame = v.frame(&m, &mut idx);
+        // Records 8 (rec_top=9) and 9 (rec_bottom=10) are on screen.
+        assert!(
+            frame.status.contains("R9-10/10"),
+            "expected R9-10/10 in status, got: {}",
+            frame.status,
+        );
     }
 
     #[test]
