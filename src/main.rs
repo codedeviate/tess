@@ -224,7 +224,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
     }
 
     let sigterm = install_signal_flag();
-    let _guard = TerminalGuard::enter()
+    let _guard = TerminalGuard::enter(false)
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
     let mut viewport = Viewport::new(cols, rows, label.to_string());
@@ -543,7 +543,7 @@ showing raw (use --content-type=NAME to override)"
         return batch::run(src, idx, compiled_filter, compiled_grep, display_renderer, spec, sigterm);
     }
 
-    let _guard = TerminalGuard::enter()
+    let _guard = TerminalGuard::enter(args.mouse)
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
 
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));

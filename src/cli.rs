@@ -93,15 +93,21 @@ pub struct Args {
     #[arg(long = "manual", display_order = 15)]
     pub manual: bool,
 
+    /// Enable mouse capture: click rows in the file picker / help overlay,
+    /// and scrollwheel scrolls the body. Trade-off: most terminals disable
+    /// their native text selection while mouse capture is on.
+    #[arg(long = "mouse", display_order = 16)]
+    pub mouse: bool,
+
     /// Show raw control bytes as `^X` glyphs (pre-0.18 default). Disables
     /// SGR / OSC interpretation. Honoured also by the `NO_COLOR` environment
     /// variable (any non-empty value) and `CLICOLOR=0`.
-    #[arg(long = "no-color", display_order = 16)]
+    #[arg(long = "no-color", display_order = 17)]
     pub no_color: bool,
 
     /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
     /// for one invocation.
-    #[arg(long = "no-preprocess", conflicts_with = "preprocess", display_order = 17)]
+    #[arg(long = "no-preprocess", conflicts_with = "preprocess", display_order = 18)]
     pub no_preprocess: bool,
 
     /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
@@ -110,7 +116,7 @@ pub struct Args {
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 18)]
+    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 19)]
     pub output: Option<String>,
 
     /// Pipe the source file through this command before rendering.
@@ -120,7 +126,7 @@ pub struct Args {
         long = "preprocess",
         value_name = "CMD",
         conflicts_with_all = ["no_preprocess", "hex", "follow", "live"],
-        display_order = 19,
+        display_order = 20,
     )]
     pub preprocess: Option<String>,
 
@@ -129,7 +135,7 @@ pub struct Args {
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 20)]
+    #[arg(long = "prettify", display_order = 21)]
     pub prettify: bool,
 
     /// Replace the hardcoded status format with a templated string.
@@ -139,13 +145,13 @@ pub struct Args {
     /// hide-tag, search-tag, pretty-tag, live-tag, follow-tag.
     /// Per-format default can be set via `prompt = '...'` in formats.toml.
     /// Mutually exclusive with --hex.
-    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 21)]
+    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 22)]
     pub prompt: Option<String>,
 
     /// Pass every byte to the terminal raw, including cursor moves and
     /// non-SGR escape sequences. Risky: scroll math may break on long lines.
     /// Less-style -r. Mutually exclusive with --no-color.
-    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color", display_order = 22)]
+    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color", display_order = 23)]
     pub raw_control_chars: bool,
 
     /// Treat lines matching REGEX as record boundaries. Lines that don't
@@ -154,29 +160,29 @@ pub struct Args {
     /// Overrides the active --format's record_start if both are present.
     /// Without --format, this is the only way to enable records mode for
     /// plain text. Example: --record-start '^\['
-    #[arg(long = "record-start", value_name = "REGEX", display_order = 23)]
+    #[arg(long = "record-start", value_name = "REGEX", display_order = 24)]
     pub record_start: Option<String>,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 24)]
+    #[arg(long = "stdout", conflicts_with = "output", display_order = 25)]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 25)]
+    #[arg(long = "tab-width", default_value_t = 8, display_order = 26)]
     pub tab_width: u8,
 
     /// Jump to the tag NAME at startup (requires a tags file).
-    #[arg(short = 't', long = "tag", value_name = "NAME", display_order = 26)]
+    #[arg(short = 't', long = "tag", value_name = "NAME", display_order = 27)]
     pub tag: Option<String>,
 
     /// Path to the tags file. Default: walk up from CWD looking for `tags`.
-    #[arg(short = 'T', long = "tag-file", value_name = "PATH", display_order = 27)]
+    #[arg(short = 'T', long = "tag-file", value_name = "PATH", display_order = 28)]
     pub tag_file: Option<std::path::PathBuf>,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 28)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 29)]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
@@ -361,6 +367,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_mouse_flag() {
+        let a = Args::parse_from(["tess", "--mouse", "f"]);
+        assert!(a.mouse);
+    }
+
+    #[test]
+    fn mouse_defaults_off() {
+        let a = Args::parse_from(["tess", "f"]);
+        assert!(!a.mouse);
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -382,6 +400,7 @@ mod tests {
             "--list-formats",
             "--live",
             "--manual",
+            "--mouse",
             "--no-color",
             "--no-preprocess",
             "--output",

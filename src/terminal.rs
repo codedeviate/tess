@@ -7,18 +7,26 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 
 /// RAII guard that enables raw mode + alt screen on construction and restores
 /// the terminal on drop (including during panic unwind).
-pub struct TerminalGuard;
+pub struct TerminalGuard {
+    mouse: bool,
+}
 
 impl TerminalGuard {
-    pub fn enter() -> io::Result<Self> {
+    pub fn enter(mouse: bool) -> io::Result<Self> {
         enable_raw_mode()?;
         crossterm::execute!(io::stdout(), EnterAlternateScreen, Hide)?;
-        Ok(TerminalGuard)
+        if mouse {
+            crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+        }
+        Ok(TerminalGuard { mouse })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if self.mouse {
+            let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
+        }
         let _ = crossterm::execute!(io::stdout(), Show, LeaveAlternateScreen);
         let _ = disable_raw_mode();
     }
