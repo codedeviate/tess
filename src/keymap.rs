@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::input::Command;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
     Movement,
     Search,
@@ -233,6 +233,8 @@ pub static KEY_REGISTRY: &[KeyEntry] = &[
         command: Command::MarkJump,
         command_name: "mark-jump",
     },
+    // Two-key chord: first Ctrl-X emits CtrlXPrefix; the second Ctrl-X dispatches JumpPrevious.
+    // The registry records the final intent (JumpPrevious) as that's what users see in help.
     KeyEntry {
         keys: &["Ctrl-X Ctrl-X"],
         category: Category::Marks,
@@ -315,7 +317,7 @@ pub static KEY_REGISTRY: &[KeyEntry] = &[
         command_name: "colon-prompt",
     },
     KeyEntry {
-        keys: &["0-9"],
+        keys: &["0", "1-9"],
         category: Category::Misc,
         description: "numeric prefix (e.g. 5G jumps to record 5)",
         command: Command::Digit(0),
