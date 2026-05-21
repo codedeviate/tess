@@ -3,6 +3,7 @@
 //! keys per command_name.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -12,13 +13,19 @@ use crate::overlay::{Overlay, OverlayFrame, OverlayOutcome};
 
 pub struct HelpOverlay {
     filter: String,
-    cursor: usize,          // row index across the flat rendered list
+    cursor: usize,              // body-row index (0 = title row)
+    rows_offset: Cell<usize>,   // first visible body row (interior-mutable so render stays &self)
     user_remaps: HashMap<String, Vec<String>>,
 }
 
 impl HelpOverlay {
     pub fn new(user_remaps: HashMap<String, Vec<String>>) -> Self {
-        Self { filter: String::new(), cursor: 0, user_remaps }
+        Self {
+            filter: String::new(),
+            cursor: 0,
+            rows_offset: Cell::new(0),
+            user_remaps,
+        }
     }
 
     fn visible_entries(&self) -> Vec<&'static KeyEntry> {
@@ -51,6 +58,7 @@ impl Overlay for HelpOverlay {
                 } else {
                     self.filter.clear();
                     self.cursor = 0;
+                    self.rows_offset.set(0);
                     OverlayOutcome::Stay
                 }
             }
@@ -76,18 +84,20 @@ impl Overlay for HelpOverlay {
             (KeyCode::Backspace, _) => {
                 self.filter.pop();
                 self.cursor = 0;
+                self.rows_offset.set(0);
                 OverlayOutcome::Stay
             }
             (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
                 self.filter.push(c);
                 self.cursor = 0;
+                self.rows_offset.set(0);
                 OverlayOutcome::Stay
             }
             _ => OverlayOutcome::Stay,
         }
     }
 
-    fn render(&self, _width: u16, _height: u16) -> OverlayFrame {
+    fn render(&self, _width: u16, height: u16) -> OverlayFrame {
         let entries = self.visible_entries();
         let total = entries.len();
         let mut body = Vec::new();
@@ -122,8 +132,30 @@ impl Overlay for HelpOverlay {
             }
         }
 
+        // Scroll: clamp cursor to body length, then adjust rows_offset to
+        // keep cursor in view (mirrors FilePicker's stable scroll algorithm).
+        let visible_rows = (height as usize).saturating_sub(1); // reserve bottom row for status
+        let cursor = self.cursor.min(body.len().saturating_sub(1));
+        let mut offset = self.rows_offset.get();
+        if visible_rows > 0 {
+            if cursor < offset {
+                // Cursor went off the top: scroll up to put it at the top.
+                offset = cursor;
+            } else if cursor >= offset + visible_rows {
+                // Cursor went off the bottom: scroll just enough to put it at the bottom.
+                offset = cursor + 1 - visible_rows;
+            }
+            // Otherwise: cursor is already visible; leave offset alone.
+        }
+        self.rows_offset.set(offset);
+
+        let clipped: Vec<String> = body.into_iter()
+            .skip(offset)
+            .take(visible_rows.max(1))
+            .collect();
+
         let status = "[filter]  \u{2191}\u{2193} Esc".to_string();
-        OverlayFrame { body, status }
+        OverlayFrame { body: clipped, status }
     }
 
     fn title(&self) -> Cow<'_, str> { Cow::Borrowed("Help") }
@@ -177,7 +209,7 @@ mod tests {
     #[test]
     fn render_includes_category_headers_in_fixed_order() {
         let h = help();
-        let frame = h.render(80, 30);
+        let frame = h.render(80, 200); // tall enough to show all categories without clipping
         // Find the row indices of each category label.
         let positions: Vec<usize> = Category::ORDER.iter()
             .map(|c| frame.body.iter().position(|l| l == c.label()).unwrap_or(usize::MAX))
@@ -195,5 +227,33 @@ mod tests {
         let frame = h.render(80, 30);
         assert!(frame.body[0].starts_with("Help ("), "title: {:?}", frame.body[0]);
         assert!(frame.body[0].contains("\"q\""));
+    }
+
+    #[test]
+    fn scroll_offset_keeps_cursor_in_band_stably() {
+        let mut h = help();
+        // Move cursor far down — past the visible window of a 8-row terminal.
+        for _ in 0..15 { h.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)); }
+        let _ = h.render(80, 8);  // visible_rows = 7
+        // cursor = 15, visible_rows = 7 → offset = 9 (cursor at bottom of window).
+        assert_eq!(h.rows_offset.get(), 9);
+
+        // Scroll up — cursor went off the top.
+        for _ in 0..10 { h.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)); }
+        let _ = h.render(80, 8);
+        // cursor = 5, offset was 9, 5 < 9 → offset = 5.
+        assert_eq!(h.rows_offset.get(), 5);
+    }
+
+    #[test]
+    fn filter_change_resets_scroll() {
+        let mut h = help();
+        for _ in 0..20 { h.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)); }
+        let _ = h.render(80, 8);
+        assert!(h.rows_offset.get() > 0, "should be scrolled after moving down");
+        // Type a filter — should reset both cursor and scroll.
+        h.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(h.cursor, 0);
+        assert_eq!(h.rows_offset.get(), 0);
     }
 }
