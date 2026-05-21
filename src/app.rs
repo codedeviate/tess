@@ -1036,6 +1036,20 @@ pub fn run(
                     }
                     InputMode::Normal => {}
                 }
+                // Resize must update stored dims even when an overlay is active —
+                // otherwise the overlay renders at stale dimensions until it closes.
+                if let crossterm::event::Event::Resize(c, r) = event {
+                    cols = c;
+                    rows = r;
+                    viewport.resize(c, r);
+                    needs_redraw = true;
+                    if overlay.is_some() {
+                        // Overlay still owns the screen; nothing else to do this tick.
+                        continue;
+                    }
+                    // No overlay: fall through to normal handling so the
+                    // existing Command::Resize path can do whatever else it does.
+                }
                 // Active overlay swallows input. Apply/Refuse/Close outcomes
                 // are handled inline; CloseAnd defers to the normal command
                 // dispatcher below.
@@ -1060,8 +1074,7 @@ pub fn run(
                         crate::overlay::OverlayOutcome::CloseAnd(cmd) => {
                             overlay = None;
                             overlay_flash = None;
-                            // Placeholder: Task 8 will dispatch SelectFile/DropFileAt here
-                            // by inserting the necessary file_set switching logic.
+                            // Placeholder: Task 8 will dispatch the returned command here before closing.
                             let _ = cmd;
                             needs_redraw = true;
                             continue;
@@ -1752,6 +1765,7 @@ fn render_overlay(
     out.queue(Clear(ClearType::UntilNewLine))?;
     out.queue(SetAttribute(Attribute::Reverse))?;
     let mut status = frame.status.clone();
+    // TODO: use display width (not byte count) — mirrors write_frame's latent limitation.
     if status.len() > width as usize {
         status.truncate(width as usize);
     } else {
