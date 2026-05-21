@@ -1003,9 +1003,11 @@ pub fn run(
                                                         overlay = Some(Box::new(
                                                             crate::overlay::picker::FilePicker::new(&file_set, saved)
                                                         ));
+                                                        needs_redraw = true;
                                                     }
-                                                    ColonOutcome::DispatchCommand(_) => {
-                                                        // Reserved for future colon-installed commands.
+                                                    ColonOutcome::DispatchCommand(cmd) => {
+                                                        debug_assert!(false, "colon dispatcher emitted unexpected Command: {cmd:?}");
+                                                        // In release builds, silently no-op.
                                                     }
                                                 }
                                                 mode = InputMode::Normal;
@@ -1150,12 +1152,16 @@ pub fn run(
                                     } else if target > saved_cur {
                                         file_set.set_current_index(saved_cur);
                                     }
-                                    let _ = switch_to_current_file(
+                                    // (target == saved_cur: delete_current already landed on the nearest
+                                    //  surviving file; nothing to restore.)
+                                    if let Some(msg) = switch_to_current_file(
                                         &mut file_set, &mut current_file_index,
                                         &args, preprocessor.as_ref(),
                                         record_start_regex.as_ref(),
                                         &mut viewport, &mut src, &mut idx,
-                                    );
+                                    ) {
+                                        transient_status = Some(msg);
+                                    }
                                     if let Some(ov) = overlay.as_mut() {
                                         ov.refresh(crate::overlay::OverlayContext { file_set: &file_set });
                                     }
