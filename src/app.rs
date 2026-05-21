@@ -1271,8 +1271,8 @@ pub fn run(
                     | Command::OpenHelp
                     | Command::SelectFile(_)
                     | Command::DropFileAt(_)
-                    | Command::MouseEvent(_) => {}
-                    Command::Noop => {}
+                    | Command::MouseEvent(_)
+                    | Command::Noop => {}
                 }
             }
             Ok(false) => {

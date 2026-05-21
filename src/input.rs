@@ -75,7 +75,6 @@ pub enum Command {
     TagPrompt,
     /// Pop the tag stack and jump back (`Ctrl-T`).
     TagPop,
-    Noop,
     /// `:b` — open the file picker overlay.
     OpenPicker,
     /// `:help` or `F1` — open the help overlay.
@@ -90,6 +89,7 @@ pub enum Command {
     /// scroll command happens in `app::run` based on whether an overlay
     /// is active and on which axis the event was.
     MouseEvent(crossterm::event::MouseEvent),
+    Noop,
 }
 
 pub fn translate(event: Event) -> Command {
