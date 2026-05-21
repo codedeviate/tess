@@ -658,6 +658,7 @@ pub fn run(
     let mut tag_stack = TagStack::default();
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
+    let mouse_enabled = args.mouse;
 
     if let Some(tag_name) = args.tag.as_deref() {
         if let Some(msg) = dispatch_tag_jump(
@@ -1182,6 +1183,26 @@ pub fn run(
                             continue;
                         }
                     }
+                }
+                // No-overlay mouse: scrollwheel scrolls the body. Other mouse
+                // events are ignored to keep the body inert when --mouse is on
+                // but no overlay is active.
+                if let crossterm::event::Event::Mouse(me) = &event {
+                    if mouse_enabled {
+                        use crossterm::event::MouseEventKind;
+                        match me.kind {
+                            MouseEventKind::ScrollDown => {
+                                viewport.scroll_lines(3, src.as_ref(), &mut idx);
+                                needs_redraw = true;
+                            }
+                            MouseEventKind::ScrollUp => {
+                                viewport.scroll_lines(-3, src.as_ref(), &mut idx);
+                                needs_redraw = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    continue;
                 }
                 // Pre-translate keymap interception. Only consult the keymap
                 // when in Normal mode (not inside a search/option/prettify/

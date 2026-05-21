@@ -138,6 +138,33 @@ impl Overlay for FilePicker {
         }
     }
 
+    fn handle_mouse(&mut self, ev: crossterm::event::MouseEvent, _body_rows: u16) -> OverlayOutcome {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        match ev.kind {
+            MouseEventKind::ScrollDown => {
+                if self.cursor + 1 < self.visible.len() {
+                    self.cursor += 1;
+                }
+                OverlayOutcome::Stay
+            }
+            MouseEventKind::ScrollUp => {
+                self.cursor = self.cursor.saturating_sub(1);
+                OverlayOutcome::Stay
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Body layout: row 0 title, row 1 blank, row 2+ entries.
+                // rows_offset accounts for how far the list has been scrolled.
+                let row = ev.row as usize;
+                if row < 2 { return OverlayOutcome::Stay; }
+                let visible_idx = row - 2 + self.rows_offset.get();
+                if visible_idx >= self.visible.len() { return OverlayOutcome::Stay; }
+                self.cursor = visible_idx;
+                OverlayOutcome::CloseAnd(Command::SelectFile(self.visible[self.cursor]))
+            }
+            _ => OverlayOutcome::Stay,
+        }
+    }
+
     fn render(&self, width: u16, height: u16) -> OverlayFrame {
         let mut body = Vec::with_capacity(height as usize);
         // Row 0: title
@@ -220,7 +247,7 @@ impl Overlay for FilePicker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyEvent as KE;
+    use crossterm::event::{KeyEvent as KE, MouseButton, MouseEvent, MouseEventKind};
     use std::path::PathBuf;
 
     fn fs(names: &[&str]) -> FileSet {
@@ -450,5 +477,30 @@ mod tests {
         let long_row = frame.body.iter().find(|l| l.contains('\u{2026}')).expect("ellipsis row");
         // Should contain ellipsis, and the L<line> column should still be visible.
         assert!(long_row.contains("L1"), "L<line> column should still be visible: {long_row:?}");
+    }
+
+    fn mouse(kind: MouseEventKind, row: u16) -> MouseEvent {
+        MouseEvent { kind, column: 0, row, modifiers: KeyModifiers::NONE }
+    }
+
+    #[test]
+    fn left_click_sets_cursor_and_selects() {
+        // body layout: row 0 = title, row 1 = blank, row 2 = first entry,
+        // row 3 = second entry, ...
+        let mut p = picker(&["a", "b", "c"]);
+        let out = p.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3), 10);
+        match out {
+            OverlayOutcome::CloseAnd(Command::SelectFile(i)) => assert_eq!(i, 1),
+            other => panic!("expected SelectFile(1), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scrollwheel_moves_cursor() {
+        let mut p = picker(&["a", "b", "c"]);
+        p.handle_mouse(mouse(MouseEventKind::ScrollDown, 0), 10);
+        assert_eq!(p.cursor, 1);
+        p.handle_mouse(mouse(MouseEventKind::ScrollUp, 0), 10);
+        assert_eq!(p.cursor, 0);
     }
 }
