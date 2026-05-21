@@ -1267,6 +1267,11 @@ pub fn run(
                             needs_redraw = true;
                         }
                     },
+                    Command::OpenPicker
+                    | Command::OpenHelp
+                    | Command::SelectFile(_)
+                    | Command::DropFileAt(_)
+                    | Command::MouseEvent(_) => {}
                     Command::Noop => {}
                 }
             }

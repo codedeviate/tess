@@ -76,12 +76,27 @@ pub enum Command {
     /// Pop the tag stack and jump back (`Ctrl-T`).
     TagPop,
     Noop,
+    /// `:b` — open the file picker overlay.
+    OpenPicker,
+    /// `:help` or `F1` — open the help overlay.
+    OpenHelp,
+    /// Issued by the file picker when the user selects a file. The
+    /// argument is the index into the working FileSet.
+    SelectFile(usize),
+    /// Issued by the file picker when Ctrl-D removes a file. The
+    /// argument is the index into the working FileSet.
+    DropFileAt(usize),
+    /// Mouse event surfaced to the app loop. Translation to a concrete
+    /// scroll command happens in `app::run` based on whether an overlay
+    /// is active and on which axis the event was.
+    MouseEvent(crossterm::event::MouseEvent),
 }
 
 pub fn translate(event: Event) -> Command {
     match event {
         Event::Resize(c, r) => Command::Resize(c, r),
         Event::Key(KeyEvent { code, modifiers, .. }) => translate_key(code, modifiers),
+        Event::Mouse(m) => Command::MouseEvent(m),
         _ => Command::Noop,
     }
 }
@@ -130,6 +145,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char(':'), false) => Command::ColonPrompt,
         (Char(']'), true) => Command::TagPrompt,
         (Char('t'), true) => Command::TagPop,
+        (F(1), _) => Command::OpenHelp,
         _ => Command::Noop,
     }
 }
@@ -308,5 +324,11 @@ mod tests {
     fn ctrl_t_produces_tag_pop() {
         let evt = Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL));
         assert_eq!(translate(evt), Command::TagPop);
+    }
+
+    #[test]
+    fn f1_opens_help() {
+        let evt = key(KeyCode::F(1), KeyModifiers::NONE);
+        assert_eq!(translate(evt), Command::OpenHelp);
     }
 }
