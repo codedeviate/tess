@@ -623,6 +623,8 @@ pub fn run(
     let mut current_file_index: usize = file_set.current_index();
     let mut transient_status: Option<String> = None;
     let mut tag_stack = TagStack::default();
+    let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
+    let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
 
     if let Some(tag_name) = args.tag.as_deref() {
         if let Some(msg) = dispatch_tag_jump(
@@ -648,6 +650,22 @@ pub fn run(
         }
 
         if needs_redraw {
+            if let Some(ov) = overlay.as_ref() {
+                let w = cols;
+                let h = viewport.body_rows() + 1;
+                let mut ovframe = ov.render(w, h);
+                if let Some((msg, started)) = overlay_flash {
+                    if started.elapsed() < std::time::Duration::from_millis(1500) {
+                        ovframe.status = format!("[{msg}]");
+                    } else {
+                        overlay_flash = None;
+                    }
+                }
+                render_overlay(&mut stdout, &ovframe, w, h)
+                    .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
+                needs_redraw = false;
+                continue;
+            }
             let mut frame = viewport.frame(src.as_ref(), &mut idx);
             // Override the status row when we're in an interactive prompt OR
             // when a transient status message is pending.
@@ -1017,6 +1035,49 @@ pub fn run(
                         continue;
                     }
                     InputMode::Normal => {}
+                }
+                // Active overlay swallows input. Apply/Refuse/Close outcomes
+                // are handled inline; CloseAnd defers to the normal command
+                // dispatcher below.
+                if let Some(ov) = overlay.as_mut() {
+                    let outcome = match &event {
+                        Event::Key(ke) => ov.handle_key(*ke),
+                        Event::Mouse(me) => ov.handle_mouse(*me, viewport.body_rows()),
+                        Event::Resize(_, _) => crate::overlay::OverlayOutcome::Stay,
+                        _ => crate::overlay::OverlayOutcome::Stay,
+                    };
+                    match outcome {
+                        crate::overlay::OverlayOutcome::Stay => {
+                            needs_redraw = true;
+                            continue;
+                        }
+                        crate::overlay::OverlayOutcome::Close => {
+                            overlay = None;
+                            overlay_flash = None;
+                            needs_redraw = true;
+                            continue;
+                        }
+                        crate::overlay::OverlayOutcome::CloseAnd(cmd) => {
+                            overlay = None;
+                            overlay_flash = None;
+                            // Placeholder: Task 8 will dispatch SelectFile/DropFileAt here
+                            // by inserting the necessary file_set switching logic.
+                            let _ = cmd;
+                            needs_redraw = true;
+                            continue;
+                        }
+                        crate::overlay::OverlayOutcome::Apply(cmd) => {
+                            // Placeholder: Task 8 will handle DropFileAt dispatch + refresh.
+                            let _ = cmd;
+                            needs_redraw = true;
+                            continue;
+                        }
+                        crate::overlay::OverlayOutcome::Refuse(msg) => {
+                            overlay_flash = Some((msg, std::time::Instant::now()));
+                            needs_redraw = true;
+                            continue;
+                        }
+                    }
                 }
                 // Pre-translate keymap interception. Only consult the keymap
                 // when in Normal mode (not inside a search/option/prettify/
@@ -1659,6 +1720,49 @@ fn write_row_with_highlights(
     out.queue(SetAttribute(Attribute::Reset))?;
 
     Ok(())
+}
+
+fn render_overlay(
+    out: &mut impl Write,
+    frame: &crate::overlay::OverlayFrame,
+    width: u16,
+    height: u16,
+) -> io::Result<()> {
+    // Mirror write_frame's atomic-frame discipline: synchronized update +
+    // per-row clear, with a reverse-video status row to match the regular
+    // viewport's look.
+    out.write_all(SYNC_UPDATE_BEGIN)?;
+    out.queue(SetAttribute(Attribute::Reset))?;
+    out.queue(ResetColor)?;
+    for row in 0..height.saturating_sub(1) {
+        out.queue(MoveTo(0, row))?;
+        out.queue(Clear(ClearType::UntilNewLine))?;
+        out.queue(SetAttribute(Attribute::Reset))?;
+        if let Some(line) = frame.body.get(row as usize) {
+            let mut written = 0usize;
+            for ch in line.chars() {
+                let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                if written + w > width as usize { break; }
+                write!(out, "{ch}")?;
+                written += w;
+            }
+        }
+    }
+    out.queue(MoveTo(0, height.saturating_sub(1)))?;
+    out.queue(Clear(ClearType::UntilNewLine))?;
+    out.queue(SetAttribute(Attribute::Reverse))?;
+    let mut status = frame.status.clone();
+    if status.len() > width as usize {
+        status.truncate(width as usize);
+    } else {
+        let pad = width as usize - status.len();
+        status.push_str(&" ".repeat(pad));
+    }
+    out.queue(Print(status))?;
+    out.queue(ResetColor)?;
+    out.queue(SetAttribute(Attribute::Reset))?;
+    out.write_all(SYNC_UPDATE_END)?;
+    out.flush()
 }
 
 #[cfg(test)]
