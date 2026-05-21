@@ -1,23 +1,31 @@
 use std::path::PathBuf;
 use clap::Parser;
+use clap::builder::styling::{AnsiColor, Color, Style};
+use clap::builder::Styles;
+
+const HELP_STYLES: Styles = Styles::styled()
+    .header(Style::new().bold().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
+    .usage(Style::new().bold().fg_color(Some(Color::Ansi(AnsiColor::Yellow))))
+    .literal(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))))
+    .placeholder(Style::new().fg_color(Some(Color::Ansi(AnsiColor::Cyan))));
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "tess", version, about = "A less-style terminal pager.")]
+#[command(name = "tess", version, about = "A less-style terminal pager.", styles = HELP_STYLES)]
 pub struct Args {
     /// Chop long lines instead of wrapping.
-    #[arg(short = 'S', long = "chop-long-lines", display_order = 1)]
+    #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
 
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
     /// Setting this implies `--prettify` (unless the value is `raw`/`auto`).
-    #[arg(long = "content-type", value_name = "TYPE", display_order = 2)]
+    #[arg(long = "content-type", value_name = "TYPE")]
     pub content_type: Option<String>,
 
     /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
     /// surrounding context visible.
-    #[arg(long = "dim", display_order = 3)]
+    #[arg(long = "dim")]
     pub dim: bool,
 
     /// Render each parsed line through this template instead of showing the
@@ -25,11 +33,11 @@ pub struct Args {
     /// `\\` for literal `\`. Example: `--display '[<time>] <status> <msg>'`.
     /// Overrides the format's `display` key (if set). Requires `--format`.
     /// Search still matches against the raw line.
-    #[arg(long = "display", value_name = "TEMPLATE", display_order = 4)]
+    #[arg(long = "display", value_name = "TEMPLATE")]
     pub display: Option<String>,
 
     /// Print a curated list of usage examples and exit.
-    #[arg(long = "examples", display_order = 5)]
+    #[arg(long = "examples")]
     pub examples: bool,
 
     /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
@@ -38,17 +46,17 @@ pub struct Args {
     /// lexicographic). Examples: `--filter status=500`, `--filter ip~^10\.`,
     /// `--filter 'status>=500'` (quote `<` and `>` to avoid shell redirection).
     /// Requires `--format`.
-    #[arg(long = "filter", value_name = "FIELD<op>VALUE", display_order = 6)]
+    #[arg(long = "filter", value_name = "FIELD<op>VALUE")]
     pub filter: Vec<String>,
 
     /// Follow mode: keep watching the source for new bytes (like `tail -f`).
     /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
-    #[arg(short = 'f', long = "follow", display_order = 7)]
+    #[arg(short = 'f', long = "follow")]
     pub follow: bool,
 
     /// Apply a named log format (built-in or user-defined in
     /// ~/.config/tess/formats.toml). Required by `--filter`.
-    #[arg(long = "format", value_name = "NAME", display_order = 8)]
+    #[arg(long = "format", value_name = "NAME")]
     pub format: Option<String>,
 
     /// Filter visible lines by regex against the raw line. Repeatable;
@@ -56,11 +64,11 @@ pub struct Args {
     /// required. Composes with `--filter` (both must match) and with
     /// `--dim` (non-matches stay visible but faded).
     /// Example: `--grep error --grep '^\['`.
-    #[arg(long = "grep", value_name = "PATTERN", display_order = 9)]
+    #[arg(long = "grep", value_name = "PATTERN")]
     pub grep: Vec<String>,
 
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
-    #[arg(long = "head", value_name = "N", conflicts_with = "tail", display_order = 10)]
+    #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,
 
     /// Render the source as an xxd-style hex dump instead of byte-faithful
@@ -68,17 +76,16 @@ pub struct Args {
     /// exclusive with parsing- and rendering-oriented flags.
     #[arg(
         long = "hex",
-        display_order = 11,
         conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt", "preprocess"],
     )]
     pub hex: bool,
 
     /// Show line numbers.
-    #[arg(short = 'N', long = "LINE-NUMBERS", display_order = 12)]
+    #[arg(short = 'N', long = "LINE-NUMBERS")]
     pub line_numbers: bool,
 
     /// Print available log formats and their named fields, then exit.
-    #[arg(long = "list-formats", display_order = 13)]
+    #[arg(long = "list-formats")]
     pub list_formats: bool,
 
     /// Live mode: re-read the file when its on-disk content changes (mtime,
@@ -86,28 +93,28 @@ pub struct Args {
     /// being edited, files saved by an editor or AI agent. Different from
     /// `--follow` (which watches for *appended* bytes); the two are mutually
     /// exclusive. Press `R` inside the pager to force a reload.
-    #[arg(long = "live", conflicts_with = "follow", display_order = 14)]
+    #[arg(long = "live", conflicts_with = "follow")]
     pub live: bool,
 
     /// Print the full user manual and exit.
-    #[arg(long = "manual", display_order = 15)]
+    #[arg(long = "manual")]
     pub manual: bool,
 
     /// Enable mouse capture: click rows in the file picker / help overlay,
     /// and scrollwheel scrolls the body. Trade-off: most terminals disable
     /// their native text selection while mouse capture is on.
-    #[arg(long = "mouse", display_order = 16)]
+    #[arg(long = "mouse")]
     pub mouse: bool,
 
     /// Show raw control bytes as `^X` glyphs (pre-0.18 default). Disables
     /// SGR / OSC interpretation. Honoured also by the `NO_COLOR` environment
     /// variable (any non-empty value) and `CLICOLOR=0`.
-    #[arg(long = "no-color", display_order = 17)]
+    #[arg(long = "no-color")]
     pub no_color: bool,
 
     /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
     /// for one invocation.
-    #[arg(long = "no-preprocess", conflicts_with = "preprocess", display_order = 18)]
+    #[arg(long = "no-preprocess", conflicts_with = "preprocess")]
     pub no_preprocess: bool,
 
     /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
@@ -116,7 +123,7 @@ pub struct Args {
     /// raw mode entirely. With `--follow`, doesn't exit — keeps appending
     /// matching new bytes to FILE as they arrive (Ctrl-C to stop). Not
     /// compatible with `--live`.
-    #[arg(short = 'o', long = "output", value_name = "FILE", display_order = 19)]
+    #[arg(short = 'o', long = "output", value_name = "FILE")]
     pub output: Option<String>,
 
     /// Pipe the source file through this command before rendering.
@@ -126,7 +133,6 @@ pub struct Args {
         long = "preprocess",
         value_name = "CMD",
         conflicts_with_all = ["no_preprocess", "hex", "follow", "live"],
-        display_order = 20,
     )]
     pub preprocess: Option<String>,
 
@@ -135,7 +141,7 @@ pub struct Args {
     /// `--content-type=NAME` to override. Static files only — not allowed
     /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
     /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
-    #[arg(long = "prettify", display_order = 21)]
+    #[arg(long = "prettify")]
     pub prettify: bool,
 
     /// Replace the hardcoded status format with a templated string.
@@ -145,13 +151,13 @@ pub struct Args {
     /// hide-tag, search-tag, pretty-tag, live-tag, follow-tag.
     /// Per-format default can be set via `prompt = '...'` in formats.toml.
     /// Mutually exclusive with --hex.
-    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex", display_order = 22)]
+    #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex")]
     pub prompt: Option<String>,
 
     /// Pass every byte to the terminal raw, including cursor moves and
     /// non-SGR escape sequences. Risky: scroll math may break on long lines.
     /// Less-style -r. Mutually exclusive with --no-color.
-    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color", display_order = 23)]
+    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
     pub raw_control_chars: bool,
 
     /// Treat lines matching REGEX as record boundaries. Lines that don't
@@ -160,29 +166,29 @@ pub struct Args {
     /// Overrides the active --format's record_start if both are present.
     /// Without --format, this is the only way to enable records mode for
     /// plain text. Example: --record-start '^\['
-    #[arg(long = "record-start", value_name = "REGEX", display_order = 24)]
+    #[arg(long = "record-start", value_name = "REGEX")]
     pub record_start: Option<String>,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
-    #[arg(long = "stdout", conflicts_with = "output", display_order = 25)]
+    #[arg(long = "stdout", conflicts_with = "output")]
     pub stdout: bool,
 
     /// Tab stop width (default 8).
-    #[arg(long = "tab-width", default_value_t = 8, display_order = 26)]
+    #[arg(long = "tab-width", default_value_t = 8)]
     pub tab_width: u8,
 
     /// Jump to the tag NAME at startup (requires a tags file).
-    #[arg(short = 't', long = "tag", value_name = "NAME", display_order = 27)]
+    #[arg(short = 't', long = "tag", value_name = "NAME")]
     pub tag: Option<String>,
 
     /// Path to the tags file. Default: walk up from CWD looking for `tags`.
-    #[arg(short = 'T', long = "tag-file", value_name = "PATH", display_order = 28)]
+    #[arg(short = 'T', long = "tag-file", value_name = "PATH")]
     pub tag_file: Option<std::path::PathBuf>,
 
     /// Show only the last N lines of the source. For files this skips most of
     /// the index work — useful for huge logs. Combine with `-f` for `tail -f`.
     /// Mutually exclusive with --head. Streaming stdin is not supported.
-    #[arg(long = "tail", value_name = "N", conflicts_with = "head", display_order = 29)]
+    #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
 
     /// Files to view (only the first is opened in MVP).
