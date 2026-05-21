@@ -158,12 +158,22 @@ impl Overlay for HelpOverlay {
         OverlayFrame { body: clipped, status }
     }
 
+    fn handle_mouse(&mut self, ev: crossterm::event::MouseEvent, _body_rows: u16) -> OverlayOutcome {
+        use crossterm::event::MouseEventKind;
+        match ev.kind {
+            MouseEventKind::ScrollDown => { self.cursor = self.cursor.saturating_add(1); OverlayOutcome::Stay }
+            MouseEventKind::ScrollUp   => { self.cursor = self.cursor.saturating_sub(1); OverlayOutcome::Stay }
+            _ => OverlayOutcome::Stay,
+        }
+    }
+
     fn title(&self) -> Cow<'_, str> { Cow::Borrowed("Help") }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{MouseEvent, MouseEventKind};
     use std::collections::HashMap;
 
     fn help() -> HelpOverlay { HelpOverlay::new(HashMap::new()) }
@@ -255,5 +265,13 @@ mod tests {
         h.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
         assert_eq!(h.cursor, 0);
         assert_eq!(h.rows_offset.get(), 0);
+    }
+
+    #[test]
+    fn scrollwheel_moves_help_cursor() {
+        let mut h = help();
+        let me = MouseEvent { kind: MouseEventKind::ScrollDown, column: 0, row: 0, modifiers: KeyModifiers::NONE };
+        h.handle_mouse(me, 10);
+        assert_eq!(h.cursor, 1);
     }
 }
