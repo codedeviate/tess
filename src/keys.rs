@@ -270,13 +270,28 @@ fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
 }
 
 fn format_key_event(ke: KeyEvent) -> String {
+    let ctrl  = ke.modifiers.contains(KeyModifiers::CONTROL);
+    let alt   = ke.modifiers.contains(KeyModifiers::ALT);
+    let shift = ke.modifiers.contains(KeyModifiers::SHIFT);
+
+    // Convention: SHIFT-alone on an ASCII letter displays as the uppercase
+    // letter with no "Shift-" prefix (matches KEY_REGISTRY's `"J"` form).
+    if shift && !ctrl && !alt {
+        if let KeyCode::Char(c) = ke.code {
+            if c.is_ascii_alphabetic() {
+                return c.to_ascii_uppercase().to_string();
+            }
+        }
+    }
+
     let mut parts: Vec<&'static str> = Vec::new();
-    if ke.modifiers.contains(KeyModifiers::CONTROL) { parts.push("Ctrl"); }
-    if ke.modifiers.contains(KeyModifiers::ALT)     { parts.push("Alt"); }
-    if ke.modifiers.contains(KeyModifiers::SHIFT)   { parts.push("Shift"); }
+    if ctrl  { parts.push("Ctrl"); }
+    if alt   { parts.push("Alt"); }
+    if shift { parts.push("Shift"); }
+
     let key = match ke.code {
         KeyCode::Char(' ') => "Space".to_string(),
-        KeyCode::Char(c)   => c.to_string().to_uppercase(),
+        KeyCode::Char(c)   => c.to_string(),
         KeyCode::F(n)      => format!("F{n}"),
         KeyCode::Esc       => "Esc".into(),
         KeyCode::Enter     => "Enter".into(),
@@ -456,5 +471,73 @@ mod tests {
         let m = KeyMap::load_from_str(toml).unwrap();
         let ctrl_dash = KeyEvent::new(KeyCode::Char('-'), KeyModifiers::CONTROL);
         assert!(matches!(m.lookup(&ctrl_dash), Some(BindingTarget::Command(Command::Refresh))));
+    }
+
+    #[test]
+    fn format_key_event_renders_modifier_combos() {
+        // Ctrl alone
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+            "Ctrl-r",
+        );
+        // Shift alone on a letter → uppercase, no prefix
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::SHIFT)),
+            "J",
+        );
+        // Shift alone on a non-letter (e.g. Tab) → "Shift-Tab"
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT)),
+            "Shift-Tab",
+        );
+        // Plain lowercase letter → "j" (no uppercasing)
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            "j",
+        );
+        // Function key
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::F(3), KeyModifiers::NONE)),
+            "F3",
+        );
+        // Ctrl+Shift+letter — composed prefix, lowercase stored char
+        assert_eq!(
+            format_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)),
+            "Ctrl-Shift-x",
+        );
+    }
+
+    #[test]
+    fn command_kebab_round_trip() {
+        // Every name in command_from_kebab must round-trip through command_to_kebab.
+        let names = [
+            "scroll-down", "scroll-up", "scroll-logical-down", "scroll-logical-up",
+            "page-down", "page-up", "half-page-down", "half-page-up",
+            "quit", "refresh", "reload",
+            "toggle-line-numbers", "toggle-chop", "toggle-follow", "toggle-prettify",
+            "search-forward", "search-backward", "next-match", "previous-match",
+            "option-prefix", "goto-line", "goto-record", "goto-percent",
+            "mark-set", "mark-jump", "ctrl-x-prefix", "jump-previous",
+            "shell-escape", "cancel",
+        ];
+        for name in &names {
+            let cmd = command_from_kebab(name).expect(&format!("from_kebab failed for {name}"));
+            let back = command_to_kebab(&cmd).expect(&format!("to_kebab failed for {name}"));
+            assert_eq!(back, *name, "round-trip mismatch for {name}");
+        }
+    }
+
+    #[test]
+    fn shell_bindings_are_excluded_from_user_keys() {
+        let toml = r#"
+[bindings]
+"f2" = "!git status"
+"f3" = "scroll-down"
+"#;
+        let m = KeyMap::load_from_str(toml).unwrap();
+        let groups = m.user_keys_by_command_name();
+        assert!(!groups.values().any(|v| v.contains(&"F2".to_string())),
+                "shell-bound F2 should not appear: {groups:?}");
+        assert_eq!(groups.get("scroll-down").cloned().unwrap_or_default(), vec!["F3".to_string()]);
     }
 }
