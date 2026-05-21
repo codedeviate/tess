@@ -76,6 +76,8 @@ enum ColonCommand {
     Tag(String),
     TagNext,
     TagPrev,
+    OpenPicker,
+    OpenHelp,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +141,8 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "tnext" => Ok(ColonCommand::TagNext),
         "tprev" => Ok(ColonCommand::TagPrev),
+        "b" | "buffers" => Ok(ColonCommand::OpenPicker),
+        "h" | "help"    => Ok(ColonCommand::OpenHelp),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -566,6 +570,9 @@ fn dispatch_colon_command(
                 ColonOutcome::Continue(msg)
             }
         },
+        // Overlay installation wired in Task 8 (OpenPicker) and Task 12 (OpenHelp).
+        ColonCommand::OpenPicker => ColonOutcome::Continue(None),
+        ColonCommand::OpenHelp   => ColonOutcome::Continue(None),
     }
 }
 
@@ -1853,6 +1860,18 @@ mod tests {
     fn parse_colon_tnext_and_tprev() {
         assert_eq!(parse_colon_command("tnext").unwrap(), ColonCommand::TagNext);
         assert_eq!(parse_colon_command("tprev").unwrap(), ColonCommand::TagPrev);
+    }
+
+    #[test]
+    fn parse_colon_b_opens_picker() {
+        assert_eq!(parse_colon_command("b").unwrap(), ColonCommand::OpenPicker);
+        assert_eq!(parse_colon_command("buffers").unwrap(), ColonCommand::OpenPicker);
+    }
+
+    #[test]
+    fn parse_colon_help_opens_help() {
+        assert_eq!(parse_colon_command("h").unwrap(), ColonCommand::OpenHelp);
+        assert_eq!(parse_colon_command("help").unwrap(), ColonCommand::OpenHelp);
     }
 
     #[test]
