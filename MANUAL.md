@@ -114,6 +114,7 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 - **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
 - **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
 - **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
+- **`--mouse`** — enable mouse capture: click rows in the file picker / help overlay, scrollwheel scrolls the body. Trade-off: most terminals disable their native text-selection while mouse capture is on. Off by default.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
 - **`-V`, `--version`** — print version.
 
@@ -143,6 +144,7 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 | `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
+| `F1` | Open the help overlay (also `:help` / `:h` at the colon prompt) |
 | `q` `Q` `Ctrl-C` | Quit |
 
 In hide-mode filtering, scroll/page/goto operate on visible (matching) lines — the viewport skips past hidden ones.
@@ -207,6 +209,8 @@ The bottom row shows current state. Format:
 - **`+`** suffix on `total` — the source may still grow (streaming stdin, follow mode, or live mode).
 
 While a search prompt is open, the entire status row is replaced with `/<typed-so-far>` (or `?…`). `Enter` commits, `Esc` cancels, `Backspace` edits.
+
+The built-in default status format appends a right-aligned `:help` discoverability hint at the far-right edge of the status line. Custom prompts (`--prompt TEMPLATE` or `prompt =` in `formats.toml`) do not include this hint — only the built-in default does.
 
 ---
 
@@ -439,12 +443,16 @@ The first file opens immediately. Use `:`-prefixed commands to navigate:
 |---------|--------|
 | `:n` (or `:next`) | Next file. Shows `[no next file]` at the end. |
 | `:p` (or `:prev`) | Previous file. Shows `[no previous file]` at the start. |
+| `:b` (or `:buffers`) | Open the file picker overlay. Lists every file in the working set with its saved cursor position; type to filter (substring, case-insensitive); arrows/`j`/`k` or scrollwheel (with `--mouse`) to move; Enter to switch; Ctrl-D to drop a file; Esc to close. |
 | `:e <path>` (or `:edit`) | Open `<path>`, append it to the file list, switch to it. `~/` expands to `$HOME`. |
 | `:f` | Show the current filename and position briefly in the status line. |
 | `:q` (or `:quit`) | Quit (alias for `q`). |
 | `:d` (or `:delete`) | Remove the current file from the list and switch to the next (or previous if at the end). Errors if only one file remains. |
 | `:x` (or `:first`) | Jump to the first file in the list. |
 | `:t` (or `:last`) | Jump to the last file in the list. |
+| `:help` (or `:h`) | Open the help overlay listing every keybinding, grouped by category. `F1` also opens it. Type to filter; arrows/scrollwheel (with `--mouse`) to scroll; Esc to close (clears filter first if non-empty). |
+| `:tag NAME` | Jump to the named ctags/etags tag. See [Tag jumping](#tag-jumping). |
+| `:tnext` / `:tprev` | Cycle through multiple matches for the current tag. |
 
 Press `:` to enter the colon prompt; type the command and press Enter,
 or press Esc to cancel. Bare Enter on an empty prompt dismisses without
@@ -1023,4 +1031,4 @@ grep = ["timeout", "deadlock"]   # both patterns must match
 
 ## Versions
 
-This manual targets `tess 0.6.2`. Run `tess --version` to confirm.
+This manual targets `tess 0.21.0`. Run `tess --version` to confirm.
