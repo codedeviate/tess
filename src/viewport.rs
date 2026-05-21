@@ -894,6 +894,18 @@ impl Viewport {
             _ => String::new(),
         };
         s.push_str(&tag_suffix);
+        // Right-aligned :help hint. If the existing status already overshoots
+        // the width, no pad — the renderer will clip on draw.
+        let used = s.chars().count();
+        let hint = ":help";
+        if (self.cols as usize) > used + 1 + hint.chars().count() {
+            let pad = self.cols as usize - used - hint.chars().count();
+            s.push_str(&" ".repeat(pad));
+            s.push_str(hint);
+        } else {
+            s.push(' ');
+            s.push_str(hint);
+        }
         s
     }
 
@@ -2138,6 +2150,23 @@ mod tests {
         let frame = v.frame(&m, &mut idx);
         assert!(frame.status.contains("[preprocess-failed: pdftotext: not found]"),
                 "got: {}", frame.status);
+    }
+
+    #[test]
+    fn default_status_includes_help_hint() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let mut v = Viewport::new(80, 5, "f".into());
+        let frame = v.frame(&m, &mut idx);
+        assert!(frame.status.ends_with(":help"), "got: {:?}", frame.status);
+    }
+
+    #[test]
+    fn custom_prompt_does_not_get_help_hint() {
+        let (m, mut idx) = setup(b"a\nb\nc\n");
+        let mut v = Viewport::new(80, 5, "f".into());
+        v.set_prompt(Some(crate::prompt::ParsedPrompt::parse("<label>").unwrap()));
+        let frame = v.frame(&m, &mut idx);
+        assert!(!frame.status.contains(":help"), "got: {:?}", frame.status);
     }
 
     #[test]
