@@ -2,6 +2,7 @@
 //! type-to-filter, Enter to open, Ctrl-D to drop.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -11,9 +12,9 @@ use crate::overlay::{Overlay, OverlayContext, OverlayFrame, OverlayOutcome};
 
 pub struct FilePicker {
     filter: String,
-    cursor: usize,           // index into `visible`
-    visible: Vec<usize>,     // indices into FileSet
-    rows_offset: usize,      // first visible row when list overflows screen
+    cursor: usize,              // index into `visible`
+    visible: Vec<usize>,        // indices into FileSet
+    rows_offset: Cell<usize>,   // first visible row when list overflows screen (interior-mutable so render stays &self)
     /// Snapshot of each file's last-known top line, indexed parallel to FileSet.
     /// (Captured at open time and passed to the picker by the caller.)
     saved_lines: Vec<usize>,
@@ -35,7 +36,7 @@ impl FilePicker {
             filter: String::new(),
             cursor,
             visible,
-            rows_offset: 0,
+            rows_offset: Cell::new(0),
             saved_lines,
             paths,
             current_index: file_set.current_index(),
@@ -54,7 +55,7 @@ impl FilePicker {
         if self.cursor >= self.visible.len() {
             self.cursor = self.visible.len().saturating_sub(1);
         }
-        self.rows_offset = 0;
+        self.rows_offset.set(0);
     }
 }
 
@@ -158,10 +159,21 @@ impl Overlay for FilePicker {
             .unwrap_or(0)
             .min(width.saturating_sub(20) as usize);
 
-        // Adjust rows_offset so cursor is visible. (rows_offset is mutable
-        // state in real use; in pure render we approximate by recomputing.)
+        // Adjust rows_offset to keep cursor visible (stable: only move when
+        // cursor goes off-screen, not pinned to bottom on every render).
         let visible_rows = (height as usize).saturating_sub(3); // title + blank + status
-        let offset = self.cursor.saturating_sub(visible_rows.saturating_sub(1));
+        let mut offset = self.rows_offset.get();
+        if visible_rows > 0 {
+            if self.cursor < offset {
+                // Cursor went off the top: scroll up to put it at the top.
+                offset = self.cursor;
+            } else if self.cursor >= offset + visible_rows {
+                // Cursor went off the bottom: scroll just enough to put it at the bottom.
+                offset = self.cursor + 1 - visible_rows;
+            }
+            // Otherwise: cursor is already visible; leave offset alone.
+        }
+        self.rows_offset.set(offset);
 
         for (row, &i) in self.visible.iter().enumerate().skip(offset).take(visible_rows) {
             let is_cursor = row == self.cursor;
@@ -170,8 +182,17 @@ impl Overlay for FilePicker {
             let line_n = self.saved_lines.get(i).copied().unwrap_or(0).max(1);
             let trailer = if is_current { "  \u{2190} current" } else { "" };
             let path = &self.paths[i];
+            // Truncate paths that overflow the column so the L<line> field
+            // stays on-screen.
+            let path_display: String = if path.chars().count() > name_col && name_col > 0 {
+                let mut s: String = path.chars().take(name_col.saturating_sub(1)).collect();
+                s.push('\u{2026}'); // ellipsis …
+                s
+            } else {
+                path.clone()
+            };
             body.push(format!(
-                "{gutter} {path:<name_col$}  L{line_n}{trailer}",
+                "{gutter} {path_display:<name_col$}  L{line_n}{trailer}",
             ));
         }
 
@@ -384,5 +405,50 @@ mod tests {
         assert!(frame.status.contains("Enter"), "status missing Enter hint");
         assert!(frame.status.contains("Ctrl-D"), "status missing Ctrl-D hint");
         assert!(frame.status.contains("Esc"), "status missing Esc hint");
+    }
+
+    #[test]
+    fn scroll_offset_keeps_cursor_in_band_stably() {
+        // 20 files, terminal height 8 (visible_rows = 5).
+        let names: Vec<String> = (0..20).map(|n| format!("file_{n:02}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut p = picker(&refs);
+        // Cursor at 10 — well into the list.
+        for _ in 0..10 {
+            p.handle_key(KE::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        let _ = p.render(80, 8);   // visible_rows = 5
+        // After scrolling down: offset should put cursor on the bottom row.
+        // cursor = 10, visible_rows = 5 → offset = 6 (cursor at bottom of window).
+        assert_eq!(p.rows_offset.get(), 6);
+
+        // Now scroll up by 2 — cursor = 8. The window should NOT change because
+        // 8 is still inside [6, 6+5).
+        p.handle_key(KE::new(KeyCode::Up, KeyModifiers::NONE));
+        p.handle_key(KE::new(KeyCode::Up, KeyModifiers::NONE));
+        let _ = p.render(80, 8);
+        assert_eq!(p.rows_offset.get(), 6, "window should be stable while cursor is in band");
+
+        // Scroll up enough to go off-screen — cursor below offset.
+        for _ in 0..5 {
+            p.handle_key(KE::new(KeyCode::Up, KeyModifiers::NONE));
+        }
+        // cursor = 3, offset was 6 → new offset = 3.
+        let _ = p.render(80, 8);
+        assert_eq!(p.rows_offset.get(), 3);
+    }
+
+    #[test]
+    fn long_paths_are_truncated_with_ellipsis() {
+        // Make one path that exceeds the column.
+        let p = FilePicker::new(
+            &fs(&["short.rs", "very/long/nested/path/to/some_module.rs"]),
+            vec![0, 0],
+        );
+        // Narrow terminal: 40 cols → name_col = 20 max.
+        let frame = p.render(40, 10);
+        let long_row = frame.body.iter().find(|l| l.contains('\u{2026}')).expect("ellipsis row");
+        // Should contain ellipsis, and the L<line> column should still be visible.
+        assert!(long_row.contains("L1"), "L<line> column should still be visible: {long_row:?}");
     }
 }
