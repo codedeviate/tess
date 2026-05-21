@@ -48,7 +48,7 @@ impl FilePicker {
             self.visible = (0..self.paths.len()).collect();
         } else {
             self.visible = (0..self.paths.len())
-                .filter(|&i| self.paths[i].to_lowercase().starts_with(&needle))
+                .filter(|&i| self.paths[i].to_lowercase().contains(&needle))
                 .collect();
         }
         if self.cursor >= self.visible.len() {
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn backspace_trims_filter_and_restores_visibility() {
-        let mut p = picker(&["alpha", "beta"]);
+        let mut p = picker(&["alpha", "uno"]);
         p.handle_key(key(KeyCode::Char('a'), KeyModifiers::NONE));
         assert_eq!(p.visible.len(), 1);
         p.handle_key(key(KeyCode::Backspace, KeyModifiers::NONE));
@@ -269,6 +269,20 @@ mod tests {
         p.handle_key(key(KeyCode::End, KeyModifiers::NONE));  // cursor=2
         p.handle_key(key(KeyCode::Char('b'), KeyModifiers::NONE)); // visible=[1]
         assert_eq!(p.cursor, 0);
+    }
+
+    #[test]
+    fn filter_uses_substring_not_prefix() {
+        // 'log' should match files where 'log' appears anywhere in the path,
+        // not just at the start.
+        let mut p = picker(&["app.rs", "build.log", "src/logger.rs"]);
+        p.handle_key(key(KeyCode::Char('l'), KeyModifiers::NONE));
+        p.handle_key(key(KeyCode::Char('o'), KeyModifiers::NONE));
+        p.handle_key(key(KeyCode::Char('g'), KeyModifiers::NONE));
+        // build.log → contains "log" (substring) ✓
+        // src/logger.rs → contains "log" (substring) ✓
+        // app.rs → no match
+        assert_eq!(p.visible, vec![1, 2], "substring filter should match 'log' anywhere in path");
     }
 
     #[test]
