@@ -69,6 +69,22 @@ impl KeyMap {
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
+
+    /// Group user bindings by the kebab-case command name they target.
+    /// Shell-target bindings are excluded. Used by the help overlay to
+    /// replace default key displays with the user's chosen keys.
+    pub fn user_keys_by_command_name(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut out: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for (key, target) in &self.map {
+            let BindingTarget::Command(cmd) = target else { continue };
+            let Some(name) = command_to_kebab(cmd) else { continue };
+            out.entry(name.to_string())
+                .or_default()
+                .push(format_key_event(*key));
+        }
+        out
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -217,6 +233,68 @@ fn command_from_kebab(name: &str) -> Option<Command> {
     }
 }
 
+/// Inverse of `command_from_kebab` — covers the same command set.
+fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
+    match cmd {
+        Command::ScrollLines(1) => Some("scroll-down"),
+        Command::ScrollLines(-1) => Some("scroll-up"),
+        Command::ScrollLogicalLines(1) => Some("scroll-logical-down"),
+        Command::ScrollLogicalLines(-1) => Some("scroll-logical-up"),
+        Command::PageDown => Some("page-down"),
+        Command::PageUp => Some("page-up"),
+        Command::HalfPageDown => Some("half-page-down"),
+        Command::HalfPageUp => Some("half-page-up"),
+        Command::Quit => Some("quit"),
+        Command::Refresh => Some("refresh"),
+        Command::Reload => Some("reload"),
+        Command::ToggleLineNumbers => Some("toggle-line-numbers"),
+        Command::ToggleChop => Some("toggle-chop"),
+        Command::ToggleFollow => Some("toggle-follow"),
+        Command::TogglePrettify => Some("toggle-prettify"),
+        Command::SearchForward => Some("search-forward"),
+        Command::SearchBackward => Some("search-backward"),
+        Command::NextMatch => Some("next-match"),
+        Command::PreviousMatch => Some("previous-match"),
+        Command::OptionPrefix => Some("option-prefix"),
+        Command::GotoLine => Some("goto-line"),
+        Command::GotoRecord => Some("goto-record"),
+        Command::GotoPercent => Some("goto-percent"),
+        Command::MarkSet => Some("mark-set"),
+        Command::MarkJump => Some("mark-jump"),
+        Command::CtrlXPrefix => Some("ctrl-x-prefix"),
+        Command::JumpPrevious => Some("jump-previous"),
+        Command::ShellEscape => Some("shell-escape"),
+        Command::Cancel => Some("cancel"),
+        _ => None,
+    }
+}
+
+fn format_key_event(ke: KeyEvent) -> String {
+    let mut parts: Vec<&'static str> = Vec::new();
+    if ke.modifiers.contains(KeyModifiers::CONTROL) { parts.push("Ctrl"); }
+    if ke.modifiers.contains(KeyModifiers::ALT)     { parts.push("Alt"); }
+    if ke.modifiers.contains(KeyModifiers::SHIFT)   { parts.push("Shift"); }
+    let key = match ke.code {
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c)   => c.to_string().to_uppercase(),
+        KeyCode::F(n)      => format!("F{n}"),
+        KeyCode::Esc       => "Esc".into(),
+        KeyCode::Enter     => "Enter".into(),
+        KeyCode::Tab       => "Tab".into(),
+        KeyCode::Backspace => "Backspace".into(),
+        KeyCode::Up        => "\u{2191}".into(),
+        KeyCode::Down      => "\u{2193}".into(),
+        KeyCode::Left      => "\u{2190}".into(),
+        KeyCode::Right     => "\u{2192}".into(),
+        KeyCode::Home      => "Home".into(),
+        KeyCode::End       => "End".into(),
+        KeyCode::PageUp    => "PgUp".into(),
+        KeyCode::PageDown  => "PgDn".into(),
+        other              => format!("{other:?}"),
+    };
+    if parts.is_empty() { key } else { format!("{}-{}", parts.join("-"), key) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +427,22 @@ mod tests {
         let ctrl_shift_j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
         assert!(m.lookup(&ctrl_shift_j).is_none(),
                 "ctrl-J should NOT also match Ctrl+Shift+j");
+    }
+
+    #[test]
+    fn user_remaps_by_command_name_groups_keys() {
+        let toml = r#"
+[bindings]
+"f3" = "scroll-down"
+"f4" = "scroll-down"
+"f5" = "quit"
+"#;
+        let m = KeyMap::load_from_str(toml).unwrap();
+        let groups = m.user_keys_by_command_name();
+        let mut down = groups.get("scroll-down").cloned().unwrap_or_default();
+        down.sort();
+        assert_eq!(down, vec!["F3".to_string(), "F4".to_string()]);
+        assert_eq!(groups.get("quit").cloned().unwrap_or_default(), vec!["F5".to_string()]);
     }
 
     #[test]
