@@ -605,8 +605,7 @@ fn dispatch_colon_command(
         // Hand off to the outer command dispatcher so the same install path
         // services both `:b` and the (future) F2 keybinding.
         ColonCommand::OpenPicker => ColonOutcome::DispatchCommand(Command::OpenPicker),
-        // Task 12 installs the real HelpOverlay; keep this as a no-op until then.
-        ColonCommand::OpenHelp   => ColonOutcome::Continue(None),
+        ColonCommand::OpenHelp => ColonOutcome::DispatchCommand(Command::OpenHelp),
     }
 }
 
@@ -1002,6 +1001,13 @@ pub fn run(
                                                             .collect::<Vec<_>>();
                                                         overlay = Some(Box::new(
                                                             crate::overlay::picker::FilePicker::new(&file_set, saved)
+                                                        ));
+                                                        needs_redraw = true;
+                                                    }
+                                                    ColonOutcome::DispatchCommand(Command::OpenHelp) => {
+                                                        let remaps = keymap.user_keys_by_command_name();
+                                                        overlay = Some(Box::new(
+                                                            crate::overlay::help::HelpOverlay::new(remaps)
                                                         ));
                                                         needs_redraw = true;
                                                     }
@@ -1443,7 +1449,11 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::OpenHelp => {
-                        // Task 12 installs the real HelpOverlay; leave as a no-op until then.
+                        let remaps = keymap.user_keys_by_command_name();
+                        overlay = Some(Box::new(
+                            crate::overlay::help::HelpOverlay::new(remaps)
+                        ));
+                        needs_redraw = true;
                     }
                     Command::SelectFile(_) | Command::DropFileAt(_) => {
                         // Overlay-only outcomes; consumed by the routing block above.
