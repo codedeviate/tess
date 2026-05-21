@@ -62,6 +62,7 @@ impl Overlay for FilePicker {
     fn handle_key(&mut self, key: KeyEvent) -> OverlayOutcome {
         // Ctrl-D: remove highlighted file
         if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            // Guard on global set count, not the filtered view — :d's semantics.
             if self.paths.len() <= 1 {
                 return OverlayOutcome::Refuse("can't remove last file");
             }
@@ -85,6 +86,8 @@ impl Overlay for FilePicker {
                 self.cursor = self.cursor.saturating_sub(1);
                 OverlayOutcome::Stay
             }
+            // j/k vim keys require NO modifiers — Shift+k must fall through to
+            // the filter so users can type uppercase letters into the search.
             (KeyCode::Char('k'), m) if m == KeyModifiers::NONE => {
                 self.cursor = self.cursor.saturating_sub(1);
                 OverlayOutcome::Stay
@@ -283,6 +286,17 @@ mod tests {
         // src/logger.rs → contains "log" (substring) ✓
         // app.rs → no match
         assert_eq!(p.visible, vec![1, 2], "substring filter should match 'log' anywhere in path");
+    }
+
+    #[test]
+    fn enter_on_empty_visible_is_noop() {
+        // Spec testing-strategy explicitly calls out this case.
+        let mut p = picker(&["alpha", "beta"]);
+        // Filter to nothing.
+        p.handle_key(key(KeyCode::Char('z'), KeyModifiers::NONE));
+        assert!(p.visible.is_empty());
+        let out = p.handle_key(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(out, OverlayOutcome::Stay));
     }
 
     #[test]
