@@ -137,9 +137,46 @@ impl Overlay for FilePicker {
         }
     }
 
-    fn render(&self, _width: u16, _height: u16) -> OverlayFrame {
-        // Implemented in Task 9.
-        OverlayFrame { body: vec![], status: String::new() }
+    fn render(&self, width: u16, height: u16) -> OverlayFrame {
+        let mut body = Vec::with_capacity(height as usize);
+        // Row 0: title
+        let title = if self.filter.is_empty() {
+            format!("Files ({})", self.visible.len())
+        } else {
+            format!(
+                "Files ({} of {} matching \"{}\")",
+                self.visible.len(), self.paths.len(), self.filter,
+            )
+        };
+        body.push(title);
+        body.push(String::new());
+
+        // Compute the column width for filenames.
+        let name_col = self.visible.iter()
+            .map(|&i| self.paths[i].chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(width.saturating_sub(20) as usize);
+
+        // Adjust rows_offset so cursor is visible. (rows_offset is mutable
+        // state in real use; in pure render we approximate by recomputing.)
+        let visible_rows = (height as usize).saturating_sub(3); // title + blank + status
+        let offset = self.cursor.saturating_sub(visible_rows.saturating_sub(1));
+
+        for (row, &i) in self.visible.iter().enumerate().skip(offset).take(visible_rows) {
+            let is_cursor = row == self.cursor;
+            let is_current = i == self.current_index;
+            let gutter = if is_cursor { ">" } else { " " };
+            let line_n = self.saved_lines.get(i).copied().unwrap_or(0).max(1);
+            let trailer = if is_current { "  \u{2190} current" } else { "" };
+            let path = &self.paths[i];
+            body.push(format!(
+                "{gutter} {path:<name_col$}  L{line_n}{trailer}",
+            ));
+        }
+
+        let status = "[filter]  \u{2191}\u{2193} Enter  Ctrl-D remove  Esc".to_string();
+        OverlayFrame { body, status }
     }
 
     fn title(&self) -> Cow<'_, str> { Cow::Borrowed("Files") }
@@ -309,5 +346,43 @@ mod tests {
         p.refresh(OverlayContext { file_set: &fs });
         assert_eq!(p.paths.len(), 2);
         assert!(p.cursor < p.paths.len());
+    }
+
+    #[test]
+    fn render_lists_all_files_with_position() {
+        let p = FilePicker::new(&fs(&["a.log", "b.log"]), vec![1, 42]);
+        let frame = p.render(80, 10);
+        assert_eq!(frame.body[0], "Files (2)");
+        // Row 0 = title; row 1 = blank; row 2 onward = entries.
+        assert!(frame.body.iter().any(|l| l.contains("a.log") && l.contains("L1")));
+        assert!(frame.body.iter().any(|l| l.contains("b.log") && l.contains("L42")));
+    }
+
+    #[test]
+    fn render_marks_current_with_arrow() {
+        let mut f = fs(&["a", "b"]);
+        f.set_current_index(1);
+        let p = FilePicker::new(&f, vec![0, 0]);
+        let frame = p.render(80, 10);
+        let current_line = frame.body.iter().find(|l| l.contains("b")).expect("b line");
+        assert!(current_line.contains("\u{2190} current"), "current marker missing: {current_line:?}");
+    }
+
+    #[test]
+    fn render_title_updates_when_filtering() {
+        let mut p = picker(&["alpha", "beta", "alpine"]);
+        p.handle_key(KE::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        p.handle_key(KE::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        let frame = p.render(80, 10);
+        assert_eq!(frame.body[0], "Files (2 of 3 matching \"al\")");
+    }
+
+    #[test]
+    fn render_status_shows_keybindings() {
+        let p = picker(&["a"]);
+        let frame = p.render(80, 10);
+        assert!(frame.status.contains("Enter"), "status missing Enter hint");
+        assert!(frame.status.contains("Ctrl-D"), "status missing Ctrl-D hint");
+        assert!(frame.status.contains("Esc"), "status missing Esc hint");
     }
 }
