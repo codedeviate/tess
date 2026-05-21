@@ -150,6 +150,10 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
 enum ColonOutcome {
     Continue(Option<String>),  // Some(msg) = transient status to show
     Quit,
+    /// Hand a command to the outer dispatch loop. Used so colon commands
+    /// like `:b` can install overlays via the same Command path as their
+    /// keymap counterparts, without taking a `&mut overlay` argument.
+    DispatchCommand(Command),
 }
 
 #[derive(Debug, Default)]
@@ -357,6 +361,34 @@ fn update_viewport_tag_indicator(stack: &TagStack, viewport: &mut crate::viewpor
     viewport.set_tag_active(stack.active.as_ref().map(|a| {
         (a.name.clone(), a.cursor + 1, a.matches.len())
     }));
+}
+
+/// Open whatever file is at `file_set.current()`, updating viewport and
+/// `current_file_index`. Returns `Some(msg)` if anything went wrong (for
+/// transient status). The cursor in `file_set` must be set before calling.
+#[allow(clippy::too_many_arguments)]
+fn switch_to_current_file(
+    file_set: &mut crate::file_set::FileSet,
+    current_file_index: &mut usize,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    viewport: &mut crate::viewport::Viewport,
+    src: &mut Box<dyn crate::source::Source>,
+    idx: &mut crate::line_index::LineIndex,
+) -> Option<String> {
+    let path = match file_set.current() {
+        Some(p) => p.to_path_buf(),
+        None => return Some("[empty file set]".into()),
+    };
+    let new_idx_val = file_set.current_index();
+    match switch_file(&path, new_idx_val, file_set.len(), args, preprocessor, viewport, src, idx, record_start_regex) {
+        Ok(()) => {
+            *current_file_index = new_idx_val;
+            None
+        }
+        Err(e) => Some(format!("[open: {e}]")),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -570,8 +602,10 @@ fn dispatch_colon_command(
                 ColonOutcome::Continue(msg)
             }
         },
-        // Overlay installation wired in Task 8 (OpenPicker) and Task 12 (OpenHelp).
-        ColonCommand::OpenPicker => ColonOutcome::Continue(None),
+        // Hand off to the outer command dispatcher so the same install path
+        // services both `:b` and the (future) F2 keybinding.
+        ColonCommand::OpenPicker => ColonOutcome::DispatchCommand(Command::OpenPicker),
+        // Task 12 installs the real HelpOverlay; keep this as a no-op until then.
         ColonCommand::OpenHelp   => ColonOutcome::Continue(None),
     }
 }
@@ -962,6 +996,17 @@ pub fn run(
                                                         transient_status = msg;
                                                     }
                                                     ColonOutcome::Quit => break,
+                                                    ColonOutcome::DispatchCommand(Command::OpenPicker) => {
+                                                        let saved = (0..file_set.len())
+                                                            .map(|i| if i == current_file_index { viewport.top_line() } else { 0 })
+                                                            .collect::<Vec<_>>();
+                                                        overlay = Some(Box::new(
+                                                            crate::overlay::picker::FilePicker::new(&file_set, saved)
+                                                        ));
+                                                    }
+                                                    ColonOutcome::DispatchCommand(_) => {
+                                                        // Reserved for future colon-installed commands.
+                                                    }
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -1074,14 +1119,48 @@ pub fn run(
                         crate::overlay::OverlayOutcome::CloseAnd(cmd) => {
                             overlay = None;
                             overlay_flash = None;
-                            // Placeholder: Task 8 will dispatch the returned command here before closing.
-                            let _ = cmd;
+                            if let Command::SelectFile(i) = cmd {
+                                if i < file_set.len() {
+                                    file_set.set_current_index(i);
+                                    if let Some(msg) = switch_to_current_file(
+                                        &mut file_set, &mut current_file_index,
+                                        &args, preprocessor.as_ref(),
+                                        record_start_regex.as_ref(),
+                                        &mut viewport, &mut src, &mut idx,
+                                    ) {
+                                        transient_status = Some(msg);
+                                    }
+                                }
+                            }
                             needs_redraw = true;
                             continue;
                         }
                         crate::overlay::OverlayOutcome::Apply(cmd) => {
-                            // Placeholder: Task 8 will handle DropFileAt dispatch + refresh.
-                            let _ = cmd;
+                            if let Command::DropFileAt(target) = cmd {
+                                if file_set.len() > 1 && target < file_set.len() {
+                                    let saved_cur = file_set.current_index();
+                                    file_set.set_current_index(target);
+                                    let _ = file_set.delete_current();
+                                    // delete_current() moved the cursor itself; restore
+                                    // the pre-drop position when the deletion was not OF
+                                    // the saved cursor.
+                                    if target < saved_cur {
+                                        let restored = saved_cur.saturating_sub(1);
+                                        file_set.set_current_index(restored);
+                                    } else if target > saved_cur {
+                                        file_set.set_current_index(saved_cur);
+                                    }
+                                    let _ = switch_to_current_file(
+                                        &mut file_set, &mut current_file_index,
+                                        &args, preprocessor.as_ref(),
+                                        record_start_regex.as_ref(),
+                                        &mut viewport, &mut src, &mut idx,
+                                    );
+                                    if let Some(ov) = overlay.as_mut() {
+                                        ov.refresh(crate::overlay::OverlayContext { file_set: &file_set });
+                                    }
+                                }
+                            }
                             needs_redraw = true;
                             continue;
                         }
@@ -1348,12 +1427,25 @@ pub fn run(
                             needs_redraw = true;
                         }
                     },
-                    Command::OpenPicker
-                    | Command::OpenHelp
-                    | Command::SelectFile(_)
-                    | Command::DropFileAt(_)
-                    | Command::MouseEvent(_)
-                    | Command::Noop => {}
+                    Command::OpenPicker => {
+                        let saved = (0..file_set.len())
+                            .map(|i| if i == current_file_index { viewport.top_line() } else { 0 })
+                            .collect::<Vec<_>>();
+                        overlay = Some(Box::new(
+                            crate::overlay::picker::FilePicker::new(&file_set, saved)
+                        ));
+                        needs_redraw = true;
+                    }
+                    Command::OpenHelp => {
+                        // Task 12 installs the real HelpOverlay; leave as a no-op until then.
+                    }
+                    Command::SelectFile(_) | Command::DropFileAt(_) => {
+                        // Overlay-only outcomes; consumed by the routing block above.
+                    }
+                    Command::MouseEvent(_) => {
+                        // Mouse handling lives in the event-routing block, not here.
+                    }
+                    Command::Noop => {}
                 }
             }
             Ok(false) => {
