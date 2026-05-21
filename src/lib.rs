@@ -21,5 +21,6 @@ pub mod shell;
 pub mod preprocess;
 pub mod keys;
 pub mod open;
+pub mod overlay;
 pub mod tags;
 pub mod keymap;
