@@ -1,3 +1,6 @@
+#![allow(rustdoc::broken_intra_doc_links)]
+#![doc = include_str!("../README.md")]
+
 pub mod ansi;
 pub mod error;
 pub mod render;
