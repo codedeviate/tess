@@ -568,6 +568,12 @@ showing raw (use --content-type=NAME to override)"
     }
     if args.hex {
         viewport.set_hex_mode(true);
+        let bpg = tess::hex::hex_chars_to_bytes_per_group(args.hex_group)
+            .ok_or_else(|| Error::Runtime(format!(
+                "--hex-group must be one of 2, 4, 8, 16, 32 (got {})",
+                args.hex_group
+            )))?;
+        viewport.set_hex_group_size(bpg);
     }
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_preprocess_failure(preprocess_failure);

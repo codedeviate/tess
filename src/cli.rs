@@ -80,6 +80,18 @@ pub struct Args {
     )]
     pub hex: bool,
 
+    /// Hex characters per group in `--hex` mode. One of 2, 4, 8, 16, 32
+    /// (default 4, matching `xxd`). 32 means the whole row as a single
+    /// group with no spacing between hex pairs. Requires `--hex`. Can be
+    /// changed at runtime with `:hex N`.
+    #[arg(
+        long = "hex-group",
+        value_name = "N",
+        default_value_t = 4,
+        requires = "hex",
+    )]
+    pub hex_group: usize,
+
     /// Show line numbers.
     #[arg(short = 'N', long = "LINE-NUMBERS")]
     pub line_numbers: bool,
@@ -402,6 +414,7 @@ mod tests {
             "--grep",
             "--head",
             "--hex",
+            "--hex-group",
             "--LINE-NUMBERS",
             "--list-formats",
             "--live",

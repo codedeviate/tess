@@ -78,6 +78,8 @@ enum ColonCommand {
     TagPrev,
     OpenPicker,
     OpenHelp,
+    /// `:hex N` — set hex group width to N hex characters (2/4/8/16/32).
+    HexGroup(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +87,8 @@ enum ColonParseError {
     UnknownCommand(String),
     MissingPath,
     TagRequiresName,
+    HexGroupRequiresValue,
+    HexGroupInvalid(String),
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -93,6 +97,12 @@ impl std::fmt::Display for ColonParseError {
             ColonParseError::UnknownCommand(t) => write!(f, "unknown command: :{t}"),
             ColonParseError::MissingPath => write!(f, ":e requires a path"),
             ColonParseError::TagRequiresName => write!(f, ":tag requires a name"),
+            ColonParseError::HexGroupRequiresValue => {
+                write!(f, ":hex requires N (one of 2, 4, 8, 16, 32)")
+            }
+            ColonParseError::HexGroupInvalid(v) => {
+                write!(f, ":hex N must be one of 2, 4, 8, 16, 32 (got {v})")
+            }
         }
     }
 }
@@ -143,6 +153,16 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "tprev" => Ok(ColonCommand::TagPrev),
         "b" | "buffers" => Ok(ColonCommand::OpenPicker),
         "h" | "help"    => Ok(ColonCommand::OpenHelp),
+        "hex" => {
+            if rest.is_empty() {
+                Err(ColonParseError::HexGroupRequiresValue)
+            } else {
+                match rest.parse::<usize>() {
+                    Ok(n) if matches!(n, 2 | 4 | 8 | 16 | 32) => Ok(ColonCommand::HexGroup(n)),
+                    _ => Err(ColonParseError::HexGroupInvalid(rest.to_string())),
+                }
+            }
+        }
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -606,6 +626,17 @@ fn dispatch_colon_command(
         // services both `:b` and the (future) F2 keybinding.
         ColonCommand::OpenPicker => ColonOutcome::DispatchCommand(Command::OpenPicker),
         ColonCommand::OpenHelp => ColonOutcome::DispatchCommand(Command::OpenHelp),
+        ColonCommand::HexGroup(hex_chars) => {
+            if !viewport.hex_mode() {
+                return ColonOutcome::Continue(Some(
+                    "[:hex requires --hex mode]".into(),
+                ));
+            }
+            // Already validated in parse_colon_command, so unwrap is safe.
+            let bpg = crate::hex::hex_chars_to_bytes_per_group(hex_chars).unwrap();
+            viewport.set_hex_group_size(bpg);
+            ColonOutcome::Continue(Some(format!("[hex group: {hex_chars} chars]")))
+        }
     }
 }
 
@@ -2119,6 +2150,36 @@ mod tests {
     fn parse_colon_help_opens_help() {
         assert_eq!(parse_colon_command("h").unwrap(), ColonCommand::OpenHelp);
         assert_eq!(parse_colon_command("help").unwrap(), ColonCommand::OpenHelp);
+    }
+
+    #[test]
+    fn parse_colon_hex_with_valid_widths() {
+        for n in [2usize, 4, 8, 16, 32] {
+            assert_eq!(
+                parse_colon_command(&format!("hex {n}")).unwrap(),
+                ColonCommand::HexGroup(n),
+            );
+        }
+    }
+
+    #[test]
+    fn parse_colon_hex_without_value_errors() {
+        assert_eq!(
+            parse_colon_command("hex").unwrap_err(),
+            ColonParseError::HexGroupRequiresValue,
+        );
+    }
+
+    #[test]
+    fn parse_colon_hex_with_invalid_value_errors() {
+        match parse_colon_command("hex 3").unwrap_err() {
+            ColonParseError::HexGroupInvalid(v) => assert_eq!(v, "3"),
+            other => panic!("expected HexGroupInvalid, got {other:?}"),
+        }
+        match parse_colon_command("hex banana").unwrap_err() {
+            ColonParseError::HexGroupInvalid(v) => assert_eq!(v, "banana"),
+            other => panic!("expected HexGroupInvalid, got {other:?}"),
+        }
     }
 
     #[test]

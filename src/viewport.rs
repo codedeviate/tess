@@ -167,6 +167,9 @@ pub struct Viewport {
     /// Filtering still operates on the raw line (it uses captures, not text).
     display: Option<crate::format::DisplayRenderer>,
     hex_mode: bool,
+    /// Bytes per hex group in `--hex` mode. One of 1, 2, 4, 8, 16.
+    /// Default 2 (matches the historical `xxd` 2-byte / 4-char grouping).
+    hex_group_size: usize,
     /// Custom status-line prompt template. When set, replaces the built-in
     /// format_status output with the template rendered against PromptContext.
     prompt: Option<crate::prompt::ParsedPrompt>,
@@ -211,6 +214,7 @@ impl Viewport {
             search: None,
             display: None,
             hex_mode: false,
+            hex_group_size: 2,
             prompt: None,
             preprocess_failure: None,
             file_index: None,
@@ -227,6 +231,24 @@ impl Viewport {
 
     pub fn set_hex_mode(&mut self, on: bool) {
         self.hex_mode = on;
+    }
+
+    /// Returns whether `--hex` rendering is active.
+    pub fn hex_mode(&self) -> bool {
+        self.hex_mode
+    }
+
+    /// Set bytes-per-group for `--hex` rendering. Accepts 1, 2, 4, 8, or 16.
+    /// Invalid values are ignored.
+    pub fn set_hex_group_size(&mut self, bytes_per_group: usize) {
+        if matches!(bytes_per_group, 1 | 2 | 4 | 8 | 16) {
+            self.hex_group_size = bytes_per_group;
+        }
+    }
+
+    /// Current bytes-per-group for `--hex` rendering.
+    pub fn hex_group_size(&self) -> usize {
+        self.hex_group_size
     }
 
     pub fn set_prompt(&mut self, prompt: Option<crate::prompt::ParsedPrompt>) {
@@ -1028,7 +1050,7 @@ impl Viewport {
                 let offset = hex_row * 16;
                 let end = (offset + 16).min(total_bytes);
                 let bytes_cow = src.bytes(offset..end);
-                let text = format_hex_row(offset, &bytes_cow);
+                let text = format_hex_row(offset, &bytes_cow, self.hex_group_size);
                 let rows = render_line(text.as_bytes(), &opts, None);
                 body.push(rows.into_iter().next().unwrap_or_else(|| {
                     vec![Cell::Empty; self.cols as usize]
