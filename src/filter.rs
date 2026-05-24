@@ -105,8 +105,14 @@ pub enum FilterMatch {
 
 impl CompiledFilter {
     /// Compile the given specs against `format`. Validates that every spec's
-    /// field is one of the format's named captures.
-    pub fn compile(format: &LogFormat, specs: Vec<FilterSpec>) -> Result<Self, String> {
+    /// field is one of the format's named captures. The `case_mode` applies
+    /// to the regex operators (`~` / `!~`); literal-comparison operators
+    /// (`=`, `!=`, `<`, `<=`, `>`, `>=`) ignore it.
+    pub fn compile(
+        format: &LogFormat,
+        specs: Vec<FilterSpec>,
+        case_mode: crate::viewport::CaseMode,
+    ) -> Result<Self, String> {
         let mut predicates = Vec::with_capacity(specs.len());
         for spec in specs {
             if !format.field_names.iter().any(|n| n == &spec.field) {
@@ -128,7 +134,8 @@ impl CompiledFilter {
                 | FilterOp::Gt
                 | FilterOp::Ge => (Some(spec.value.clone()), None),
                 FilterOp::Re | FilterOp::NotRe => {
-                    let r = Regex::new(&spec.value)
+                    let compiled = case_mode.apply_to_pattern(&spec.value);
+                    let r = Regex::new(&compiled)
                         .map_err(|e| format!("filter `{}`: invalid regex `{}`: {e}", spec.field, spec.value))?;
                     (None, Some(r))
                 }
@@ -285,14 +292,14 @@ mod tests {
     fn compile_rejects_unknown_field() {
         let fmt = apache_combined();
         let specs = vec![FilterSpec::parse("notafield=x").unwrap()];
-        let err = CompiledFilter::compile(&fmt, specs).unwrap_err();
+        let err = CompiledFilter::compile(&fmt, specs, crate::viewport::CaseMode::Sensitive).unwrap_err();
         assert!(err.contains("not in format"), "{err}");
     }
 
     #[test]
     fn evaluate_eq_matches() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=500").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=500").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
         assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
     }
@@ -300,7 +307,7 @@ mod tests {
     #[test]
     fn evaluate_re_matches_5xx() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status~^5").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status~^5").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
         assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
     }
@@ -308,7 +315,7 @@ mod tests {
     #[test]
     fn evaluate_ne_excludes_200() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status!=200").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status!=200").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
         assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
     }
@@ -322,6 +329,7 @@ mod tests {
                 FilterSpec::parse("status~^5").unwrap(),
                 FilterSpec::parse(r"url~/api/").unwrap(),
             ],
+            crate::viewport::CaseMode::Sensitive,
         )
         .unwrap();
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
@@ -331,7 +339,7 @@ mod tests {
     #[test]
     fn evaluate_unparseable_line_is_not_parsed() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=200").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=200").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(NON_PARSING), FilterMatch::NotParsed);
     }
 
@@ -368,7 +376,7 @@ mod tests {
     #[test]
     fn evaluate_ge_numeric() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status>=500").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status>=500").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
         assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
     }
@@ -376,7 +384,7 @@ mod tests {
     #[test]
     fn evaluate_lt_numeric() {
         let fmt = apache_combined();
-        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status<400").unwrap()]).unwrap();
+        let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status<400").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
         assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::Matched);
         assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::NotMatched);
     }

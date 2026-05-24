@@ -38,7 +38,7 @@ fn filter_hide_mode_shows_only_matching_lines() {
     let formats = format::load_all().unwrap();
     let fmt = &formats["apache-combined"];
     let specs = vec![FilterSpec::parse("status~^5").unwrap()];
-    let f = CompiledFilter::compile(fmt, specs).unwrap();
+    let f = CompiledFilter::compile(fmt, specs, tess::viewport::CaseMode::Sensitive).unwrap();
     v.set_filter(Some(f));
     idx.extend_to_end(&m);
     v.extend_visible_lines(&idx, &m);
@@ -62,7 +62,7 @@ fn filter_dim_mode_shows_all_lines_with_non_matches_dimmed() {
     let formats = format::load_all().unwrap();
     let fmt = &formats["apache-combined"];
     let specs = vec![FilterSpec::parse("status~^5").unwrap()];
-    let f = CompiledFilter::compile(fmt, specs).unwrap();
+    let f = CompiledFilter::compile(fmt, specs, tess::viewport::CaseMode::Sensitive).unwrap();
     v.set_filter(Some(f));
     v.set_dim_mode(true);
     idx.extend_to_end(&m);
@@ -91,7 +91,7 @@ fn multi_filter_and_semantics() {
         FilterSpec::parse("status~^5").unwrap(),
         FilterSpec::parse(r"url~/api/").unwrap(),
     ];
-    let f = CompiledFilter::compile(fmt, specs).unwrap();
+    let f = CompiledFilter::compile(fmt, specs, tess::viewport::CaseMode::Sensitive).unwrap();
     v.set_filter(Some(f));
     idx.extend_to_end(&m);
     v.extend_visible_lines(&idx, &m);

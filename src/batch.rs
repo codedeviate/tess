@@ -324,6 +324,7 @@ mod tests {
         let f = CompiledFilter::compile(
             &fmt,
             vec![FilterSpec::parse("status>=500").unwrap()],
+            crate::viewport::CaseMode::Sensitive,
         ).unwrap();
 
         let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), None, None);
@@ -351,7 +352,7 @@ mod tests {
         m.append(b"drop me\n");
         m.append(b"keep error two\n");
         m.finish();
-        let g = GrepPredicate::compile(&["error".to_string()]).unwrap();
+        let g = GrepPredicate::compile(&["error".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let out = run_to_vec(Box::new(m), LineIndex::new(), None, Some(g), None);
         assert_eq!(out, b"keep error one\nkeep error two\n");
     }
@@ -380,6 +381,7 @@ mod tests {
         let f = CompiledFilter::compile(
             &fmt,
             vec![FilterSpec::parse("kind~category").unwrap()],
+            crate::viewport::CaseMode::Sensitive,
         )
         .unwrap();
 
@@ -416,6 +418,7 @@ mod tests {
         let f = CompiledFilter::compile(
             &fmt,
             vec![FilterSpec::parse("message~config").unwrap()],
+            crate::viewport::CaseMode::Sensitive,
         )
         .unwrap();
 
@@ -443,7 +446,7 @@ mod tests {
 
         // Pattern matches a continuation line, not the header. Records-aware
         // grep should pull in the whole record.
-        let g = GrepPredicate::compile(&["Renderer".to_string()]).unwrap();
+        let g = GrepPredicate::compile(&["Renderer".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let out = run_to_vec(Box::new(m), idx, None, Some(g), None);
         assert_eq!(out, b"[1] head\n  Renderer.php\n  more body\n");
     }
@@ -460,8 +463,9 @@ mod tests {
         let f = CompiledFilter::compile(
             &fmt,
             vec![FilterSpec::parse("level=ERROR").unwrap()],
+            crate::viewport::CaseMode::Sensitive,
         ).unwrap();
-        let g = GrepPredicate::compile(&["timeout".to_string()]).unwrap();
+        let g = GrepPredicate::compile(&["timeout".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), Some(g), None);
         assert_eq!(out, b"ERROR timeout one\n");
     }

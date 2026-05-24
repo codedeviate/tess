@@ -34,7 +34,7 @@ fn search_finds_cross_line_pattern_in_records() {
 fn grep_hides_nonmatching_records_entirely() {
     let (src, idx) = setup();
     let mut v = Viewport::new(80, 24, "fixture".into());
-    v.set_grep(Some(GrepPredicate::compile(&["ERROR".to_string()]).unwrap()));
+    v.set_grep(Some(GrepPredicate::compile(&["ERROR".to_string()], tess::viewport::CaseMode::Sensitive).unwrap()));
     v.extend_visible_lines(&idx, &src);
     // Only record 2 (ERROR) visible → lines 3..8.
     assert_eq!(v.visible_lines(), &[3usize, 4, 5, 6, 7][..]);
@@ -45,7 +45,7 @@ fn grep_with_cross_line_pattern_matches_full_record() {
     let (src, idx) = setup();
     let mut v = Viewport::new(80, 24, "fixture".into());
     v.set_grep(Some(
-        GrepPredicate::compile(&[r"(?s)WARN.*duration_ms".to_string()]).unwrap(),
+        GrepPredicate::compile(&[r"(?s)WARN.*duration_ms".to_string()], tess::viewport::CaseMode::Sensitive).unwrap(),
     ));
     v.extend_visible_lines(&idx, &src);
     // Only record 4 (WARN) matches: lines 9..12.

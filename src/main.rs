@@ -499,9 +499,13 @@ showing raw (use --content-type=NAME to override)"
 
     // Compile --grep patterns up front (no --format required). A failing
     // pattern errors cleanly to stderr without entering raw mode.
+    //
+    // Case policy is wired here as Sensitive; the -i / -I CLI flags
+    // override it in the resolver below before viewport.set_case_mode().
+    let case_mode = tess::viewport::CaseMode::Sensitive;
     let compiled_grep = if !args.grep.is_empty() {
         Some(
-            GrepPredicate::compile(&args.grep)
+            GrepPredicate::compile(&args.grep, case_mode)
                 .map_err(Error::Runtime)?,
         )
     } else {
@@ -523,7 +527,7 @@ showing raw (use --content-type=NAME to override)"
             let specs: Vec<FilterSpec> = args.filter.iter()
                 .map(|s| FilterSpec::parse(s).map_err(Error::Runtime))
                 .collect::<Result<_>>()?;
-            Some(CompiledFilter::compile(fmt, specs).map_err(Error::Runtime)?)
+            Some(CompiledFilter::compile(fmt, specs, case_mode).map_err(Error::Runtime)?)
         } else {
             None
         };

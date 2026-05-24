@@ -2091,6 +2091,7 @@ mod tests {
         let f = crate::filter::CompiledFilter::compile(
             &fmt,
             vec![crate::filter::FilterSpec::parse("line=alpha").unwrap()],
+            CaseMode::Sensitive,
         )
         .unwrap();
         v.set_filter(Some(f));
@@ -2114,7 +2115,7 @@ mod tests {
         idx.extend_to_end(&src);
 
         let mut v = Viewport::new(40, 5, "test".into());
-        v.set_grep(Some(GrepPredicate::compile(&["error".to_string()]).unwrap()));
+        v.set_grep(Some(GrepPredicate::compile(&["error".to_string()], crate::viewport::CaseMode::Sensitive).unwrap()));
         v.extend_visible_lines(&idx, &src);
 
         // Only the two "error" lines should be visible.
@@ -2140,8 +2141,9 @@ mod tests {
         let f = crate::filter::CompiledFilter::compile(
             &fmt,
             vec![crate::filter::FilterSpec::parse("level=ERROR").unwrap()],
+            CaseMode::Sensitive,
         ).unwrap();
-        let g = GrepPredicate::compile(&["timeout".to_string()]).unwrap();
+        let g = GrepPredicate::compile(&["timeout".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
 
         let src = crate::source::MockSource::new();
         src.append(b"ERROR timeout connecting\n");      // matches both → keep
@@ -2250,7 +2252,7 @@ mod tests {
         let mut idx = LineIndex::new();
         idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
         idx.extend_to_end(&m);
-        let grep = GrepPredicate::compile(&["cont a".to_string()]).unwrap();
+        let grep = GrepPredicate::compile(&["cont a".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let mut v = Viewport::new(40, 10, "f".into());
         v.set_grep(Some(grep));
         v.extend_visible_lines(&idx, &m);
@@ -2281,6 +2283,7 @@ mod tests {
         let f = crate::filter::CompiledFilter::compile(
             &fmt,
             vec![crate::filter::FilterSpec::parse("kind~category").unwrap()],
+            CaseMode::Sensitive,
         )
         .unwrap();
         let mut v = Viewport::new(40, 10, "f".into());
@@ -2298,7 +2301,7 @@ mod tests {
         let mut idx = LineIndex::new();
         idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
         idx.extend_to_end(&m);
-        let grep = GrepPredicate::compile(&[r"(?s)head.*Renderer".to_string()]).unwrap();
+        let grep = GrepPredicate::compile(&[r"(?s)head.*Renderer".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let mut v = Viewport::new(40, 10, "f".into());
         v.set_grep(Some(grep));
         v.extend_visible_lines(&idx, &m);
@@ -2315,7 +2318,7 @@ mod tests {
         let mut idx = LineIndex::new();
         idx.set_record_start(regex::bytes::Regex::new(r"^\[").unwrap());
         idx.extend_to_end(&m);
-        let grep = GrepPredicate::compile(&[r"\[1\]".to_string()]).unwrap();
+        let grep = GrepPredicate::compile(&[r"\[1\]".to_string()], CaseMode::Sensitive).unwrap();
         let mut v = Viewport::new(40, 10, "f".into());
         v.set_grep(Some(grep));
         v.set_dim_mode(true);
@@ -2375,6 +2378,7 @@ mod tests {
         let f = crate::filter::CompiledFilter::compile(
             &fmt,
             vec![crate::filter::FilterSpec::parse("kind=B").unwrap()],
+            CaseMode::Sensitive,
         )
         .unwrap();
 
