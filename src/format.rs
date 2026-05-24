@@ -27,8 +27,8 @@ pub struct LogFormat {
     /// Optional default style for the status row when this format's prompt
     /// is active. Per-format value; CLI `--prompt-style` overrides.
     pub prompt_style: Option<crate::ansi::Style>,
-    pub source: crate::config_path::ConfigSource,
-    pub overrides: Option<crate::config_path::ConfigSource>,
+    pub(crate) source: crate::config_path::ConfigSource,
+    pub(crate) overrides: Option<crate::config_path::ConfigSource>,
 }
 
 impl LogFormat {
@@ -302,8 +302,8 @@ pub struct Group {
     pub tab_width: Option<u8>,
     pub filter: Vec<String>,
     pub grep: Vec<String>,
-    pub source: crate::config_path::ConfigSource,
-    pub overrides: Option<crate::config_path::ConfigSource>,
+    pub(crate) source: crate::config_path::ConfigSource,
+    pub(crate) overrides: Option<crate::config_path::ConfigSource>,
 }
 
 /// Long-form names of every built-in clap flag. A group cannot reuse one of
@@ -517,6 +517,9 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
     }
     let user = load_user_formats()?;
     for (name, mut src) in user {
+        // load_user_formats doesn't know about built-ins, so we detect
+        // direct built-in shadowing here. If `src.overrides` is already
+        // set, local was shadowing global — leave that alone.
         if src.overrides.is_none() && sources.contains_key(&name) {
             src.overrides = Some(crate::config_path::ConfigSource::Builtin);
         }
