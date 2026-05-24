@@ -87,6 +87,13 @@ pub struct Args {
     #[allow(non_snake_case)]
     pub IGNORE_CASE: bool,
 
+    /// Disable search-match highlighting by default. Search still
+    /// navigates (`n` / `N` jump to matches); the visual reverse-video
+    /// highlight is suppressed. Runtime toggle: `:hlsearch` / `:nohlsearch`.
+    /// Mirrors `less -G`.
+    #[arg(short = 'G', long = "no-hilite-search")]
+    pub no_hilite_search: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,

@@ -243,6 +243,10 @@ pub struct Viewport {
     /// Resolved from -i / -I CLI flags at startup; mutated by the `:case`
     /// colon command at runtime.
     case_mode: CaseMode,
+    /// When false, search-match highlighting is suppressed in frame
+    /// composition (but search navigation still works). Toggled by
+    /// `-G` / `--no-hilite-search` and `:hlsearch` / `:nohlsearch`.
+    hilite_search: bool,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -285,12 +289,17 @@ impl Viewport {
             status_flash: None,
             ticks_since_growth: 0,
             case_mode: CaseMode::default(),
+            hilite_search: true,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
     }
 
     pub fn case_mode(&self) -> CaseMode { self.case_mode }
+
+    pub fn hilite_search(&self) -> bool { self.hilite_search }
+
+    pub fn set_hilite_search(&mut self, on: bool) { self.hilite_search = on; }
 
     /// Switch the case-mode policy. Re-compiles any active search so the
     /// new policy takes effect on the next frame without the user having
@@ -921,7 +930,7 @@ impl Viewport {
                 // Compute search highlights for this display row by running
                 // the regex against the row's rendered text. Each match's
                 // char range maps to a cell column range via `starts`.
-                let row_highlights = if let Some(s) = self.search.as_ref() {
+                let row_highlights = if let (true, Some(s)) = (self.hilite_search, self.search.as_ref()) {
                     find_row_highlights(&full, &s.regex)
                 } else {
                     Vec::new()

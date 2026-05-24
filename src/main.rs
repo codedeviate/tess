@@ -601,6 +601,7 @@ showing raw (use --content-type=NAME to override)"
     }
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_case_mode(case_mode);
+    viewport.set_hilite_search(!args.no_hilite_search);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

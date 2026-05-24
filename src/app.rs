@@ -96,6 +96,9 @@ enum ColonCommand {
     /// `:case [sensitive|smart|insensitive]` — set or cycle the search
     /// case-sensitivity policy.
     Case(Option<crate::viewport::CaseMode>),
+    /// `:hlsearch` (true) / `:nohlsearch` (false) — toggle search-match
+    /// highlighting at runtime.
+    HlSearch(bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -206,6 +209,8 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 }
             }
         }
+        "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
+        "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "case" => {
             if rest.is_empty() {
                 Ok(ColonCommand::Case(None))
@@ -803,6 +808,11 @@ fn dispatch_colon_command(
                 AnsiMode::Raw => "raw",
             };
             ColonOutcome::Continue(Some(format!("[color: {label}]")))
+        }
+        ColonCommand::HlSearch(on) => {
+            viewport.set_hilite_search(on);
+            let msg = if on { "[hlsearch on]" } else { "[hlsearch off]" };
+            ColonOutcome::Continue(Some(msg.into()))
         }
         ColonCommand::Case(mode) => {
             use crate::viewport::CaseMode;
@@ -2633,6 +2643,12 @@ mod tests {
             ColonParseError::CaseInvalid(v) => assert_eq!(v, "rainbow"),
             other => panic!("expected CaseInvalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_colon_hlsearch_on_off() {
+        assert_eq!(parse_colon_command("hlsearch").unwrap(), ColonCommand::HlSearch(true));
+        assert_eq!(parse_colon_command("nohlsearch").unwrap(), ColonCommand::HlSearch(false));
     }
 
     #[test]
