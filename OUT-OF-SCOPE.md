@@ -29,15 +29,6 @@ should be added without their own spec → plan cycle.
 
 ## Deferred
 
-### ANSI color follow-ups — **S each**
-
-- Interactive runtime toggle of `AnsiMode` (bind a key to flip between Strict / Interpret / Raw).
-- 24-bit-to-256 truecolor downsampling for terminals that don't natively support truecolor.
-- Custom status-row / prompt theming (`--status-color`, `--prompt-color` flags or config).
-- ANSI color awareness in `--display` templates (M — colored field tokens).
-- ANSI color awareness in `--prompt` templates (S — colored placeholders).
-- Full -r passthrough that bypasses the cell pipeline (current MVP treats Raw like Strict in the writer).
-
 ### Tag-feature follow-ups — **S each**
 
 - Tag-name completion in the `:tag` / `Ctrl-]` prompt.

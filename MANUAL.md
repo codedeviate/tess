@@ -592,6 +592,55 @@ all recognized.
 The `NO_COLOR` environment variable (any non-empty value) and `CLICOLOR=0`
 also force `--no-color` behavior. Explicit flags always win over env.
 
+### Switching modes at runtime
+
+Press `:` then type `color` to cycle through the three ANSI policies:
+`strict` → `interpret` → `raw`. Or pass an explicit mode (`:color strict`,
+`:color interpret`, `:color raw`). Useful when a colored log is unreadable
+in `raw` and you want to flip back to `interpret` without restarting.
+
+### Truecolor (24-bit RGB)
+
+`--truecolor=auto` (default) checks the `COLORTERM` environment variable
+and downsamples 24-bit RGB colors to the xterm 256-color palette when
+truecolor isn't advertised. `--truecolor=never` always downsamples;
+`--truecolor=always` passes RGB through regardless of terminal advertising.
+
+### Theming the status line and prompt
+
+`--status-style` styles the status row at the bottom (default `reverse` —
+matches pre-0.23 behavior). `--prompt-style` styles the row when a custom
+`--prompt` template is active. Per-format `prompt_style = '...'` in
+`formats.toml` provides a per-format default; CLI `--prompt-style` wins.
+
+Grammar: comma-separated tokens.
+
+| Token | Meaning |
+|-------|---------|
+| `bold`, `dim`, `italic`, `underline`, `reverse` | SGR attributes. |
+| `fg=COLOR`, `bg=COLOR` | Foreground / background. |
+| `COLOR` = named (`black`..`white`, optional `bright-` prefix), `#RRGGBB`, or 0–255. |
+
+Examples:
+
+```sh
+tess --status-style 'bold,fg=cyan,bg=black' app.log
+tess --prompt '<label>  <pct>%' --prompt-style 'fg=bright-blue' app.log
+```
+
+### Embedding SGR in display / prompt templates
+
+`--display` and `--prompt` literals accept backslash-escape control bytes:
+`\e` / `\x1b` / `\033` (ESC), `\n`, `\t`, `\r`, plus `\xHH` and `\NNN`
+(hex / octal byte). The bytes flow into the normal render pipeline, so
+they're interpreted when ANSI mode is `interpret` or passed through when
+`raw`:
+
+```sh
+tail -f app.log | tess --format apache-common \
+  --display '\e[33m<time>\e[0m  \e[1m<status>\e[0m  <msg>'
+```
+
 ### What patterns see
 
 `/search`, `--filter`, and `--grep` always match against the SGR-stripped
