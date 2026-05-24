@@ -17,6 +17,211 @@ are called out where relevant.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
 
+## [0.29.0] — 2026-05-24
+
+### Added
+
+- `--follow-name` flag accepted for `tail -F` / `less --follow-name`
+  compatibility. tess already follows by path (rotation/truncation
+  detected on every poll and re-opened from offset 0, shipped in 0.25.0);
+  this flag is a no-op for consistency. Emits a one-line stderr note if
+  given without `-f`.
+- `--exit-follow-on-close` flag. In follow mode with piped stdin, exit
+  when the upstream writer closes the pipe. Default off (today's
+  behavior preserved). No-op for file sources.
+
+## [0.28.0] — 2026-05-24
+
+### Added
+
+- `-s` / `--squeeze-blank-lines`. Collapse runs of two or more
+  consecutive blank lines into a single blank at display time. Real line
+  numbers, search, and tag jumps are unaffected.
+- `--header=L[,C]`. Pin top `L` source rows at the top of the viewport.
+  The `C` (left columns) field is wired but currently inert — future
+  horizontal-scroll work can opt into it without re-plumbing. Runtime
+  adjustment via `:header L [C]`.
+- `--rscroll=CHAR`. Character displayed at the right edge of a line
+  chopped in `-S` chop mode, signaling "more content right". Default
+  `>`. Pass `--rscroll ''` to disable.
+- `-z N` / `--window=N`. PageDown / PageUp step size in lines.
+  Default: full body height. Half-page commands always advance by half
+  the screen regardless.
+- `--wordwrap`. In wrap mode, break lines at the last whitespace before
+  `cols` instead of mid-character. Falls back to mid-character break
+  when no whitespace fits.
+
+## [0.27.0] — 2026-05-24
+
+### Added
+
+- `-X` / `--no-init`. Skip alt-screen entry on startup; content remains
+  in terminal scrollback after exit. Crucial for piped use and
+  git-pager-style workflows.
+- `-F` / `--quit-if-one-screen`. When the entire source fits within one
+  screen and is not still being streamed, print verbatim and exit — no
+  pager. Pairs naturally with `-X`.
+- `-K` / `--quit-on-intr`. Accepted for `less` compatibility; no-op
+  since Ctrl-C already quits.
+- `-e` / `--quit-at-eof` and `-E` / `--QUIT-AT-EOF`. Auto-exit when
+  scrolling past end-of-file. `-e` quits on the second consecutive
+  forward-motion at EOF; `-E` quits on the first. Mutually exclusive.
+- `+CMD` startup commands. Pre-clap argv pass extracts `+G`, `+NUM`,
+  `+/pattern`, `+?pattern` tokens and applies them against the viewport
+  before the event loop. Honors `-i` / `-I` for the search forms.
+
+### Changed
+
+- `TerminalGuard::enter` gains a `with_alt_screen: bool` parameter.
+  When false, raw mode is still enabled but `EnterAlternateScreen` is
+  skipped, and the drop path doesn't emit `LeaveAlternateScreen`.
+
+## [0.26.0] — 2026-05-24
+
+### Added
+
+- `-i` / `--ignore-case`. Smart-case search: case-insensitive unless
+  the pattern contains an uppercase character. Matches less / ripgrep /
+  vim smartcase. Applies to `/`, `?`, `--grep`, and `--filter ~ / !~`
+  regex operators.
+- `-I` / `--IGNORE-CASE`. Force case-insensitive search regardless of
+  pattern case. Mutually exclusive with `-i`.
+- `-G` / `--no-hilite-search`. Disable search-match highlighting at
+  startup. Search navigation (`n` / `N`) still works.
+- `:case [sensitive|smart|insensitive]` colon command. Cycles when
+  given without an argument. Re-compiles any active search so the new
+  policy takes effect on the next frame.
+- `:hlsearch` / `:nohlsearch` colon commands. Toggle search-match
+  highlighting at runtime.
+
+### Changed
+
+- `GrepPredicate::compile` and `CompiledFilter::compile` now accept a
+  `case_mode: CaseMode` parameter. Threaded through main.rs from `-i`
+  / `-I` resolution. Library API change for downstream callers.
+
+## [0.25.0] — 2026-05-24
+
+### Added
+
+- Follow-mode auto-reopen on rotation or truncation. `FileSource`
+  stat's the path on every pump tick; a shrinking size or changed
+  inode flips a one-shot rotation flag. The app loop reacts by
+  re-opening the source from its path, clearing the line index, and
+  snapping to bottom. Status flashes `(F reopened)` for ~1s.
+- `(F idle)` status indicator. After ~5s of no new bytes in follow
+  mode, the marker changes from `(F)` to `(F idle)` so users can tell
+  the source is being watched but quiet.
+- `--follow-suspend-on-motion` flag. Opt-in `less +F` semantics — any
+  motion command (scroll, page, goto-line) suspends following.
+  Re-engage with `Shift-F`. Bare `G` (goto-bottom) intentionally never
+  suspends since it's the user re-engaging.
+
+## [0.24.0] — 2026-05-24
+
+### Added
+
+- Tab completion in the `:tag` / `Ctrl-]` prompt. Extends to the
+  longest common prefix on first Tab; second consecutive Tab shows the
+  match count.
+- Auto-reload of the tags file when its mtime changes. Before every
+  tag operation (`:tag NAME`, `Ctrl-]`, `:tnext` / `:tprev` /
+  `:tselect`, Tab completion), tess re-stats the tags file and
+  re-parses if newer. Successful reload surfaces `[tags reloaded]`.
+- Chained `;` tag addresses (`/foo/;/bar/`). Each step searches from
+  the line matched by the previous one, matching vim behavior. `;`
+  inside `/.../` or `?...?` patterns is treated as literal.
+- Graceful skip of unsupported tag-address forms (`:s/...`, `:call ...`,
+  etc.). Jump goes to line 1 of the target file with a status hint
+  rather than silently failing.
+- `:tselect [NAME]` colon command. Opens a picker overlay listing every
+  match for the tag. `↑`/`↓` or `j`/`k` navigate; Enter or 1–9 picks
+  directly. Without a name, uses the currently-active multi-match list.
+
+### Changed
+
+- `TagAddress` enum gains `Chained(Vec<TagAddress>)` and
+  `Unsupported(String)` variants alongside the existing `Line` and
+  `Pattern`.
+
+## [0.23.0] — 2026-05-24
+
+### Added
+
+- `:color [strict|interpret|raw]` colon command. Cycles through the
+  three ANSI policies when given without an argument, or sets one
+  directly.
+- `--truecolor=auto|never|always` flag. `auto` (default) checks
+  `$COLORTERM` and downsamples 24-bit RGB to the xterm 256-color
+  palette when truecolor isn't advertised; `never` always downsamples;
+  `always` passes RGB through.
+- `--status-style=SPEC` and `--prompt-style=SPEC` flags. Style the
+  status row and prompt row with attribute / fg / bg tokens. Grammar:
+  `bold,dim,italic,underline,reverse,fg=COLOR,bg=COLOR`. COLOR is a
+  named color (`black`..`white`, optional `bright-` prefix), `#RRGGBB`,
+  or 0–255. Empty string disables theming.
+- Per-format `prompt_style = '...'` key in `formats.toml`. CLI
+  `--prompt-style` wins; format-level wins over `--status-style`.
+- Backslash escapes in `--display` and `--prompt` literals: `\e` /
+  `\x1b` / `\033` (ESC), `\n`, `\t`, `\r`, `\xHH`, `\NNN`. Lets users
+  embed raw SGR sequences directly in templates.
+- True `-r` / `--raw-control-chars` passthrough. When `AnsiMode::Raw`
+  is active, the writer emits original source bytes for each visible
+  row verbatim, so cursor moves and non-SGR CSI sequences flow to the
+  terminal. Wrap math is best-effort, matching `less -r`.
+
+## [0.22.0] — 2026-05-22
+
+### Added
+
+- `--hex-group N` flag. Sets hex grouping in `--hex` mode to 2, 4, 8,
+  16, or 32 hex characters per group (1 / 2 / 4 / 8 / 16 bytes).
+  Default 4 (matches `xxd`). 32 collapses each row to a single
+  unspaced group.
+- `:hex N` colon command. Changes the group size live without
+  restarting.
+
+## [0.21.2] — 2026-05-22
+
+### Documentation
+
+- Lib crate ships with `README.md` embedded as crate docs, so the
+  docs.rs front page renders the same content as GitHub.
+
+## [0.21.1] — 2026-05-21
+
+### Changed
+
+- `--help` output is now colorized to match the `--examples` palette
+  (yellow headers, cyan literals, bold descriptions).
+- Removed brittle `display_order` numbering from clap derives; help
+  flag order is now derived from declaration order, which is easier
+  to maintain.
+
+## [0.21.0] — 2026-05-21
+
+### Added
+
+- Interactive **help overlay**. `:help` / `:h` / `F1` opens a
+  category-grouped, filter-enabled overlay showing every key binding
+  and command, including any user remaps from `~/.config/tess/keys.toml`.
+  Scrollwheel and `j`/`k` navigate the cursor; type to filter.
+- `--mouse` flag and `TerminalGuard` toggles mouse capture. Scrollwheel
+  scrolls the body and click-/scroll-events drive the file picker.
+- Right-aligned `:help` discoverability hint on the default status
+  line. Users get pointed at the help overlay without having to
+  read the man page.
+
+## [0.20.0] — 2026-05-21
+
+### Added
+
+- `:b` / `:buffers` colon command. Opens a **full-screen file picker
+  overlay** listing the current working set. Type to filter, `↑`/`↓`
+  or `j`/`k` to navigate, Enter to switch, Ctrl-D to drop a file.
+  Each row shows the path, an indicator for the currently-open file,
+  and the saved top-line offset so re-entry restores scroll position.
+
 ## [0.19.0] — 2026-05-20
 
 ### Changed
