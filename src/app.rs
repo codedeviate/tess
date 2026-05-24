@@ -93,6 +93,9 @@ enum ColonCommand {
     HexGroup(usize),
     /// `:color [strict|interpret|raw]` — set or cycle the ANSI render mode.
     Color(Option<crate::render::AnsiMode>),
+    /// `:case [sensitive|smart|insensitive]` — set or cycle the search
+    /// case-sensitivity policy.
+    Case(Option<crate::viewport::CaseMode>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +106,7 @@ enum ColonParseError {
     HexGroupRequiresValue,
     HexGroupInvalid(String),
     ColorInvalid(String),
+    CaseInvalid(String),
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -119,6 +123,9 @@ impl std::fmt::Display for ColonParseError {
             }
             ColonParseError::ColorInvalid(v) => {
                 write!(f, ":color mode must be strict, interpret, or raw (got {v})")
+            }
+            ColonParseError::CaseInvalid(v) => {
+                write!(f, ":case mode must be sensitive, smart, or insensitive (got {v})")
             }
         }
     }
@@ -196,6 +203,18 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                     "interpret" => Ok(ColonCommand::Color(Some(crate::render::AnsiMode::Interpret))),
                     "raw" => Ok(ColonCommand::Color(Some(crate::render::AnsiMode::Raw))),
                     other => Err(ColonParseError::ColorInvalid(other.to_string())),
+                }
+            }
+        }
+        "case" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::Case(None))
+            } else {
+                match rest {
+                    "sensitive" => Ok(ColonCommand::Case(Some(crate::viewport::CaseMode::Sensitive))),
+                    "smart" => Ok(ColonCommand::Case(Some(crate::viewport::CaseMode::Smart))),
+                    "insensitive" => Ok(ColonCommand::Case(Some(crate::viewport::CaseMode::Insensitive))),
+                    other => Err(ColonParseError::CaseInvalid(other.to_string())),
                 }
             }
         }
@@ -784,6 +803,21 @@ fn dispatch_colon_command(
                 AnsiMode::Raw => "raw",
             };
             ColonOutcome::Continue(Some(format!("[color: {label}]")))
+        }
+        ColonCommand::Case(mode) => {
+            use crate::viewport::CaseMode;
+            let next = mode.unwrap_or_else(|| match viewport.case_mode() {
+                CaseMode::Sensitive => CaseMode::Smart,
+                CaseMode::Smart => CaseMode::Insensitive,
+                CaseMode::Insensitive => CaseMode::Sensitive,
+            });
+            viewport.set_case_mode(next);
+            let label = match next {
+                CaseMode::Sensitive => "sensitive",
+                CaseMode::Smart => "smart",
+                CaseMode::Insensitive => "insensitive",
+            };
+            ColonOutcome::Continue(Some(format!("[case: {label}]")))
         }
     }
 }
@@ -2574,6 +2608,30 @@ mod tests {
         match parse_colon_command("color rainbow").unwrap_err() {
             ColonParseError::ColorInvalid(v) => assert_eq!(v, "rainbow"),
             other => panic!("expected ColorInvalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_colon_case_without_arg_cycles() {
+        assert_eq!(parse_colon_command("case").unwrap(), ColonCommand::Case(None));
+    }
+
+    #[test]
+    fn parse_colon_case_with_named_mode() {
+        use crate::viewport::CaseMode;
+        assert_eq!(parse_colon_command("case smart").unwrap(),
+                   ColonCommand::Case(Some(CaseMode::Smart)));
+        assert_eq!(parse_colon_command("case sensitive").unwrap(),
+                   ColonCommand::Case(Some(CaseMode::Sensitive)));
+        assert_eq!(parse_colon_command("case insensitive").unwrap(),
+                   ColonCommand::Case(Some(CaseMode::Insensitive)));
+    }
+
+    #[test]
+    fn parse_colon_case_unknown_errors() {
+        match parse_colon_command("case rainbow").unwrap_err() {
+            ColonParseError::CaseInvalid(v) => assert_eq!(v, "rainbow"),
+            other => panic!("expected CaseInvalid, got {other:?}"),
         }
     }
 

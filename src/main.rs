@@ -500,9 +500,15 @@ showing raw (use --content-type=NAME to override)"
     // Compile --grep patterns up front (no --format required). A failing
     // pattern errors cleanly to stderr without entering raw mode.
     //
-    // Case policy is wired here as Sensitive; the -i / -I CLI flags
-    // override it in the resolver below before viewport.set_case_mode().
-    let case_mode = tess::viewport::CaseMode::Sensitive;
+    // Resolve case policy from -I / -i. `-I` wins over `-i` (clap also
+    // enforces mutual exclusion); both unset → sensitive.
+    let case_mode = if args.IGNORE_CASE {
+        tess::viewport::CaseMode::Insensitive
+    } else if args.ignore_case {
+        tess::viewport::CaseMode::Smart
+    } else {
+        tess::viewport::CaseMode::Sensitive
+    };
     let compiled_grep = if !args.grep.is_empty() {
         Some(
             GrepPredicate::compile(&args.grep, case_mode)
@@ -594,6 +600,7 @@ showing raw (use --content-type=NAME to override)"
         viewport.set_hex_group_size(bpg);
     }
     viewport.set_ansi_mode(ansi_mode);
+    viewport.set_case_mode(case_mode);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

@@ -74,6 +74,19 @@ pub struct Args {
     #[arg(long = "grep", value_name = "PATTERN")]
     pub grep: Vec<String>,
 
+    /// Smart-case search. `/`, `?`, `--grep`, and `--filter`'s `~` / `!~`
+    /// operators match case-insensitively unless the pattern contains an
+    /// uppercase character. Mirrors `less -i` / ripgrep / vim smartcase.
+    /// Mutually exclusive with `-I`. Runtime toggle: `:case`.
+    #[arg(short = 'i', long = "ignore-case", conflicts_with = "IGNORE_CASE")]
+    pub ignore_case: bool,
+
+    /// Force case-insensitive search regardless of pattern case. Mirrors
+    /// `less -I`. Mutually exclusive with `-i`.
+    #[arg(short = 'I', long = "IGNORE-CASE")]
+    #[allow(non_snake_case)]
+    pub IGNORE_CASE: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,
