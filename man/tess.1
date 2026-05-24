@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.26.0" 
+.TH tess 1  "tess 0.27.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -47,6 +47,21 @@ Force case\-insensitive search regardless of pattern case. Mirrors `less \-I`. M
 .TP
 \fB\-G\fR, \fB\-\-no\-hilite\-search\fR
 Disable search\-match highlighting by default. Search still navigates (`n` / `N` jump to matches); the visual reverse\-video highlight is suppressed. Runtime toggle: `:hlsearch` / `:nohlsearch`. Mirrors `less \-G`
+.TP
+\fB\-X\fR, \fB\-\-no\-init\fR
+Don\*(Aqt enter the alt\-screen on startup. Content remains in terminal scrollback after exit. Crucial for piped use and debugging. Mirrors `less \-X` / `\-\-no\-init`
+.TP
+\fB\-F\fR, \fB\-\-quit\-if\-one\-screen\fR
+Exit immediately (without paging) if the entire source fits on one screen. Ignored with piped stdin in follow mode. Mirrors `less \-F`
+.TP
+\fB\-K\fR, \fB\-\-quit\-on\-intr\fR
+Accepted for `less` compatibility. tess always exits on Ctrl\-C (Ctrl\-C → Command::Quit in the input table), so this flag is a no\-op. Provided so existing `less` invocations work unchanged
+.TP
+\fB\-e\fR, \fB\-\-quit\-at\-eof\fR
+Quit when the user tries to scroll forward past end\-of\-file for the second time. Mirrors `less \-e`. Mutually exclusive with `\-E`
+.TP
+\fB\-E\fR, \fB\-\-QUIT\-AT\-EOF\fR
+Quit the first time end\-of\-file is reached. Mirrors `less \-E`
 .TP
 \fB\-\-head\fR \fI<N>\fR
 Show only the first N lines of the source. Mutually exclusive with \-\-tail
@@ -129,4 +144,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.26.0
+v0.27.0

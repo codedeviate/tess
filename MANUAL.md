@@ -180,6 +180,47 @@ disabled — searches still navigate (`n` / `N` jump to matches), but the
 visual reverse-video on the matched phrase is suppressed. Toggle at
 runtime with `:hlsearch` / `:nohlsearch`.
 
+### Startup commands (`+CMD`)
+
+Like `less +CMD` and `vim +CMD`, `tess` accepts startup commands as
+argv tokens beginning with `+`. They're applied against the viewport
+just before the event loop spins up. Multiple `+CMD`s are allowed and
+apply in argv order.
+
+| Form | Effect |
+|---|---|
+| `+G` | Jump to bottom of file. |
+| `+NUM` | Jump to 1-indexed line NUM. |
+| `+/pat` | Forward-search for `pat`; jump to first match. Honors `-i` / `-I`. |
+| `+?pat` | Backward-search; jump to first prior match. |
+
+```sh
+tess +/error access.log         # open at first 'error' match
+tess +500 huge.csv              # open at line 500
+tess +G app.log                 # open at end (like `-f` without the follow)
+```
+
+### Exit-on-EOF and one-screen pager
+
+| Flag | Behavior |
+|---|---|
+| `-e` / `--quit-at-eof` | Quit on the *second* forward scroll/page that lands at EOF. Mirrors `less -e`. |
+| `-E` / `--QUIT-AT-EOF` | Quit the *first* time EOF is reached. Mirrors `less -E`. |
+| `-F` / `--quit-if-one-screen` | If the entire source fits on one screen, print verbatim and exit — no pager. |
+| `-K` / `--quit-on-intr` | No-op; Ctrl-C already quits. Accepted for compatibility. |
+
+### Skipping the alt-screen (`-X`)
+
+`-X` / `--no-init` prevents `tess` from switching to the terminal's
+alternate screen on startup. The body paints to the primary screen and
+remains in scrollback after exit. Pairs naturally with `-F` for
+git-pager-style workflows, and is invaluable when piping through
+multiple commands.
+
+```sh
+git --no-pager diff --color=always | tess -X -F
+```
+
 ### Option-toggle prefix (`-`)
 
 Borrowed from real `less`: pressing `-` enters a one-shot option-prefix mode. The next keystroke selects which option to flip:
