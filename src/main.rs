@@ -628,6 +628,14 @@ showing raw (use --content-type=NAME to override)"
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_case_mode(case_mode);
     viewport.set_hilite_search(!args.no_hilite_search);
+    let qae = if args.QUIT_AT_EOF {
+        tess::viewport::QuitAtEof::First
+    } else if args.quit_at_eof {
+        tess::viewport::QuitAtEof::Second
+    } else {
+        tess::viewport::QuitAtEof::Off
+    };
+    viewport.set_quit_at_eof(qae);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

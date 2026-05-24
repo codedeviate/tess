@@ -112,6 +112,16 @@ pub struct Args {
     #[arg(short = 'K', long = "quit-on-intr")]
     pub quit_on_intr: bool,
 
+    /// Quit when the user tries to scroll forward past end-of-file for
+    /// the second time. Mirrors `less -e`. Mutually exclusive with `-E`.
+    #[arg(short = 'e', long = "quit-at-eof", conflicts_with = "QUIT_AT_EOF")]
+    pub quit_at_eof: bool,
+
+    /// Quit the first time end-of-file is reached. Mirrors `less -E`.
+    #[arg(short = 'E', long = "QUIT-AT-EOF")]
+    #[allow(non_snake_case)]
+    pub QUIT_AT_EOF: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,

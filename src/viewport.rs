@@ -136,6 +136,21 @@ impl Default for CaseMode {
     fn default() -> Self { CaseMode::Sensitive }
 }
 
+/// Controls auto-exit on end-of-file. `Off` (default) never quits.
+/// `Second` (less `-e`) quits on the second forward-motion that lands at
+/// EOF in a row. `First` (less `-E`) quits the moment a forward motion
+/// lands at EOF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitAtEof {
+    Off,
+    Second,
+    First,
+}
+
+impl Default for QuitAtEof {
+    fn default() -> Self { QuitAtEof::Off }
+}
+
 impl CaseMode {
     /// Compile this case policy into a regex pattern by prepending the
     /// `(?i)` inline flag when case-insensitive matching is desired.
@@ -247,6 +262,11 @@ pub struct Viewport {
     /// composition (but search navigation still works). Toggled by
     /// `-G` / `--no-hilite-search` and `:hlsearch` / `:nohlsearch`.
     hilite_search: bool,
+    /// Auto-exit-on-EOF policy resolved from `-e` / `-E` at startup.
+    quit_at_eof: QuitAtEof,
+    /// Counter for `QuitAtEof::Second`: number of consecutive forward
+    /// motions that landed at EOF. Reset by any backward motion.
+    eof_hits: u8,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -290,6 +310,8 @@ impl Viewport {
             ticks_since_growth: 0,
             case_mode: CaseMode::default(),
             hilite_search: true,
+            quit_at_eof: QuitAtEof::default(),
+            eof_hits: 0,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
@@ -300,6 +322,30 @@ impl Viewport {
     pub fn hilite_search(&self) -> bool { self.hilite_search }
 
     pub fn set_hilite_search(&mut self, on: bool) { self.hilite_search = on; }
+
+    pub fn set_quit_at_eof(&mut self, mode: QuitAtEof) {
+        self.quit_at_eof = mode;
+        self.eof_hits = 0;
+    }
+
+    /// Notify the EOF state machine of a motion. Returns `true` when the
+    /// caller should quit. `forward = true` for any motion that could
+    /// advance past EOF; `false` for backward motions (which reset the
+    /// hit counter under `QuitAtEof::Second`).
+    pub fn note_motion_for_eof(&mut self, forward: bool, idx: &LineIndex) -> bool {
+        match self.quit_at_eof {
+            QuitAtEof::Off => false,
+            QuitAtEof::First if forward && self.is_at_bottom(idx) => true,
+            QuitAtEof::Second if forward && self.is_at_bottom(idx) => {
+                self.eof_hits = self.eof_hits.saturating_add(1);
+                self.eof_hits >= 2
+            }
+            _ => {
+                if !forward { self.eof_hits = 0; }
+                false
+            }
+        }
+    }
 
     /// Switch the case-mode policy. Re-compiles any active search so the
     /// new policy takes effect on the next frame without the user having
@@ -1819,6 +1865,64 @@ mod tests {
         assert!(!v.is_idle());
         let f = v.frame(&m, &mut idx);
         assert!(!f.status.contains("idle"));
+    }
+
+    #[test]
+    fn qae_off_never_quits_even_at_bottom() {
+        let (m, mut idx) = setup(b"a\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_quit_at_eof(QuitAtEof::Off);
+        v.goto_bottom(&m, &mut idx);
+        assert!(!v.note_motion_for_eof(true, &idx));
+    }
+
+    #[test]
+    fn qae_first_quits_immediately_at_bottom() {
+        let (m, mut idx) = setup(b"a\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_quit_at_eof(QuitAtEof::First);
+        v.goto_bottom(&m, &mut idx);
+        assert!(v.note_motion_for_eof(true, &idx));
+    }
+
+    #[test]
+    fn qae_first_only_quits_at_eof_not_mid_file() {
+        let mut content = Vec::new();
+        for _ in 0..50 { content.extend_from_slice(b"x\n"); }
+        let (m, mut idx) = setup(&content);
+        idx.extend_to_end(&m);  // populate so is_at_bottom can see the 50 lines
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_quit_at_eof(QuitAtEof::First);
+        // top_line is 0; with 50 lines and a 5-row body, we're not at bottom.
+        assert!(!v.is_at_bottom(&idx));
+        assert!(!v.note_motion_for_eof(true, &idx));
+    }
+
+    #[test]
+    fn qae_second_quits_on_second_hit() {
+        let (m, mut idx) = setup(b"a\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_quit_at_eof(QuitAtEof::Second);
+        v.goto_bottom(&m, &mut idx);
+        // 1st forward at EOF: count, don't quit.
+        assert!(!v.note_motion_for_eof(true, &idx));
+        // 2nd forward at EOF: quit.
+        assert!(v.note_motion_for_eof(true, &idx));
+    }
+
+    #[test]
+    fn qae_second_resets_on_backward_motion() {
+        let (m, mut idx) = setup(b"a\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_quit_at_eof(QuitAtEof::Second);
+        v.goto_bottom(&m, &mut idx);
+        assert!(!v.note_motion_for_eof(true, &idx));
+        // Backward motion clears the counter.
+        v.note_motion_for_eof(false, &idx);
+        // Next forward starts fresh: counts, doesn't quit.
+        assert!(!v.note_motion_for_eof(true, &idx));
+        // Now the second consecutive forward triggers quit.
+        assert!(v.note_motion_for_eof(true, &idx));
     }
 
     #[test]

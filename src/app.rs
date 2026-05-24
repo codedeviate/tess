@@ -1604,31 +1604,37 @@ pub fn run(
                     Command::ScrollLines(n) => {
                         viewport.scroll_lines(n, src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if viewport.note_motion_for_eof(n > 0, &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::ScrollLogicalLines(n) => {
                         viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if viewport.note_motion_for_eof(n > 0, &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::PageDown => {
                         viewport.page_down(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if viewport.note_motion_for_eof(true, &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::PageUp => {
                         viewport.page_up(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        viewport.note_motion_for_eof(false, &idx);
                         needs_redraw = true;
                     }
                     Command::HalfPageDown => {
                         viewport.half_page_down(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if viewport.note_motion_for_eof(true, &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::HalfPageUp => {
                         viewport.half_page_up(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        viewport.note_motion_for_eof(false, &idx);
                         needs_redraw = true;
                     }
                     Command::Refresh => {
