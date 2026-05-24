@@ -1520,15 +1520,24 @@ pub fn run(
                     Command::GotoLine => {
                         update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         match prefix_at_cmd {
-                            Some(line) if line > 0 => viewport.goto_line(line - 1, src.as_ref(), &mut idx),
-                            _ => viewport.goto_top(),
+                            Some(line) if line > 0 => {
+                                viewport.goto_line(line - 1, src.as_ref(), &mut idx);
+                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            }
+                            _ => {
+                                viewport.goto_top();
+                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            }
                         }
                         needs_redraw = true;
                     }
                     Command::GotoRecord => {
                         update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
                         match prefix_at_cmd {
-                            Some(rec) if rec > 0 => viewport.goto_record(rec - 1, src.as_ref(), &mut idx),
+                            Some(rec) if rec > 0 => {
+                                viewport.goto_record(rec - 1, src.as_ref(), &mut idx);
+                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            }
                             _ => viewport.goto_bottom(src.as_ref(), &mut idx),
                         }
                         needs_redraw = true;
@@ -1539,6 +1548,7 @@ pub fn run(
                             Some(p) if p <= 100 => viewport.goto_percent(p as u8, src.as_ref(), &mut idx),
                             _ => viewport.goto_top(),
                         }
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::Quit => break,
@@ -1549,26 +1559,32 @@ pub fn run(
                     }
                     Command::ScrollLines(n) => {
                         viewport.scroll_lines(n, src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::ScrollLogicalLines(n) => {
                         viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::PageDown => {
                         viewport.page_down(src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::PageUp => {
                         viewport.page_up(src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::HalfPageDown => {
                         viewport.half_page_down(src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::HalfPageUp => {
                         viewport.half_page_up(src.as_ref(), &mut idx);
+                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         needs_redraw = true;
                     }
                     Command::Refresh => {

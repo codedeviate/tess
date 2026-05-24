@@ -54,6 +54,13 @@ pub struct Args {
     #[arg(short = 'f', long = "follow")]
     pub follow: bool,
 
+    /// In follow mode, any user motion (scroll, page, goto-line) suspends
+    /// following. Re-engage with Shift-F. Default off: today's behavior
+    /// (movement keeps follow on; auto-scroll suspended while the viewport
+    /// is not at bottom). Matches `less +F` semantics when enabled.
+    #[arg(long = "follow-suspend-on-motion")]
+    pub follow_suspend_on_motion: bool,
+
     /// Apply a named log format (built-in or user-defined in
     /// ~/.config/tess/formats.toml). Required by `--filter`.
     #[arg(long = "format", value_name = "NAME")]

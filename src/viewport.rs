@@ -682,6 +682,16 @@ impl Viewport {
 
     pub fn follow_mode(&self) -> bool { self.follow_mode }
 
+    /// Conditionally turn follow mode off. Used by motion handlers when
+    /// `--follow-suspend-on-motion` is in effect — any motion (scroll,
+    /// page, goto-line) suspends following until the user re-engages
+    /// with Shift-F.
+    pub fn suspend_follow_if(&mut self, flag: bool) {
+        if flag {
+            self.follow_mode = false;
+        }
+    }
+
     pub fn set_follow_mode(&mut self, on: bool) { self.follow_mode = on; }
 
     pub fn toggle_follow(&mut self) { self.follow_mode = !self.follow_mode; }
@@ -1770,6 +1780,22 @@ mod tests {
         assert!(v.status_flash.is_some());
         v.tick_flash();
         assert!(v.status_flash.is_none());
+    }
+
+    #[test]
+    fn suspend_follow_if_off_is_noop() {
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.set_follow_mode(true);
+        v.suspend_follow_if(false);
+        assert!(v.follow_mode());
+    }
+
+    #[test]
+    fn suspend_follow_if_on_flips_off() {
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.set_follow_mode(true);
+        v.suspend_follow_if(true);
+        assert!(!v.follow_mode());
     }
 
     #[test]
