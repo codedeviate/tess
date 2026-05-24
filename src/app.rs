@@ -1829,7 +1829,7 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, trueco
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
     out.queue(Clear(ClearType::UntilNewLine))?;
-    out.queue(SetAttribute(Attribute::Reverse))?;
+    emit_style_diff(out, &crate::ansi::Style::default(), &frame.status_style, truecolor)?;
     let mut status = frame.status.clone();
     if status.len() > cols as usize {
         status.truncate(cols as usize);
@@ -2014,6 +2014,7 @@ mod tests {
             row_styles: vec![RowStyle::Normal, RowStyle::Normal],
             highlights: vec![Vec::new(), Vec::new()],
             status: "status".into(),
+            status_style: crate::ansi::Style { reverse: true, ..Default::default() },
         };
 
         let mut buf: Vec<u8> = Vec::new();

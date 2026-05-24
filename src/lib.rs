@@ -23,6 +23,7 @@ pub mod batch;
 pub mod shell;
 pub mod preprocess;
 pub mod keys;
+pub mod style_spec;
 pub mod open;
 pub mod overlay;
 pub mod tags;

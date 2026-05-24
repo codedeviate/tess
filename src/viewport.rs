@@ -138,6 +138,8 @@ pub struct Frame {
     /// `[start, end)` form (cell columns).
     pub highlights: Vec<Vec<std::ops::Range<usize>>>,
     pub status: String,
+    /// Style applied to the status row by the writer.
+    pub status_style: crate::ansi::Style,
 }
 
 pub struct Viewport {
@@ -182,6 +184,10 @@ pub struct Viewport {
     tag_active: Option<(String, usize, usize)>,  // (name, cursor+1, total)
     /// ANSI interpretation mode, resolved from --no-color / -r / env at startup.
     ansi_mode: crate::render::AnsiMode,
+    /// Style applied to the status row at the writer level. Default
+    /// `reverse` for backwards-compat. Overridden by --status-style /
+    /// --prompt-style / per-format prompt_style.
+    status_style: crate::ansi::Style,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -220,9 +226,18 @@ impl Viewport {
             file_index: None,
             tag_active: None,
             ansi_mode: crate::render::AnsiMode::Strict,
+            status_style: crate::ansi::Style { reverse: true, ..Default::default() },
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
+    }
+
+    pub fn set_status_style(&mut self, style: crate::ansi::Style) {
+        self.status_style = style;
+    }
+
+    pub fn status_style(&self) -> crate::ansi::Style {
+        self.status_style
     }
 
     pub fn set_display(&mut self, renderer: Option<crate::format::DisplayRenderer>) {
@@ -810,7 +825,7 @@ impl Viewport {
         self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
-        Frame { body, row_styles, highlights, status }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
@@ -1065,7 +1080,7 @@ impl Viewport {
         }
 
         let status = self.format_status_hex(src);
-        Frame { body, row_styles, highlights, status }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style }
     }
 
     fn format_status_hex(&self, src: &dyn Source) -> String {

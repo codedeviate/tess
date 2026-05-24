@@ -22,6 +22,9 @@ pub struct LogFormat {
     /// When set and no `--prompt` CLI flag is given, the viewport renders the
     /// status line through this template instead of the built-in default.
     pub prompt: Option<crate::prompt::ParsedPrompt>,
+    /// Optional default style for the status row when this format's prompt
+    /// is active. Per-format value; CLI `--prompt-style` overrides.
+    pub prompt_style: Option<crate::ansi::Style>,
 }
 
 impl LogFormat {
@@ -75,6 +78,7 @@ impl LogFormat {
             display,
             record_start,
             prompt,
+            prompt_style: None,
         })
     }
 }
@@ -229,6 +233,11 @@ struct FormatEntry {
     record_start: Option<String>,
     #[serde(default)]
     prompt: Option<String>,
+    /// Optional style for the status row when this format is active and a
+    /// custom prompt is rendered. Parsed via `crate::style_spec`. CLI
+    /// `--prompt-style` overrides this.
+    #[serde(default)]
+    prompt_style: Option<String>,
 }
 
 /// Raw group entry as deserialized from TOML. Promoted to `Group` after
@@ -345,6 +354,7 @@ struct FormatSource {
     display: Option<String>,
     record_start: Option<String>,
     prompt: Option<String>,
+    prompt_style: Option<String>,
 }
 
 fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
@@ -354,6 +364,7 @@ fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
         display: v.display,
         record_start: v.record_start,
         prompt: v.prompt,
+        prompt_style: v.prompt_style,
     })).collect())
 }
 
@@ -401,6 +412,7 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
             display: None,
             record_start: None,
             prompt: None,
+            prompt_style: None,
         });
     }
     let user = load_user_formats()?;
@@ -409,13 +421,19 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
     }
     let mut compiled = HashMap::new();
     for (name, src) in sources {
-        let fmt = LogFormat::compile_full(
+        let mut fmt = LogFormat::compile_full(
             &name,
             &src.regex,
             src.display.as_deref(),
             src.record_start.as_deref(),
             src.prompt.as_deref(),
         )?;
+        if let Some(spec) = src.prompt_style.as_deref() {
+            fmt.prompt_style = Some(
+                crate::style_spec::parse(spec)
+                    .map_err(|e| format!("format `{name}`: prompt_style: {e}"))?,
+            );
+        }
         compiled.insert(name, fmt);
     }
     Ok(compiled)

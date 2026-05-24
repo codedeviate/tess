@@ -179,6 +179,20 @@ pub struct Args {
     #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
     pub truecolor: String,
 
+    /// Style for the status row. Comma-separated tokens: `bold`, `dim`,
+    /// `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a
+    /// named color (`black`..`white`, optional `bright-` prefix), `#RRGGBB`,
+    /// or an indexed value (0–255). Empty string disables theming.
+    /// Default: `reverse`.
+    #[arg(long = "status-style", value_name = "SPEC", default_value = "reverse")]
+    pub status_style: String,
+
+    /// Style for `--prompt` output (and per-format `prompt_style`). Same
+    /// grammar as `--status-style`. Default: empty (no extra styling on top
+    /// of what the prompt template itself emits).
+    #[arg(long = "prompt-style", value_name = "SPEC", default_value = "")]
+    pub prompt_style: String,
+
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
     /// grep, and the status line — all operate on whole records when set.

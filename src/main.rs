@@ -595,18 +595,46 @@ showing raw (use --content-type=NAME to override)"
     // Resolve --prompt: CLI flag takes priority; fall back to the active
     // format's prompt (if a --format was given and defines one).
     {
-        let fmt_prompt: Option<tess::prompt::ParsedPrompt> = if let Some(name) = args.format.as_deref() {
-            let formats = format::load_all().map_err(Error::Runtime)?;
-            formats.get(name).and_then(|f| f.prompt.clone())
-        } else {
-            None
-        };
+        let (fmt_prompt, fmt_prompt_style): (Option<tess::prompt::ParsedPrompt>, Option<tess::ansi::Style>) =
+            if let Some(name) = args.format.as_deref() {
+                let formats = format::load_all().map_err(Error::Runtime)?;
+                let entry = formats.get(name);
+                (
+                    entry.and_then(|f| f.prompt.clone()),
+                    entry.and_then(|f| f.prompt_style),
+                )
+            } else {
+                (None, None)
+            };
         let prompt_template: Option<tess::prompt::ParsedPrompt> = match args.prompt.as_deref() {
             Some(s) => Some(tess::prompt::ParsedPrompt::parse(s)
                 .map_err(|e| Error::Runtime(format!("--prompt: {e}")))?),
             None => fmt_prompt,
         };
+        let prompt_active = prompt_template.is_some();
         viewport.set_prompt(prompt_template);
+
+        // Resolve status / prompt theming once at startup.
+        // - `--status-style` is the base (default `reverse`).
+        // - When a custom prompt is active, `--prompt-style` (if non-empty)
+        //   wins, otherwise per-format `prompt_style` wins, otherwise
+        //   `--status-style` is used.
+        let status_style_base = tess::style_spec::parse(&args.status_style)
+            .map_err(|e| Error::Runtime(format!("--status-style: {e}")))?;
+        let cli_prompt_style = if args.prompt_style.trim().is_empty() {
+            None
+        } else {
+            Some(tess::style_spec::parse(&args.prompt_style)
+                .map_err(|e| Error::Runtime(format!("--prompt-style: {e}")))?)
+        };
+        let resolved_status_style = if prompt_active {
+            cli_prompt_style
+                .or(fmt_prompt_style)
+                .unwrap_or(status_style_base)
+        } else {
+            status_style_base
+        };
+        viewport.set_status_style(resolved_status_style);
     }
     viewport.set_format_label(args.format.clone());
     viewport.set_file_index(0, file_set.len());
