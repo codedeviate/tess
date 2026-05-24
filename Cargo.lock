@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "tess-cli"
-version = "0.24.0"
+version = "0.25.0"
 dependencies = [
  "clap",
  "clap_mangen",

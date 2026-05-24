@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.24.0" 
+.TH tess 1  "tess 0.25.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -29,6 +29,9 @@ Filter visible lines by parsed field. Repeatable; multiple filters AND. Operator
 .TP
 \fB\-f\fR, \fB\-\-follow\fR
 Follow mode: keep watching the source for new bytes (like `tail \-f`). Jumps to the bottom on startup. Toggle with Shift\-F at runtime
+.TP
+\fB\-\-follow\-suspend\-on\-motion\fR
+In follow mode, any user motion (scroll, page, goto\-line) suspends following. Re\-engage with Shift\-F. Default off: today\*(Aqs behavior (movement keeps follow on; auto\-scroll suspended while the viewport is not at bottom). Matches `less +F` semantics when enabled
 .TP
 \fB\-\-format\fR \fI<NAME>\fR
 Apply a named log format (built\-in or user\-defined in ~/.config/tess/formats.toml). Required by `\-\-filter`
@@ -117,4 +120,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.24.0
+v0.25.0
