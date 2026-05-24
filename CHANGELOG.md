@@ -10,12 +10,42 @@ are called out where relevant.
 
 ## [Unreleased]
 
+### Fixed
+
+- `Viewport::frame_hex` was missing `word_wrap: false` in its
+  `RenderOpts` struct literal — a stray oversight from the 0.28.0
+  `--wordwrap` work. Hex mode never word-wraps (chop, fixed columns),
+  so the value is always `false`. Build had been passing locally
+  because the working tree was patched; the field just wasn't included
+  in the feature commit.
+
 ### Documentation
 
 - README badge polish: standardized header layout/colors, added logos to the
   license and release badges.
 - CLAUDE.md: tagging now requires creating the matching GitHub release in the
   same step.
+- `OUT-OF-SCOPE.md` cleanup:
+  - Removed the contradictory "remove on ship; note in CHANGELOG"
+    rule that fought the cumulative `Picked up:` tracking on the
+    long-tail less-flag entry.
+  - Reformatted the long-tail entry so each picked-up release is its
+    own bullet, with a sentence pointing at the Out-of-scope section
+    to disambiguate "we pick up flags" from "we aim for `less` parity".
+  - Replaced the brief "Bug-for-bug compatibility with GNU `less`"
+    item with an explicit **"`less` parity is not a goal"** section:
+    a four-bullet opener (no drop-in replacement, no byte-for-byte
+    layout, no undocumented-quirk chasing, no `less` config files /
+    env), a 17-row table of specific `less` features `tess` won't
+    pursue with rationale + `tess` equivalent, and a "Specific
+    intentional divergences" subsection.
+  - Moved **Windows support** from Deferred to Waiting. Reframed as
+    "not a primary goal" with a clearer policy (macOS + Linux daily
+    driver; open to a real Windows use case + someone willing to
+    drive integration testing). Added a note on NTFS file-system
+    semantics around `--follow`.
+- `CHANGELOG.md`: backfilled `0.20.0` through `0.29.0` (ten releases)
+  in Keep-a-Changelog form.
 
 ## [0.29.0] — 2026-05-24
 
