@@ -253,14 +253,70 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
     Ok(())
 }
 
+/// less-style `+CMD` startup command parsed off argv before clap sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PlusCmd {
+    /// `+G` → jump to bottom on startup.
+    GotoBottom,
+    /// `+NUM` → jump to 1-indexed line NUM on startup.
+    Goto(usize),
+    /// `+/pattern` → forward search; jump to first match.
+    SearchForward(String),
+    /// `+?pattern` → backward search; jump to first prior match.
+    SearchBackward(String),
+}
+
+fn parse_plus_cmd(s: &str) -> std::result::Result<PlusCmd, String> {
+    debug_assert!(s.starts_with('+') && s.len() > 1);
+    let rest = &s[1..];
+    if rest == "G" {
+        return Ok(PlusCmd::GotoBottom);
+    }
+    if let Some(p) = rest.strip_prefix('/') {
+        return Ok(PlusCmd::SearchForward(p.to_string()));
+    }
+    if let Some(p) = rest.strip_prefix('?') {
+        return Ok(PlusCmd::SearchBackward(p.to_string()));
+    }
+    if let Ok(n) = rest.parse::<usize>() {
+        return Ok(PlusCmd::Goto(n));
+    }
+    Err(format!(
+        "unrecognized startup command `{s}` (expected +G, +N, +/pat, or +?pat)"
+    ))
+}
+
 fn real_main() -> Result<()> {
+    // Extract `+CMD` startup tokens before clap sees the argv — clap doesn't
+    // recognize the `+` prefix natively. Order is preserved so multiple
+    // `+CMD`s apply in argv order against the viewport just before the
+    // event loop starts.
+    let raw_argv: Vec<String> = std::env::args().collect();
+    let plus_cmds: Vec<String> = raw_argv
+        .iter()
+        .skip(1)
+        .filter(|a| a.starts_with('+') && a.len() > 1)
+        .cloned()
+        .collect();
+    let cleaned_argv: Vec<String> = raw_argv
+        .into_iter()
+        .enumerate()
+        .filter(|(i, a)| *i == 0 || !(a.starts_with('+') && a.len() > 1))
+        .map(|(_, a)| a)
+        .collect();
+
     // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
     // parses. A `--<groupname>` token becomes the group's flags inline, and
     // remaining bare positionals become `--filter <arg>` pairs.
     let groups = format::load_groups().map_err(Error::Runtime)?;
-    let argv: Vec<String> = std::env::args().collect();
-    let argv = format::expand_argv(argv, &groups);
+    let argv = format::expand_argv(cleaned_argv, &groups);
     let args = Args::parse_from(argv);
+
+    // Parse +CMD tokens up front so a typo fails before raw-mode entry.
+    let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
+        .iter()
+        .map(|s| parse_plus_cmd(s).map_err(Error::Runtime))
+        .collect::<Result<Vec<_>>>()?;
 
     // Info-only flags. When stdout is a TTY, page through tess itself so the
     // content doesn't fly past — the user gets scroll/search/quit. When stdout
@@ -718,6 +774,77 @@ showing raw (use --content-type=NAME to override)"
         std::process::exit(1);
     }
 
+    // Apply `+CMD` startup commands against the live viewport before the
+    // event loop spins up. Search compiles use the resolved case mode so
+    // `+/foo` honors `-i` / `-I`.
+    for cmd in &parsed_plus_cmds {
+        match cmd {
+            PlusCmd::Goto(n) if *n > 0 => viewport.goto_line(n - 1, src.as_ref(), &mut idx),
+            PlusCmd::Goto(_) => viewport.goto_top(),
+            PlusCmd::GotoBottom => viewport.goto_bottom(src.as_ref(), &mut idx),
+            PlusCmd::SearchForward(p) => {
+                viewport
+                    .set_search(p.clone(), tess::viewport::SearchDirection::Forward)
+                    .map_err(|e| Error::Runtime(format!("+/{p}: {e}")))?;
+                viewport.search_repeat(src.as_ref(), &mut idx, false);
+            }
+            PlusCmd::SearchBackward(p) => {
+                viewport
+                    .set_search(p.clone(), tess::viewport::SearchDirection::Backward)
+                    .map_err(|e| Error::Runtime(format!("+?{p}: {e}")))?;
+                viewport.search_repeat(src.as_ref(), &mut idx, false);
+            }
+        }
+    }
+
     app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_plus_g_is_goto_bottom() {
+        assert_eq!(parse_plus_cmd("+G"), Ok(PlusCmd::GotoBottom));
+    }
+
+    #[test]
+    fn parse_plus_num_is_goto() {
+        assert_eq!(parse_plus_cmd("+42"), Ok(PlusCmd::Goto(42)));
+        assert_eq!(parse_plus_cmd("+1"), Ok(PlusCmd::Goto(1)));
+    }
+
+    #[test]
+    fn parse_plus_slash_is_search_forward() {
+        assert_eq!(
+            parse_plus_cmd("+/error"),
+            Ok(PlusCmd::SearchForward("error".into()))
+        );
+    }
+
+    #[test]
+    fn parse_plus_question_is_search_backward() {
+        assert_eq!(
+            parse_plus_cmd("+?warning"),
+            Ok(PlusCmd::SearchBackward("warning".into()))
+        );
+    }
+
+    #[test]
+    fn parse_plus_unknown_errors() {
+        assert!(parse_plus_cmd("+xyzzy").is_err());
+        assert!(parse_plus_cmd("+abc").is_err());
+    }
+
+    #[test]
+    fn parse_plus_empty_pattern_still_parses() {
+        // `+/` with empty pattern is structurally a search forward;
+        // the regex compile would catch the empty pattern downstream.
+        assert_eq!(
+            parse_plus_cmd("+/"),
+            Ok(PlusCmd::SearchForward("".into()))
+        );
+    }
 }
