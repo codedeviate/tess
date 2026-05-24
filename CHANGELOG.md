@@ -10,14 +10,18 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-05-24
+
 ### Fixed
 
 - `Viewport::frame_hex` was missing `word_wrap: false` in its
   `RenderOpts` struct literal — a stray oversight from the 0.28.0
-  `--wordwrap` work. Hex mode never word-wraps (chop, fixed columns),
-  so the value is always `false`. Build had been passing locally
-  because the working tree was patched; the field just wasn't included
-  in the feature commit.
+  `--wordwrap` work. **0.29.0 source did not compile from a clean
+  checkout** (`cargo install tess-cli@0.29.0` and the Homebrew formula
+  build both failed); the local release build only worked because the
+  working tree had been patched before commit. 0.29.1 ships the fix.
+  Hex mode never word-wraps (chop, fixed columns), so the value is
+  always `false`.
 
 ### Documentation
 
