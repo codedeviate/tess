@@ -156,7 +156,7 @@ Run `tess --list-formats` to see what's available, including your custom ones.
 
 ## Status line
 
-```
+```text
 <source>  <top>-<bottom>/<total>  <pct>%  +<wrap>/<wraps>  [<format>]  [filter|dim]  [/<search>]  [pretty:<type>]  (L)  (F)
 ```
 
