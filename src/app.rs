@@ -396,33 +396,74 @@ fn dispatch_match(
         *current_file_index = file_set.current_index();
     }
 
-    let line = match &entry.address {
-        crate::tags::TagAddress::Line(n) => n.saturating_sub(1),
-        crate::tags::TagAddress::Pattern(p) => {
-            let re_src = crate::tags::pattern_to_regex(p);
-            let re = match regex::bytes::Regex::new(&re_src) {
-                Ok(r) => r,
-                Err(_) => return Some("[tag pattern not found]".into()),
-            };
-            match find_pattern_line(src.as_ref(), idx, &re) {
-                Some(l) => l,
-                None => return Some("[tag pattern not found]".into()),
-            }
-        }
+    let (line, hint) = match resolve_tag_address(&entry.address, src.as_ref(), idx, 0) {
+        AddressResult::Line(l) => (l, None),
+        AddressResult::NotFound => (0, Some("[tag pattern not found]".into())),
+        AddressResult::Unsupported(raw) => (
+            0,
+            Some(format!("[tag address not supported: {raw}]")),
+        ),
     };
 
     let clamped = line.min(idx.line_count().saturating_sub(1));
     viewport.goto_line(clamped, src.as_ref(), idx);
-    None
+    hint
+}
+
+enum AddressResult {
+    Line(usize),
+    NotFound,
+    Unsupported(String),
+}
+
+/// Resolve a `TagAddress` to a 0-based line number, starting the search at
+/// `from_line` (used for the chained-address case where the second step
+/// resumes from the line matched by the first).
+fn resolve_tag_address(
+    addr: &crate::tags::TagAddress,
+    src: &dyn crate::source::Source,
+    idx: &mut crate::line_index::LineIndex,
+    from_line: usize,
+) -> AddressResult {
+    match addr {
+        crate::tags::TagAddress::Line(n) => AddressResult::Line(n.saturating_sub(1)),
+        crate::tags::TagAddress::Pattern(p) => {
+            let re_src = crate::tags::pattern_to_regex(p);
+            let re = match regex::bytes::Regex::new(&re_src) {
+                Ok(r) => r,
+                Err(_) => return AddressResult::NotFound,
+            };
+            match find_pattern_line(src, idx, &re, from_line) {
+                Some(l) => AddressResult::Line(l),
+                None => AddressResult::NotFound,
+            }
+        }
+        crate::tags::TagAddress::Chained(parts) => {
+            let mut here = from_line;
+            for step in parts {
+                match resolve_tag_address(step, src, idx, here) {
+                    AddressResult::Line(l) => here = l + 1,
+                    other => return other,
+                }
+            }
+            // Subtract 1 from the final "next-search start" to land on the
+            // last matched line itself.
+            AddressResult::Line(here.saturating_sub(1).max(0))
+        }
+        crate::tags::TagAddress::Unsupported(raw) => {
+            AddressResult::Unsupported(raw.clone())
+        }
+    }
 }
 
 fn find_pattern_line(
     src: &dyn crate::source::Source,
     idx: &mut crate::line_index::LineIndex,
     re: &regex::bytes::Regex,
+    from_line: usize,
 ) -> Option<usize> {
     idx.extend_to_end(src);
-    for line_no in 0..idx.line_count() {
+    for line_no in from_line..idx.line_count() {
         let bytes = idx.line_bytes_stripped(line_no, src);
         if re.is_match(&bytes) {
             return Some(line_no);

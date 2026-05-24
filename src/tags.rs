@@ -15,6 +15,15 @@ pub enum TagAddress {
     Line(usize),
     /// ctags `/pattern/` or `?pattern?` with the delimiters stripped.
     Pattern(String),
+    /// Sequence of addresses joined by `;`. Each step is resolved against
+    /// the file starting from the line found by the previous step.
+    /// Example: `/^anchor$/;/secondary/` searches for `secondary` starting
+    /// after the line matched by `^anchor$`.
+    Chained(Vec<TagAddress>),
+    /// Address form we don't support yet (e.g. `:s/foo/bar/`, multi-command
+    /// ex addresses). Resolution falls back to line 1 and surfaces a
+    /// `[tag address not supported: <raw>]` status hint.
+    Unsupported(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,11 +147,13 @@ fn parse_ctags(text: &str, base_dir: &Path) -> HashMap<String, Vec<TagEntry>> {
 }
 
 /// Address column has shape:
-///   "42"                            → Line(42)
-///   "42;\""                         → Line(42) (exuberant suffix stripped)
-///   "/^pattern$/"  or  "/pat/;\""   → Pattern("^pattern$") / Pattern("pat")
-///   "?pattern?"                     → Pattern("pattern")
-///   anything else                   → None (line skipped silently)
+///   "42"                                → Line(42)
+///   "42;\""                             → Line(42) (exuberant suffix stripped)
+///   "/^pattern$/"  or  "/pat/;\""       → Pattern("^pattern$") / Pattern("pat")
+///   "?pattern?"                         → Pattern("pattern")
+///   "/foo/;/bar/"                       → Chained([Pattern("foo"), Pattern("bar")])
+///   ":s/...", ":call ..."               → Unsupported(raw)
+///   anything else                       → None (line skipped silently)
 fn parse_ctags_address(s: &str) -> Option<TagAddress> {
     let body = match s.find(";\"") {
         Some(idx) => &s[..idx],
@@ -152,17 +163,77 @@ fn parse_ctags_address(s: &str) -> Option<TagAddress> {
     if body.is_empty() {
         return None;
     }
+    let parts = split_chain(body);
+    let parsed: Vec<TagAddress> = parts
+        .iter()
+        .map(|p| parse_single_address(p.trim()))
+        .collect();
+    if parsed.is_empty() {
+        return None;
+    }
+    Some(if parsed.len() == 1 {
+        parsed.into_iter().next().unwrap()
+    } else {
+        TagAddress::Chained(parsed)
+    })
+}
+
+/// Split a ctags address body on `;` but treat `;` inside a `/.../` or
+/// `?...?` pattern as literal. Empty leading/trailing segments are kept
+/// (and parsed to `Unsupported("")` by `parse_single_address` which
+/// rejects empty), so chain steps stay positional.
+fn split_chain(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut in_pat: Option<char> = None;
+    let mut escaped = false;
+    for c in body.chars() {
+        if escaped {
+            buf.push(c);
+            escaped = false;
+            continue;
+        }
+        if c == '\\' {
+            buf.push(c);
+            escaped = true;
+            continue;
+        }
+        match (c, in_pat) {
+            ('/', None) | ('?', None) => {
+                in_pat = Some(c);
+                buf.push(c);
+            }
+            (ch, Some(delim)) if ch == delim => {
+                in_pat = None;
+                buf.push(ch);
+            }
+            (';', None) => {
+                out.push(std::mem::take(&mut buf));
+            }
+            (ch, _) => buf.push(ch),
+        }
+    }
+    if !buf.is_empty() {
+        out.push(buf);
+    }
+    out
+}
+
+fn parse_single_address(body: &str) -> TagAddress {
+    if body.is_empty() {
+        return TagAddress::Unsupported(String::new());
+    }
     if let Ok(n) = body.parse::<usize>() {
-        return Some(TagAddress::Line(n));
+        return TagAddress::Line(n);
     }
     let bytes = body.as_bytes();
-    let first = *bytes.first()?;
-    let last = *bytes.last()?;
+    let first = *bytes.first().unwrap();
+    let last = *bytes.last().unwrap();
     if (first == b'/' || first == b'?') && first == last && bytes.len() >= 2 {
         let inner = &body[1..body.len() - 1];
-        return Some(TagAddress::Pattern(inner.to_string()));
+        return TagAddress::Pattern(inner.to_string());
     }
-    None
+    TagAddress::Unsupported(body.to_string())
 }
 
 fn parse_etags(
@@ -281,6 +352,55 @@ mod tests {
         assert_eq!(
             t.lookup("foo")[0].address,
             TagAddress::Pattern("^pat$".into())
+        );
+    }
+
+    #[test]
+    fn ctags_chained_patterns_parse_as_chained() {
+        let t = tf_from_ctags("foo\tsrc/a.rs\t/^anchor$/;/secondary/\n");
+        match &t.lookup("foo")[0].address {
+            TagAddress::Chained(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[0], TagAddress::Pattern("^anchor$".into()));
+                assert_eq!(parts[1], TagAddress::Pattern("secondary".into()));
+            }
+            other => panic!("expected Chained, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ctags_chained_pattern_then_line() {
+        let t = tf_from_ctags("foo\tsrc/a.rs\t/^anchor$/;42\n");
+        match &t.lookup("foo")[0].address {
+            TagAddress::Chained(parts) => {
+                assert_eq!(parts.len(), 2);
+                assert_eq!(parts[0], TagAddress::Pattern("^anchor$".into()));
+                assert_eq!(parts[1], TagAddress::Line(42));
+            }
+            other => panic!("expected Chained, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ctags_unsupported_ex_command_is_captured() {
+        let t = tf_from_ctags("foo\tsrc/a.rs\t:s/foo/bar/g\n");
+        match &t.lookup("foo")[0].address {
+            TagAddress::Unsupported(raw) => assert!(
+                raw.contains(":s/foo/bar"),
+                "raw should contain the bad address, got {raw:?}"
+            ),
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ctags_pattern_with_internal_semicolon_is_preserved() {
+        // `;` inside the slashes must NOT split — the chain splitter
+        // tracks pattern-delimiter context.
+        let t = tf_from_ctags("foo\tsrc/a.rs\t/^a;b$/\n");
+        assert_eq!(
+            t.lookup("foo")[0].address,
+            TagAddress::Pattern("^a;b$".into()),
         );
     }
 
