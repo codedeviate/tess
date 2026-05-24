@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.25.0" 
+.TH tess 1  "tess 0.26.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -38,6 +38,15 @@ Apply a named log format (built\-in or user\-defined in ~/.config/tess/formats.t
 .TP
 \fB\-\-grep\fR \fI<PATTERN>\fR
 Filter visible lines by regex against the raw line. Repeatable; multiple `\-\-grep` arguments AND. Works on any input — no `\-\-format` required. Composes with `\-\-filter` (both must match) and with `\-\-dim` (non\-matches stay visible but faded). Example: `\-\-grep error \-\-grep \*(Aq^\\[\*(Aq`
+.TP
+\fB\-i\fR, \fB\-\-ignore\-case\fR
+Smart\-case search. `/`, `?`, `\-\-grep`, and `\-\-filter`\*(Aqs `~` / `!~` operators match case\-insensitively unless the pattern contains an uppercase character. Mirrors `less \-i` / ripgrep / vim smartcase. Mutually exclusive with `\-I`. Runtime toggle: `:case`
+.TP
+\fB\-I\fR, \fB\-\-IGNORE\-CASE\fR
+Force case\-insensitive search regardless of pattern case. Mirrors `less \-I`. Mutually exclusive with `\-i`
+.TP
+\fB\-G\fR, \fB\-\-no\-hilite\-search\fR
+Disable search\-match highlighting by default. Search still navigates (`n` / `N` jump to matches); the visual reverse\-video highlight is suppressed. Runtime toggle: `:hlsearch` / `:nohlsearch`. Mirrors `less \-G`
 .TP
 \fB\-\-head\fR \fI<N>\fR
 Show only the first N lines of the source. Mutually exclusive with \-\-tail
@@ -120,4 +129,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.25.0
+v0.26.0

@@ -33,6 +33,8 @@ should be added without their own spec → plan cycle.
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some are non-trivial behavior. Add as needed; document each in its own commit.
 
+**Picked up:** 0.26.0 (`-i`, `-I`, `-G`).
+
 ### Windows support — **M**
 
 `crossterm` already supports Windows; the redirect / `dup2` path and `signal-hook` are Unix-only. Need `#[cfg(windows)]` branches that:

@@ -158,6 +158,28 @@ When a filter is active, search interacts with it predictably: in hide mode, onl
 
 The status line picks up `[/<pattern>]` (or `[?<pattern>]`) while a search is set.
 
+### Case sensitivity
+
+Three case policies control how `/`, `?`, `--grep`, and `--filter`'s
+regex operators (`~` / `!~`) match input:
+
+| Mode | Behavior |
+|---|---|
+| **Sensitive** (default) | Pattern matches case-exactly. |
+| **Smart** (`-i`, `--ignore-case`) | Case-insensitive UNLESS the pattern contains an uppercase character. Matches less / ripgrep / vim smartcase. |
+| **Insensitive** (`-I`, `--IGNORE-CASE`) | Always case-insensitive regardless of pattern. |
+
+Runtime cycling via `:case` (no arg) or `:case sensitive|smart|insensitive`.
+The active search re-compiles automatically when the mode changes, so the
+result set updates without retyping the pattern.
+
+### Suppressing match highlights
+
+`-G` / `--no-hilite-search` starts up with search-match highlights
+disabled — searches still navigate (`n` / `N` jump to matches), but the
+visual reverse-video on the matched phrase is suppressed. Toggle at
+runtime with `:hlsearch` / `:nohlsearch`.
+
 ### Option-toggle prefix (`-`)
 
 Borrowed from real `less`: pressing `-` enters a one-shot option-prefix mode. The next keystroke selects which option to flip:
