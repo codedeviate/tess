@@ -45,6 +45,17 @@ pub trait Source: Send + Sync {
     /// Re-run byte-based content detection and apply the result. Used by the
     /// interactive `-Pa` ("auto") sub-command. No-op without a wrapper.
     fn redetect_prettify(&self) {}
+
+    /// Returns true once when the source detected that its backing file
+    /// was rotated or truncated. Append-style sources always return false.
+    /// `FileSource` overrides this and consumes the flag on each call so
+    /// the app loop only reacts once per event.
+    fn take_rotated(&self) -> bool { false }
+
+    /// Source's on-disk path, when one exists. Used by the app loop to
+    /// re-open the source after `take_rotated()` returns true. `None`
+    /// for stdin / mock sources.
+    fn path(&self) -> Option<&Path> { None }
 }
 
 /// Find the byte offset such that `bytes[offset..]` is exactly the last `n`
@@ -91,6 +102,17 @@ pub struct FileSource {
     initial_size: usize,
     appended_len: AtomicUsize,
     streaming: Mutex<StreamingState>,
+    /// On-disk path, retained so the app can re-open after rotation.
+    path: PathBuf,
+    /// `(known_size, known_inode)` from the last successful pump. Used to
+    /// detect rotation (inode change) or truncation (size shrunk). Inode
+    /// is 0 on platforms without `MetadataExt` (Windows path is gated out
+    /// of follow-mode anyway).
+    known: Mutex<(u64, u64)>,
+    /// Set by `pump()` when it detects rotation/truncation. Read and
+    /// cleared by `take_rotated()`; the app loop responds by re-opening
+    /// the source from `path` and resetting the line index.
+    rotated: AtomicBool,
 }
 
 struct StreamingState {
@@ -115,6 +137,7 @@ impl FileSource {
             ));
         }
         let initial_size = metadata.len() as usize;
+        let inode = inode_of(&metadata);
         let (mmap, fallback_buf) = if initial_size == 0 {
             (None, Some(Vec::new()))
         } else {
@@ -142,7 +165,22 @@ impl FileSource {
                 file: stream_file,
                 appended: Vec::new(),
             }),
+            path: path.to_path_buf(),
+            known: Mutex::new((initial_size as u64, inode)),
+            rotated: AtomicBool::new(false),
         })
+    }
+
+    /// Retained on-disk path; the app loop uses this to re-open after
+    /// detecting rotation.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Consume the rotation flag set by `pump()`. Returns `true` exactly
+    /// once per detected rotation/truncation event.
+    pub fn take_rotated(&self) -> bool {
+        self.rotated.swap(false, Ordering::AcqRel)
     }
 
     fn static_bytes(&self) -> &[u8] {
@@ -184,7 +222,38 @@ impl Source for FileSource {
 
     fn is_complete(&self) -> bool { true }
 
+    fn take_rotated(&self) -> bool {
+        Self::take_rotated(self)
+    }
+
+    fn path(&self) -> Option<&Path> {
+        Some(&self.path)
+    }
+
     fn pump(&self) {
+        // Detect rotation/truncation by stat'ing the path before reading.
+        // A shrinking file means it was truncated in place; a changed inode
+        // means it was rotated (renamed and re-created). Both want the
+        // caller to drop the current source and re-open from offset 0.
+        if let Ok(meta) = std::fs::metadata(&self.path) {
+            let new_size = meta.len();
+            let new_inode = inode_of(&meta);
+            let mut known = self.known.lock().unwrap();
+            let known_total = self.initial_size as u64 + self.appended_len.load(Ordering::Acquire) as u64;
+            let truncated = new_size < known_total;
+            let rotated = known.1 != 0 && new_inode != 0 && new_inode != known.1;
+            if truncated || rotated {
+                self.rotated.store(true, Ordering::Release);
+                // Stop reading from a stale handle; the caller will rebuild
+                // the source via FileSource::open(path).
+                known.0 = new_size;
+                known.1 = new_inode;
+                return;
+            }
+            known.0 = new_size;
+            known.1 = new_inode;
+        }
+
         let mut stream = self.streaming.lock().unwrap();
         let mut tmp = [0u8; 8192];
         loop {
@@ -198,6 +267,17 @@ impl Source for FileSource {
         let new_len = stream.appended.len();
         self.appended_len.store(new_len, Ordering::Release);
     }
+}
+
+#[cfg(unix)]
+fn inode_of(meta: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    meta.ino()
+}
+
+#[cfg(not(unix))]
+fn inode_of(_meta: &std::fs::Metadata) -> u64 {
+    0
 }
 
 /// A test/utility source whose contents can be appended at runtime.

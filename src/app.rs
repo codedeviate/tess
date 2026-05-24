@@ -1776,15 +1776,50 @@ pub fn run(
                 } else if viewport.follow_mode() {
                     let was_at_bottom = viewport.is_at_bottom(&idx);
                     src.pump();
+                    if src.take_rotated() {
+                        // File was rotated or truncated. Re-open from offset 0
+                        // and reset the line index so we're not staring at
+                        // stale mmap content. Snap to bottom of the fresh
+                        // content (follow mode is on, so that's the natural
+                        // place to land).
+                        if let Some(path) = src.path().map(|p| p.to_path_buf()) {
+                            match crate::open::open_source_for_path(
+                                &path, &args, preprocessor.as_ref(),
+                            ) {
+                                Ok((new_src, _label, _err)) => {
+                                    src = new_src;
+                                    idx = LineIndex::new();
+                                    if let Some(n) = rebuild_spec.head {
+                                        idx.set_head_cap(n);
+                                    }
+                                    viewport.invalidate_filter_cache();
+                                    idx.notice_new_bytes(src.as_ref());
+                                    viewport.extend_visible_lines(&idx, src.as_ref());
+                                    viewport.goto_bottom(src.as_ref(), &mut idx);
+                                    viewport.flash("(F reopened)", 4);
+                                    needs_redraw = true;
+                                    continue;
+                                }
+                                Err(e) => {
+                                    transient_status = Some(format!("[reopen failed: {e}]"));
+                                    needs_redraw = true;
+                                }
+                            }
+                        }
+                    }
                     let lines_before = idx.line_count();
                     idx.notice_new_bytes(src.as_ref());
                     viewport.extend_visible_lines(&idx, src.as_ref());
                     if idx.line_count() != lines_before {
                         needs_redraw = true;
+                        viewport.note_growth();
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }
+                    } else {
+                        viewport.tick_idle();
                     }
+                    viewport.tick_flash();
                 } else if !src.is_complete() {
                     // Streaming stdin without follow mode: still keep the index
                     // up-to-date so line counts stay accurate, but don't auto-scroll.

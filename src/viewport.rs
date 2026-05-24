@@ -196,6 +196,16 @@ pub struct Viewport {
     /// `reverse` for backwards-compat. Overridden by --status-style /
     /// --prompt-style / per-format prompt_style.
     status_style: crate::ansi::Style,
+    /// Transient status message shown for a few ticks (e.g. "(F reopened)"
+    /// after a file rotation). The `u32` is the remaining tick count; the
+    /// app loop decrements via `tick_flash` and the formatter renders the
+    /// message as long as it's non-empty.
+    status_flash: Option<(String, u32)>,
+    /// Ticks since the line index last grew. Used to render `(F idle)`
+    /// instead of `(F)` after a few seconds with no new bytes. Reset to
+    /// 0 in `note_growth`, incremented in `tick_idle`. 20 ticks ≈ 5s at
+    /// the 250 ms poll cadence.
+    ticks_since_growth: u32,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -235,6 +245,8 @@ impl Viewport {
             tag_active: None,
             ansi_mode: crate::render::AnsiMode::Strict,
             status_style: crate::ansi::Style { reverse: true, ..Default::default() },
+            status_flash: None,
+            ticks_since_growth: 0,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
@@ -246,6 +258,41 @@ impl Viewport {
 
     pub fn status_style(&self) -> crate::ansi::Style {
         self.status_style
+    }
+
+    /// Show `msg` in the status row for the next `ticks` calls to the
+    /// timeout branch (~250 ms each). Overrides the normal status during
+    /// that window.
+    pub fn flash(&mut self, msg: impl Into<String>, ticks: u32) {
+        self.status_flash = Some((msg.into(), ticks));
+    }
+
+    /// Decrement the flash countdown by one tick. Clears the flash when
+    /// it reaches zero.
+    pub fn tick_flash(&mut self) {
+        if let Some((_, n)) = &mut self.status_flash {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                self.status_flash = None;
+            }
+        }
+    }
+
+    /// Reset the idle counter; the source just produced fresh bytes.
+    pub fn note_growth(&mut self) {
+        self.ticks_since_growth = 0;
+    }
+
+    /// Increment the idle counter. Called in the timeout branch when the
+    /// line index didn't grow.
+    pub fn tick_idle(&mut self) {
+        self.ticks_since_growth = self.ticks_since_growth.saturating_add(1);
+    }
+
+    /// True when the source has been quiet long enough to surface
+    /// `(F idle)` instead of `(F)`. Threshold: 20 ticks ≈ 5s.
+    pub fn is_idle(&self) -> bool {
+        self.ticks_since_growth >= 20
     }
 
     pub fn set_display(&mut self, renderer: Option<crate::format::DisplayRenderer>) {
@@ -949,7 +996,16 @@ impl Viewport {
             s.push_str(&format!("  [pretty:{label}]"));
         }
         if self.live_mode { s.push_str("  (L)"); }
-        if self.follow_mode { s.push_str("  (F)"); }
+        if self.follow_mode {
+            if let Some((msg, _)) = self.status_flash.as_ref() {
+                s.push_str("  ");
+                s.push_str(msg);
+            } else if self.is_idle() {
+                s.push_str("  (F idle)");
+            } else {
+                s.push_str("  (F)");
+            }
+        }
         if let Some(msg) = self.preprocess_failure.as_ref() {
             let first_line = msg.lines().next().unwrap_or("");
             s.push_str(&format!("  [preprocess-failed: {}]", first_line));
@@ -1664,6 +1720,56 @@ mod tests {
         assert!(v.follow_mode());
         v.toggle_follow();
         assert!(!v.follow_mode());
+    }
+
+    #[test]
+    fn idle_indicator_kicks_in_at_threshold() {
+        let (m, mut idx) = setup(b"a\nb\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_follow_mode(true);
+        // 19 idle ticks → still (F).
+        for _ in 0..19 { v.tick_idle(); }
+        let f1 = v.frame(&m, &mut idx);
+        assert!(f1.status.contains("(F)"));
+        assert!(!f1.status.contains("idle"));
+        // 20th tick crosses the threshold.
+        v.tick_idle();
+        let f2 = v.frame(&m, &mut idx);
+        assert!(f2.status.contains("(F idle)"), "{}", f2.status);
+    }
+
+    #[test]
+    fn note_growth_resets_idle() {
+        let (m, mut idx) = setup(b"a\nb\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.set_follow_mode(true);
+        for _ in 0..25 { v.tick_idle(); }
+        assert!(v.is_idle());
+        v.note_growth();
+        assert!(!v.is_idle());
+        let f = v.frame(&m, &mut idx);
+        assert!(!f.status.contains("idle"));
+    }
+
+    #[test]
+    fn flash_message_overrides_follow_suffix() {
+        let (m, mut idx) = setup(b"a\nb\n");
+        let mut v = Viewport::new(40, 5, "f".into());
+        v.set_follow_mode(true);
+        v.flash("(F reopened)", 3);
+        let f = v.frame(&m, &mut idx);
+        assert!(f.status.contains("(F reopened)"), "{}", f.status);
+        assert!(!f.status.contains("(F idle)"));
+    }
+
+    #[test]
+    fn flash_countdown_clears() {
+        let mut v = Viewport::new(10, 5, "f".into());
+        v.flash("hello", 2);
+        v.tick_flash();
+        assert!(v.status_flash.is_some());
+        v.tick_flash();
+        assert!(v.status_flash.is_none());
     }
 
     #[test]
