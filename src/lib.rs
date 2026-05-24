@@ -28,3 +28,4 @@ pub mod open;
 pub mod overlay;
 pub mod tags;
 pub mod keymap;
+pub mod config_path;
