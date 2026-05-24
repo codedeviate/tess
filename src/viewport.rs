@@ -67,6 +67,13 @@ fn row_text_and_starts(row: &[Cell]) -> (String, Vec<usize>) {
 }
 
 /// Find every regex match in the rendered text of a row, translating each
+/// True when the byte slice contains only whitespace (space, tab, CR, LF)
+/// or is empty. Used by `-s` / `--squeeze-blank-lines` to detect runs of
+/// blank lines at frame-composition time.
+fn line_is_blank(bytes: &[u8]) -> bool {
+    bytes.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r' || b == b'\n')
+}
+
 /// to a cell column range. Empty matches are dropped. Trailing-padding
 /// spaces on a row would otherwise satisfy patterns like `\s+`; we trim
 /// those by clamping match ends to where actual content stops.
@@ -267,6 +274,10 @@ pub struct Viewport {
     /// Counter for `QuitAtEof::Second`: number of consecutive forward
     /// motions that landed at EOF. Reset by any backward motion.
     eof_hits: u8,
+    /// `-s` / `--squeeze-blank-lines`: collapse runs of blank lines to
+    /// a single blank line at display time. Real line numbers / counts
+    /// in `idx` are preserved.
+    squeeze_blanks: bool,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -312,6 +323,7 @@ impl Viewport {
             hilite_search: true,
             quit_at_eof: QuitAtEof::default(),
             eof_hits: 0,
+            squeeze_blanks: false,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
@@ -327,6 +339,9 @@ impl Viewport {
         self.quit_at_eof = mode;
         self.eof_hits = 0;
     }
+
+    pub fn set_squeeze_blanks(&mut self, on: bool) { self.squeeze_blanks = on; }
+    pub fn squeeze_blanks(&self) -> bool { self.squeeze_blanks }
 
     /// Notify the EOF state machine of a motion. Returns `true` when the
     /// caller should quit. `forward = true` for any motion that could
@@ -936,6 +951,20 @@ impl Viewport {
             // Filter evaluation runs on the raw line (it uses captures, not
             // text), but rendering goes through the template if one is set.
             let raw = src.bytes(idx.line_range(line_n, src));
+            // `-s` / --squeeze-blank-lines: skip a blank line if its
+            // immediate predecessor (in logical-line space) was also blank.
+            // Real line numbers / counts in `idx` stay accurate — this is a
+            // display-layer filter only.
+            if self.squeeze_blanks && line_is_blank(&raw) {
+                let prev_blank = line_n.checked_sub(1).is_some_and(|p| {
+                    let prev = src.bytes(idx.line_range(p, src));
+                    line_is_blank(&prev)
+                });
+                if prev_blank {
+                    line_n += 1;
+                    continue;
+                }
+            }
             let display_bytes = if let Some(r) = self.display.as_ref() {
                 match r.render_line(&raw) {
                     Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
@@ -1908,6 +1937,48 @@ mod tests {
         assert!(!v.note_motion_for_eof(true, &idx));
         // 2nd forward at EOF: quit.
         assert!(v.note_motion_for_eof(true, &idx));
+    }
+
+    #[test]
+    fn squeeze_collapses_consecutive_blanks() {
+        // Source: a, blank, blank, blank, b.
+        let (m, mut idx) = setup(b"a\n\n\n\nb\n");
+        let mut v = Viewport::new(10, 8, "f".into());
+        v.set_squeeze_blanks(true);
+        let f = v.frame(&m, &mut idx);
+        // First non-empty body row chars (trimmed).
+        let stringify = |row: &Vec<Cell>| -> String {
+            row.iter().filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            }).collect::<String>().trim().to_string()
+        };
+        let rows: Vec<String> = f.body.iter().map(stringify).collect();
+        // With squeeze: a, blank, b. Then padding.
+        assert_eq!(&rows[0], "a");
+        assert_eq!(&rows[1], "");
+        assert_eq!(&rows[2], "b");
+    }
+
+    #[test]
+    fn squeeze_off_preserves_blanks() {
+        let (m, mut idx) = setup(b"a\n\n\n\nb\n");
+        let mut v = Viewport::new(10, 8, "f".into());
+        // Default is off.
+        let f = v.frame(&m, &mut idx);
+        let stringify = |row: &Vec<Cell>| -> String {
+            row.iter().filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            }).collect::<String>().trim().to_string()
+        };
+        let rows: Vec<String> = f.body.iter().map(stringify).collect();
+        // Without squeeze: a, blank, blank, blank, b.
+        assert_eq!(&rows[0], "a");
+        assert_eq!(&rows[1], "");
+        assert_eq!(&rows[2], "");
+        assert_eq!(&rows[3], "");
+        assert_eq!(&rows[4], "b");
     }
 
     #[test]

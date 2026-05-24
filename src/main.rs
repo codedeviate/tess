@@ -692,6 +692,7 @@ showing raw (use --content-type=NAME to override)"
         tess::viewport::QuitAtEof::Off
     };
     viewport.set_quit_at_eof(qae);
+    viewport.set_squeeze_blanks(args.squeeze_blanks);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

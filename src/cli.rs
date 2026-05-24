@@ -16,6 +16,13 @@ pub struct Args {
     #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
 
+    /// Collapse runs of two or more consecutive blank lines into a
+    /// single blank line at display time. Real line numbers, search,
+    /// and tag jumps are unaffected (they reference the original
+    /// count). Mirrors `less -s`.
+    #[arg(short = 's', long = "squeeze-blank-lines")]
+    pub squeeze_blanks: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
