@@ -1914,6 +1914,14 @@ pub fn run(
                         viewport.tick_idle();
                     }
                     viewport.tick_flash();
+                    // `--exit-follow-on-close`: when the source signals
+                    // that the upstream writer has finished (streaming
+                    // stdin's reader thread exited), exit the pager.
+                    // File sources are always complete from open, so this
+                    // condition only fires for piped stdin.
+                    if args.exit_follow_on_close && src.is_complete() {
+                        break;
+                    }
                 } else if !src.is_complete() {
                     // Streaming stdin without follow mode: still keep the index
                     // up-to-date so line counts stay accurate, but don't auto-scroll.

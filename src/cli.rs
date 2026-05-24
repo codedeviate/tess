@@ -56,6 +56,13 @@ pub struct Args {
     #[arg(long = "follow-name")]
     pub follow_name: bool,
 
+    /// In follow mode with piped stdin, exit when the upstream writer
+    /// closes the pipe. Default behavior (off): tess remains open on
+    /// the captured content after stdin EOF. Mirrors
+    /// `less --exit-follow-on-close`.
+    #[arg(long = "exit-follow-on-close")]
+    pub exit_follow_on_close: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
