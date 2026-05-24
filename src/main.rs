@@ -570,6 +570,29 @@ showing raw (use --content-type=NAME to override)"
         return batch::run(src, idx, compiled_filter, compiled_grep, display_renderer, spec, sigterm);
     }
 
+    // `-F` / `--quit-if-one-screen`: if the entire source fits in one
+    // screen, write it to stdout and exit — no pager. Skipped when the
+    // source can still grow (follow on piped stdin) since "one screen"
+    // is meaningless for an open producer.
+    if args.quit_if_one_screen && !args.follow && src.is_complete() {
+        let (_cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
+        let body_rows = rows.saturating_sub(1) as usize;
+        let total_len = src.len();
+        let bytes = src.bytes(0..total_len);
+        let trailing_nl = bytes.last().map_or(true, |&b| b == b'\n');
+        let line_count = bytes.iter().filter(|&&b| b == b'\n').count()
+            + if trailing_nl { 0 } else { 1 };
+        if line_count <= body_rows {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(&bytes).map_err(|e| Error::Runtime(format!("stdout: {e}")))?;
+            if !trailing_nl {
+                let _ = stdout.write_all(b"\n");
+            }
+            return Ok(());
+        }
+    }
+
     let _guard = TerminalGuard::enter(args.mouse, !args.no_init)
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
 

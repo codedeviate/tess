@@ -100,6 +100,12 @@ pub struct Args {
     #[arg(short = 'X', long = "no-init")]
     pub no_init: bool,
 
+    /// Exit immediately (without paging) if the entire source fits on
+    /// one screen. Ignored with piped stdin in follow mode. Mirrors
+    /// `less -F`.
+    #[arg(short = 'F', long = "quit-if-one-screen")]
+    pub quit_if_one_screen: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,
