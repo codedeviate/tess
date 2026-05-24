@@ -60,7 +60,15 @@ enum InputMode {
     ColonPrompt { buffer: String, error: Option<String> },
     /// User pressed Ctrl-]. The next keystrokes build a tag name in
     /// `buffer`; Enter dispatches, Esc cancels.
-    TagPrompt { buffer: String, error: Option<String> },
+    /// `buffer` accumulates the tag name; `error` holds an error or hint
+    /// message (e.g. "[3 matches]" after a second consecutive Tab).
+    /// `last_tab_matches` carries the prefix-match list from the most
+    /// recent Tab so a second Tab can show the count without re-querying.
+    TagPrompt {
+        buffer: String,
+        error: Option<String>,
+        last_tab_matches: Option<Vec<String>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -269,6 +277,24 @@ impl TagStack {
 
 /// Resolve a tag name to a list of matches, push the current position
 /// onto the tag stack, set it as the active match list, and dispatch
+/// Longest common prefix among a slice of strings. Returns "" for an empty
+/// slice or when the items don't share any prefix. Used by Tab-completion
+/// in the `:tag` / `Ctrl-]` prompt.
+fn longest_common_prefix(items: &[String]) -> String {
+    let mut iter = items.iter();
+    let Some(first) = iter.next() else { return String::new() };
+    let mut prefix = first.clone();
+    for s in iter {
+        while !s.starts_with(&prefix) {
+            prefix.pop();
+            if prefix.is_empty() {
+                return prefix;
+            }
+        }
+    }
+    prefix
+}
+
 /// the first match. Returns a transient status string when something
 /// goes wrong, or `None` on success.
 #[allow(clippy::too_many_arguments)]
@@ -793,7 +819,7 @@ pub fn run(
                         None => format!(":{buffer}"),
                     };
                 }
-                InputMode::TagPrompt { buffer, error } => {
+                InputMode::TagPrompt { buffer, error, .. } => {
                     frame.status = match error {
                         Some(e) => format!("tag: {buffer}  [error: {e}]"),
                         None => format!("tag: {buffer}"),
@@ -1111,7 +1137,7 @@ pub fn run(
                         }
                         continue;
                     }
-                    InputMode::TagPrompt { buffer, error } => {
+                    InputMode::TagPrompt { buffer, error, last_tab_matches } => {
                         if let Event::Key(KeyEvent { code, .. }) = event {
                             match code {
                                 KeyCode::Esc => {
@@ -1146,11 +1172,48 @@ pub fn run(
                                 KeyCode::Backspace => {
                                     buffer.pop();
                                     *error = None;
+                                    *last_tab_matches = None;
+                                    needs_redraw = true;
+                                }
+                                KeyCode::Tab => {
+                                    let names: Vec<String> = match tag_file.as_ref() {
+                                        Some(tf) => tf
+                                            .names()
+                                            .filter(|n| n.starts_with(buffer.as_str()))
+                                            .map(String::from)
+                                            .collect(),
+                                        None => Vec::new(),
+                                    };
+                                    match (names.len(), last_tab_matches.as_ref()) {
+                                        (0, _) => {
+                                            *error = Some("no tags match".into());
+                                            *last_tab_matches = None;
+                                        }
+                                        (1, _) => {
+                                            *buffer = names.into_iter().next().unwrap();
+                                            *error = None;
+                                            *last_tab_matches = None;
+                                        }
+                                        (n, Some(prev)) if prev.len() == n => {
+                                            *error = Some(format!("{n} matches"));
+                                        }
+                                        (n, _) => {
+                                            let lcp = longest_common_prefix(&names);
+                                            if lcp.len() > buffer.len() {
+                                                *buffer = lcp;
+                                                *error = None;
+                                            } else {
+                                                *error = Some(format!("{n} matches"));
+                                            }
+                                            *last_tab_matches = Some(names);
+                                        }
+                                    }
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) => {
                                     buffer.push(c);
                                     *error = None;
+                                    *last_tab_matches = None;
                                     needs_redraw = true;
                                 }
                                 _ => {}
@@ -1495,6 +1558,7 @@ pub fn run(
                             mode = InputMode::TagPrompt {
                                 buffer: String::new(),
                                 error: None,
+                                last_tab_matches: None,
                             };
                             needs_redraw = true;
                         }
@@ -2308,6 +2372,34 @@ mod tests {
             ColonParseError::ColorInvalid(v) => assert_eq!(v, "rainbow"),
             other => panic!("expected ColorInvalid, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lcp_empty_slice() {
+        assert_eq!(longest_common_prefix(&[]), "");
+    }
+
+    #[test]
+    fn lcp_single_item_returns_self() {
+        assert_eq!(longest_common_prefix(&["foo".into()]), "foo");
+    }
+
+    #[test]
+    fn lcp_finds_shared_prefix() {
+        let v: Vec<String> = vec!["foobar".into(), "foobaz".into(), "fooqux".into()];
+        assert_eq!(longest_common_prefix(&v), "foo");
+    }
+
+    #[test]
+    fn lcp_no_shared_prefix_returns_empty() {
+        let v: Vec<String> = vec!["abc".into(), "xyz".into()];
+        assert_eq!(longest_common_prefix(&v), "");
+    }
+
+    #[test]
+    fn lcp_one_item_is_prefix_of_others() {
+        let v: Vec<String> = vec!["foo".into(), "foobar".into(), "foobaz".into()];
+        assert_eq!(longest_common_prefix(&v), "foo");
     }
 
     #[test]
