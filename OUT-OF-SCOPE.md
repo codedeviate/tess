@@ -29,7 +29,31 @@ the full changelog.
 
 ## Waiting
 
-_Nothing today._
+### Windows support — **M**
+
+Not a primary goal. `tess` targets the macOS + Linux daily driver, and
+that's where the user base is. Windows isn't actively pursued, but the
+work is well-scoped enough that if someone shows up with a concrete
+use case and is willing to drive the integration testing, it's not a
+hard "no".
+
+Technical sketch when the time comes:
+
+- `crossterm` already supports Windows; the existing `dup2` redirect
+  path and `signal-hook` usage are the Unix-specific bits.
+- Need `#[cfg(windows)]` branches that:
+  - Skip the `dup2` step (no `/dev/tty` on Windows).
+  - Use Windows console-mode equivalents for raw mode (crossterm
+    handles these natively).
+  - Replace `signal-hook` with Windows console events for Ctrl-C /
+    Ctrl-Break handling.
+- File-system semantics around `--follow` rotation/truncation differ
+  on NTFS — inode equivalents and file-locking behavior would need
+  their own design pass.
+
+Until someone has a real Windows use case, the maintenance cost (CI
+matrix, manual testing on a platform the maintainer doesn't run) isn't
+worth eating.
 
 ---
 
@@ -51,15 +75,6 @@ does not pursue.
 - `0.27.0` — `-X`, `-F`, `-K`, `-e`, `-E`, `+CMD` startup commands.
 - `0.28.0` — `-s`, `--header=L[,C]`, `--rscroll=c`, `-z N`, `--wordwrap`.
 - `0.29.0` — `--follow-name`, `--exit-follow-on-close`.
-
-### Windows support — **M**
-
-`crossterm` already supports Windows; the redirect / `dup2` path and
-`signal-hook` are Unix-only. Need `#[cfg(windows)]` branches that:
-
-- Skip the dup2 (no `/dev/tty` on Windows).
-- Use Windows console-mode equivalents for raw mode (crossterm handles).
-- Replace `signal-hook` with Windows console events.
 
 ### `anyhow` / `thiserror` — **S**
 
