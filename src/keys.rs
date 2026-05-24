@@ -8,7 +8,6 @@
 //! ```
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
@@ -31,20 +30,67 @@ impl KeyMap {
         Self { map: HashMap::new() }
     }
 
-    /// Load from the default path `~/.config/tess/keys.toml`. Missing file
-    /// is OK and returns an empty map. Returns an error if the file exists
-    /// but can't be parsed.
-    pub fn load_from_default_path() -> Result<Self, String> {
-        let Some(path) = user_keys_path() else {
-            return Ok(Self::empty());
-        };
-        if !path.exists() {
-            return Ok(Self::empty());
+    /// Load keys from the global config dir (`/etc/tess/` or
+    /// `$TESS_GLOBAL_CONFIG_DIR`) and from `~/.config/tess/keys.toml`,
+    /// merging per individual binding key with local winning.
+    ///
+    /// Global parse errors warn on stderr and the global layer is treated as
+    /// empty; local parse errors fail startup.
+    pub fn load_layered() -> Result<Self, String> {
+        let mut bindings: HashMap<String, String> = HashMap::new();
+
+        // Global layer.
+        if let Some(dir) = crate::config_path::global_config_dir() {
+            let path = dir.join("keys.toml");
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        match toml::from_str::<KeysConfig>(&text) {
+                            Ok(cfg) => {
+                                for (k, v) in cfg.bindings {
+                                    bindings.insert(k, v);
+                                }
+                            }
+                            Err(e) => eprintln!(
+                                "tess: warning: keys.toml: {}: {e}; ignoring global config",
+                                path.display()
+                            ),
+                        }
+                    }
+                    Err(e) => eprintln!(
+                        "tess: warning: keys.toml: {}: {e}; ignoring global config",
+                        path.display()
+                    ),
+                }
+            }
         }
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("keys.toml: reading {}: {e}", path.display()))?;
-        Self::load_from_str(&text)
-            .map_err(|e| format!("keys.toml: {e}"))
+
+        // Local layer.
+        if let Some(dir) = crate::config_path::user_config_dir() {
+            let path = dir.join("keys.toml");
+            if path.exists() {
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| format!("keys.toml: reading {}: {e}", path.display()))?;
+                let cfg: KeysConfig = toml::from_str(&text)
+                    .map_err(|e| format!("keys.toml: parsing {}: {e}", path.display()))?;
+                for (k, v) in cfg.bindings {
+                    bindings.insert(k, v);
+                }
+            }
+        }
+
+        // Build the final KeyMap from the merged bindings table.
+        let mut map = HashMap::with_capacity(bindings.len());
+        for (key_spec, action) in bindings {
+            let key = parse_key_spec(&key_spec)
+                .map_err(|e| format!("keys.toml: '{key_spec}': {e}"))?;
+            reject_forbidden_key(&key, &key_spec)
+                .map_err(|e| format!("keys.toml: {e}"))?;
+            let target = parse_action(&action)
+                .map_err(|e| format!("keys.toml: '{key_spec}': {e}"))?;
+            map.insert(key, target);
+        }
+        Ok(Self { map })
     }
 
     pub fn load_from_str(toml_text: &str) -> Result<Self, String> {
@@ -91,16 +137,6 @@ impl KeyMap {
 struct KeysConfig {
     #[serde(default)]
     bindings: HashMap<String, String>,
-}
-
-fn user_keys_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| {
-        let mut p = PathBuf::from(h);
-        p.push(".config");
-        p.push("tess");
-        p.push("keys.toml");
-        p
-    })
 }
 
 /// Parse a key spec string into a `KeyEvent`.
@@ -313,6 +349,9 @@ fn format_key_event(ke: KeyEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_empty_file_returns_empty_map() {
@@ -539,5 +578,107 @@ mod tests {
         assert!(!groups.values().any(|v| v.contains(&"F2".to_string())),
                 "shell-bound F2 should not appear: {groups:?}");
         assert_eq!(groups.get("scroll-down").cloned().unwrap_or_default(), vec!["F3".to_string()]);
+    }
+
+    #[test]
+    fn layered_keys_local_overrides_global_per_binding() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("TESS_GLOBAL_CONFIG_DIR", global.path());
+
+        std::fs::write(
+            global.path().join("keys.toml"),
+            r#"
+[bindings]
+"j" = "scroll-down"
+"k" = "scroll-up"
+"#,
+        )
+        .unwrap();
+
+        let cfg_dir = home.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("keys.toml"),
+            r#"
+[bindings]
+"j" = "page-down"
+"#,
+        )
+        .unwrap();
+
+        let km = KeyMap::load_layered().unwrap();
+
+        // j: local wins (page-down)
+        let j = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        match km.lookup(&j) {
+            Some(BindingTarget::Command(cmd)) => {
+                let dbg = format!("{cmd:?}");
+                assert!(dbg.to_lowercase().contains("page"), "got: {dbg}");
+            }
+            other => panic!("expected Command(PageDown), got {other:?}"),
+        }
+
+        // k: global survives (scroll-up)
+        let k = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('k'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        match km.lookup(&k) {
+            Some(BindingTarget::Command(cmd)) => {
+                assert!(matches!(cmd, Command::ScrollLines(n) if *n < 0), "got: {cmd:?}");
+            }
+            other => panic!("expected Command(ScrollLines(-1)), got {other:?}"),
+        }
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
+    }
+
+    #[test]
+    fn layered_keys_warns_on_bad_global() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("TESS_GLOBAL_CONFIG_DIR", global.path());
+
+        std::fs::write(
+            global.path().join("keys.toml"),
+            "= = not valid",
+        )
+        .unwrap();
+
+        // Local missing — should still succeed.
+        let km = KeyMap::load_layered().unwrap();
+        assert!(km.is_empty());
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
     }
 }

@@ -245,7 +245,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
     let mut viewport = Viewport::new(cols, rows, label.to_string());
     viewport.set_ansi_mode(ansi_mode);
     let idx = LineIndex::new();
-    let keymap = tess::keys::KeyMap::load_from_default_path()
+    let keymap = tess::keys::KeyMap::load_layered()
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
     let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
     let stub_args = Args::parse_from(["tess"]);
@@ -780,7 +780,7 @@ showing raw (use --content-type=NAME to override)"
         head: args.head,
         tail: if source_supports_tail { args.tail } else { None },
     };
-    let keymap = tess::keys::KeyMap::load_from_default_path()
+    let keymap = tess::keys::KeyMap::load_layered()
         .map_err(Error::Runtime)?;
 
     let tag_file: Option<tess::tags::TagFile> = if let Some(path) = &args.tag_file {
