@@ -654,15 +654,48 @@ fn expand_group(g: &Group, out: &mut Vec<String>) {
     }
 }
 
-/// Print one line per format, with the named field list, to stdout. Used by
-/// `--list-formats`.
+/// Render the bracketed source annotation for a format. The `overrides`
+/// argument is the immediately-replaced layer produced by `load_all`.
+fn format_source_label(
+    source: crate::config_path::ConfigSource,
+    overrides: Option<crate::config_path::ConfigSource>,
+) -> String {
+    use crate::config_path::ConfigSource::*;
+    let layer = match source {
+        Builtin => "built-in",
+        Global => "global",
+        Local => "local",
+    };
+    match overrides {
+        None => format!("[{layer}]"),
+        Some(Builtin) => format!("[{layer}, overrides built-in]"),
+        Some(Global) => format!("[{layer}, overrides global]"),
+        // Lower layers can't replace local; this arm is unreachable in
+        // practice but kept for total-match completeness.
+        Some(Local) => format!("[{layer}, overrides local]"),
+    }
+}
+
+/// Print one line per format, with the named field list and source
+/// label, to stdout. Used by `--list-formats`.
 pub fn print_format_list(formats: &HashMap<String, LogFormat>) {
     let mut names: Vec<&String> = formats.keys().collect();
     names.sort();
+
+    // Column-align names for readability when field lists vary.
+    let name_width = names.iter().map(|n| n.len()).max().unwrap_or(0);
+
     for name in names {
         let fmt = &formats[name];
         let fields: Vec<&str> = fmt.field_names.iter().map(|s| s.as_str()).collect();
-        println!("{}: {}", name, fields.join(", "));
+        let label = format_source_label(fmt.source, fmt.overrides);
+        println!(
+            "{:<width$}  {}  {}",
+            name,
+            label,
+            fields.join(", "),
+            width = name_width
+        );
     }
 }
 
@@ -1386,5 +1419,25 @@ regex = "^LOCAL (?P<msg>.+)$"
             Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
             None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
         }
+    }
+
+    #[test]
+    fn source_label_renders_correctly() {
+        use crate::config_path::ConfigSource;
+        assert_eq!(format_source_label(ConfigSource::Builtin, None), "[built-in]");
+        assert_eq!(format_source_label(ConfigSource::Global, None), "[global]");
+        assert_eq!(format_source_label(ConfigSource::Local, None), "[local]");
+        assert_eq!(
+            format_source_label(ConfigSource::Local, Some(ConfigSource::Global)),
+            "[local, overrides global]"
+        );
+        assert_eq!(
+            format_source_label(ConfigSource::Local, Some(ConfigSource::Builtin)),
+            "[local, overrides built-in]"
+        );
+        assert_eq!(
+            format_source_label(ConfigSource::Global, Some(ConfigSource::Builtin)),
+            "[global, overrides built-in]"
+        );
     }
 }
