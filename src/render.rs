@@ -50,13 +50,17 @@ pub struct RenderOpts {
     /// last cell with this character to signal "more content right".
     /// `None` disables the marker. Matches less's `--rscroll=c`.
     pub rscroll_char: Option<char>,
+    /// In wrap mode, break lines on whitespace boundaries instead of
+    /// mid-character when possible. Falls back to mid-character break
+    /// when no whitespace fits in the row. Matches less's `--wordwrap`.
+    pub word_wrap: bool,
 }
 
 impl Default for RenderOpts {
     fn default() -> Self {
         Self {
             tab_width: 8, wrap: true, cols: 80,
-            mode: AnsiMode::Strict, rscroll_char: None,
+            mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false,
         }
     }
 }
@@ -223,6 +227,21 @@ pub fn render_line(
         if current.len() >= opts.cols as usize {
             if opts.wrap {
                 let mut full = std::mem::replace(current, Vec::with_capacity(opts.cols as usize));
+                // `--wordwrap`: prefer a break on the last whitespace cell.
+                // Anything past the break carries over to the next row as
+                // its leading content. Falls back to mid-character break
+                // when no whitespace is found.
+                if opts.word_wrap {
+                    if let Some(ws_idx) = (0..full.len()).rev().find(|&i| matches!(
+                        full[i],
+                        Cell::Char { ch, .. } if ch == ' ' || ch == '\t'
+                    )) {
+                        // Carry everything after the whitespace into the new
+                        // current row (so the next word starts at column 0).
+                        let carry: Vec<Cell> = full.drain((ws_idx + 1)..).collect();
+                        *current = carry;
+                    }
+                }
                 while full.len() < opts.cols as usize { full.push(Cell::Empty); }
                 rows.push(full);
             } else {
@@ -267,6 +286,19 @@ pub fn render_line(
         if current.len() + width as usize > cols {
             if opts.wrap {
                 let mut full = std::mem::replace(current, Vec::with_capacity(cols));
+                // `--wordwrap`: prefer a break on the last whitespace. Same
+                // logic as in `push`; kept duplicated rather than factored
+                // out because the two helpers track `current.len()` slightly
+                // differently and the inline form is easier to follow.
+                if opts.word_wrap {
+                    if let Some(ws_idx) = (0..full.len()).rev().find(|&i| matches!(
+                        full[i],
+                        Cell::Char { ch, .. } if ch == ' ' || ch == '\t'
+                    )) {
+                        let carry: Vec<Cell> = full.drain((ws_idx + 1)..).collect();
+                        *current = carry;
+                    }
+                }
                 while full.len() < cols { full.push(Cell::Empty); }
                 rows.push(full);
             } else {
@@ -518,6 +550,45 @@ mod tests {
     }
 
     #[test]
+    fn word_wrap_breaks_on_whitespace() {
+        let mut o = opts(8, true);
+        o.word_wrap = true;
+        let rows = render_line(b"the quick brown fox", &o, None);
+        // First row should break at the last whitespace before col 8.
+        let r0: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        }).collect();
+        assert_eq!(r0.trim_end(), "the");
+    }
+
+    #[test]
+    fn word_wrap_falls_back_when_no_whitespace_fits() {
+        let mut o = opts(5, true);
+        o.word_wrap = true;
+        let rows = render_line(b"antidisestablishment", &o, None);
+        let r0: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        }).collect();
+        // No whitespace anywhere → mid-character break preserved.
+        assert_eq!(r0.trim_end(), "antid");
+    }
+
+    #[test]
+    fn word_wrap_off_breaks_mid_word() {
+        let mut o = opts(8, true);
+        o.word_wrap = false;
+        let rows = render_line(b"the quick brown fox", &o, None);
+        let r0: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        }).collect();
+        // First 8 chars verbatim: "the quic"
+        assert_eq!(r0.trim_end(), "the quic");
+    }
+
+    #[test]
     fn rscroll_marker_absent_in_wrap_mode() {
         let mut o = opts(5, true);
         o.rscroll_char = Some('>');
@@ -534,7 +605,7 @@ mod tests {
     }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false }
     }
 
     fn ch(c: char) -> Cell {

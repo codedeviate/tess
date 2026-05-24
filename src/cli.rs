@@ -42,6 +42,12 @@ pub struct Args {
     #[arg(short = 'z', long = "window", value_name = "N")]
     pub window: Option<u16>,
 
+    /// In wrap mode, break lines on whitespace boundaries instead of
+    /// mid-character when possible. Falls back to mid-character break
+    /// when no whitespace fits in the row. Mirrors `less --wordwrap`.
+    #[arg(long = "wordwrap")]
+    pub word_wrap: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
