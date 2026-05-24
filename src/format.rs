@@ -27,6 +27,8 @@ pub struct LogFormat {
     /// Optional default style for the status row when this format's prompt
     /// is active. Per-format value; CLI `--prompt-style` overrides.
     pub prompt_style: Option<crate::ansi::Style>,
+    pub source: crate::config_path::ConfigSource,
+    pub overrides: Option<crate::config_path::ConfigSource>,
 }
 
 impl LogFormat {
@@ -81,6 +83,8 @@ impl LogFormat {
             record_start,
             prompt,
             prompt_style: None,
+            source: crate::config_path::ConfigSource::Builtin,
+            overrides: None,
         })
     }
 }
@@ -298,6 +302,8 @@ pub struct Group {
     pub tab_width: Option<u8>,
     pub filter: Vec<String>,
     pub grep: Vec<String>,
+    pub source: crate::config_path::ConfigSource,
+    pub overrides: Option<crate::config_path::ConfigSource>,
 }
 
 /// Long-form names of every built-in clap flag. A group cannot reuse one of
@@ -401,12 +407,13 @@ struct FormatSource {
     record_start: Option<String>,
     prompt: Option<String>,
     prompt_style: Option<String>,
+    source: crate::config_path::ConfigSource,
+    overrides: Option<crate::config_path::ConfigSource>,
 }
 
 fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
     let cfg = load_layered_config()?;
     let mut out: HashMap<String, FormatSource> = HashMap::new();
-    // Global first; local overwrites.
     for (k, v) in cfg.global.format {
         out.insert(k, FormatSource {
             regex: v.regex,
@@ -414,15 +421,20 @@ fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
             record_start: v.record_start,
             prompt: v.prompt,
             prompt_style: v.prompt_style,
+            source: crate::config_path::ConfigSource::Global,
+            overrides: None,
         });
     }
     for (k, v) in cfg.local.format {
+        let overrides = out.get(&k).map(|prev| prev.source);
         out.insert(k, FormatSource {
             regex: v.regex,
             display: v.display,
             record_start: v.record_start,
             prompt: v.prompt,
             prompt_style: v.prompt_style,
+            source: crate::config_path::ConfigSource::Local,
+            overrides,
         });
     }
     Ok(out)
@@ -433,15 +445,32 @@ fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
 /// names don't shadow built-in flag names.
 pub fn load_groups() -> Result<HashMap<String, Group>, String> {
     let cfg = load_layered_config()?;
-    let mut merged: HashMap<String, GroupEntry> = HashMap::new();
+
+    struct StagedGroup {
+        entry: GroupEntry,
+        source: crate::config_path::ConfigSource,
+        overrides: Option<crate::config_path::ConfigSource>,
+    }
+
+    let mut staged: HashMap<String, StagedGroup> = HashMap::new();
     for (k, v) in cfg.global.group {
-        merged.insert(k, v);
+        staged.insert(k, StagedGroup {
+            entry: v,
+            source: crate::config_path::ConfigSource::Global,
+            overrides: None,
+        });
     }
     for (k, v) in cfg.local.group {
-        merged.insert(k, v);
+        let overrides = staged.get(&k).map(|prev| prev.source);
+        staged.insert(k, StagedGroup {
+            entry: v,
+            source: crate::config_path::ConfigSource::Local,
+            overrides,
+        });
     }
-    let mut out = HashMap::with_capacity(merged.len());
-    for (name, entry) in merged {
+
+    let mut out = HashMap::with_capacity(staged.len());
+    for (name, sg) in staged {
         if RESERVED_LONG_FLAGS.contains(&name.as_str()) {
             return Err(format!(
                 "group `{name}`: name collides with built-in --{name} flag"
@@ -451,17 +480,19 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
             name.clone(),
             Group {
                 name,
-                format: entry.format,
-                file: entry.file,
-                follow: entry.follow.unwrap_or(false),
-                tail: entry.tail,
-                head: entry.head,
-                dim: entry.dim.unwrap_or(false),
-                line_numbers: entry.line_numbers.unwrap_or(false),
-                chop: entry.chop.unwrap_or(false),
-                tab_width: entry.tab_width,
-                filter: entry.filter,
-                grep: entry.grep,
+                format: sg.entry.format,
+                file: sg.entry.file,
+                follow: sg.entry.follow.unwrap_or(false),
+                tail: sg.entry.tail,
+                head: sg.entry.head,
+                dim: sg.entry.dim.unwrap_or(false),
+                line_numbers: sg.entry.line_numbers.unwrap_or(false),
+                chop: sg.entry.chop.unwrap_or(false),
+                tab_width: sg.entry.tab_width,
+                filter: sg.entry.filter,
+                grep: sg.entry.grep,
+                source: sg.source,
+                overrides: sg.overrides,
             },
         );
     }
@@ -480,10 +511,15 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
             record_start: None,
             prompt: None,
             prompt_style: None,
+            source: crate::config_path::ConfigSource::Builtin,
+            overrides: None,
         });
     }
     let user = load_user_formats()?;
-    for (name, src) in user {
+    for (name, mut src) in user {
+        if src.overrides.is_none() && sources.contains_key(&name) {
+            src.overrides = Some(crate::config_path::ConfigSource::Builtin);
+        }
         sources.insert(name, src);
     }
     let mut compiled = HashMap::new();
@@ -501,6 +537,8 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
                     .map_err(|e| format!("format `{name}`: prompt_style: {e}"))?,
             );
         }
+        fmt.source = src.source;
+        fmt.overrides = src.overrides;
         compiled.insert(name, fmt);
     }
     Ok(compiled)
@@ -1264,5 +1302,86 @@ regex = "^LOCAL (?P<msg>.+)$"
         let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
         let entry = cfg.format.get("myapp").expect("myapp present");
         assert_eq!(entry.prompt.as_deref(), Some("<label> <pct>%"));
+    }
+
+    #[test]
+    fn load_all_tags_source_correctly() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("TESS_GLOBAL_CONFIG_DIR", global.path());
+
+        std::fs::write(
+            global.path().join("formats.toml"),
+            r#"
+[format.global-only]
+regex = "^G (?P<msg>.+)$"
+
+[format.both]
+regex = "^GLOBAL (?P<msg>.+)$"
+"#,
+        )
+        .unwrap();
+
+        let cfg_dir = home.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("formats.toml"),
+            r#"
+[format.local-only]
+regex = "^L (?P<msg>.+)$"
+
+[format.both]
+regex = "^LOCAL (?P<msg>.+)$"
+"#,
+        )
+        .unwrap();
+
+        let all = load_all().unwrap();
+
+        // Built-in still tagged builtin.
+        assert_eq!(
+            all["apache-common"].source,
+            crate::config_path::ConfigSource::Builtin
+        );
+        assert!(all["apache-common"].overrides.is_none());
+
+        // Global-only.
+        assert_eq!(
+            all["global-only"].source,
+            crate::config_path::ConfigSource::Global
+        );
+        assert!(all["global-only"].overrides.is_none());
+
+        // Local-only.
+        assert_eq!(
+            all["local-only"].source,
+            crate::config_path::ConfigSource::Local
+        );
+        assert!(all["local-only"].overrides.is_none());
+
+        // Same-name: local wins, marked as overriding global.
+        assert_eq!(
+            all["both"].source,
+            crate::config_path::ConfigSource::Local
+        );
+        assert_eq!(
+            all["both"].overrides,
+            Some(crate::config_path::ConfigSource::Global)
+        );
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
     }
 }
