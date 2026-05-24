@@ -275,6 +275,10 @@ impl Viewport {
         self.ansi_mode = mode;
     }
 
+    pub fn ansi_mode(&self) -> crate::render::AnsiMode {
+        self.ansi_mode
+    }
+
     pub fn set_source_label(&mut self, label: String) {
         self.source_label = label;
     }

@@ -80,6 +80,8 @@ enum ColonCommand {
     OpenHelp,
     /// `:hex N` — set hex group width to N hex characters (2/4/8/16/32).
     HexGroup(usize),
+    /// `:color [strict|interpret|raw]` — set or cycle the ANSI render mode.
+    Color(Option<crate::render::AnsiMode>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +91,7 @@ enum ColonParseError {
     TagRequiresName,
     HexGroupRequiresValue,
     HexGroupInvalid(String),
+    ColorInvalid(String),
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -102,6 +105,9 @@ impl std::fmt::Display for ColonParseError {
             }
             ColonParseError::HexGroupInvalid(v) => {
                 write!(f, ":hex N must be one of 2, 4, 8, 16, 32 (got {v})")
+            }
+            ColonParseError::ColorInvalid(v) => {
+                write!(f, ":color mode must be strict, interpret, or raw (got {v})")
             }
         }
     }
@@ -160,6 +166,18 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 match rest.parse::<usize>() {
                     Ok(n) if matches!(n, 2 | 4 | 8 | 16 | 32) => Ok(ColonCommand::HexGroup(n)),
                     _ => Err(ColonParseError::HexGroupInvalid(rest.to_string())),
+                }
+            }
+        }
+        "color" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::Color(None))
+            } else {
+                match rest {
+                    "strict" => Ok(ColonCommand::Color(Some(crate::render::AnsiMode::Strict))),
+                    "interpret" => Ok(ColonCommand::Color(Some(crate::render::AnsiMode::Interpret))),
+                    "raw" => Ok(ColonCommand::Color(Some(crate::render::AnsiMode::Raw))),
+                    other => Err(ColonParseError::ColorInvalid(other.to_string())),
                 }
             }
         }
@@ -636,6 +654,21 @@ fn dispatch_colon_command(
             let bpg = crate::hex::hex_chars_to_bytes_per_group(hex_chars).unwrap();
             viewport.set_hex_group_size(bpg);
             ColonOutcome::Continue(Some(format!("[hex group: {hex_chars} chars]")))
+        }
+        ColonCommand::Color(mode) => {
+            use crate::render::AnsiMode;
+            let next = mode.unwrap_or_else(|| match viewport.ansi_mode() {
+                AnsiMode::Strict => AnsiMode::Interpret,
+                AnsiMode::Interpret => AnsiMode::Raw,
+                AnsiMode::Raw => AnsiMode::Strict,
+            });
+            viewport.set_ansi_mode(next);
+            let label = match next {
+                AnsiMode::Strict => "strict",
+                AnsiMode::Interpret => "interpret",
+                AnsiMode::Raw => "raw",
+            };
+            ColonOutcome::Continue(Some(format!("[color: {label}]")))
         }
     }
 }
@@ -2179,6 +2212,36 @@ mod tests {
         match parse_colon_command("hex banana").unwrap_err() {
             ColonParseError::HexGroupInvalid(v) => assert_eq!(v, "banana"),
             other => panic!("expected HexGroupInvalid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_colon_color_without_arg_cycles() {
+        assert_eq!(parse_colon_command("color").unwrap(), ColonCommand::Color(None));
+    }
+
+    #[test]
+    fn parse_colon_color_with_named_mode() {
+        use crate::render::AnsiMode;
+        assert_eq!(
+            parse_colon_command("color strict").unwrap(),
+            ColonCommand::Color(Some(AnsiMode::Strict)),
+        );
+        assert_eq!(
+            parse_colon_command("color interpret").unwrap(),
+            ColonCommand::Color(Some(AnsiMode::Interpret)),
+        );
+        assert_eq!(
+            parse_colon_command("color raw").unwrap(),
+            ColonCommand::Color(Some(AnsiMode::Raw)),
+        );
+    }
+
+    #[test]
+    fn parse_colon_color_with_unknown_mode_errors() {
+        match parse_colon_command("color rainbow").unwrap_err() {
+            ColonParseError::ColorInvalid(v) => assert_eq!(v, "rainbow"),
+            other => panic!("expected ColorInvalid, got {other:?}"),
         }
     }
 
