@@ -485,6 +485,64 @@ In **dim mode** (`--dim`): non-matching lines are still rendered, but with `Attr
 
 ---
 
+## Global and local config
+
+`tess` reads config in two layers:
+
+1. **Global** — `/etc/tess/formats.toml` and `/etc/tess/keys.toml`,
+   intended for system administrators on shared hosts who want every
+   user to inherit a baseline set of formats, groups, and keybindings.
+   Override the search path with `$TESS_GLOBAL_CONFIG_DIR=/path/to/dir`
+   (useful for tests, CI, or non-standard installs).
+2. **Local** — `~/.config/tess/formats.toml` and
+   `~/.config/tess/keys.toml`, the per-user config that's been
+   supported since 0.x.
+
+### Merge semantics
+
+For each top-level entry — `[format.NAME]`, `[group.NAME]`, or a single
+binding key under `[bindings]` — if the local file declares it, the
+global entry for that exact key is replaced. Other entries at the same
+layer survive.
+
+There is no per-field merging: overriding `[format.apache]` redeclares
+the entire section. (This matches how local configs override built-in
+formats today.)
+
+### Error handling
+
+- A **missing** global or local file is silently ignored.
+- A **malformed** global file prints a warning on stderr and is treated
+  as empty; the binary continues with built-ins + local config.
+- A **malformed** local file fails startup with a non-zero exit, naming
+  the offending file.
+
+### Visibility
+
+`tess --list-formats` annotates each format with its source:
+
+```
+apache-common               [built-in]                 ip, user, time, …
+apache-combined             [built-in]                 ip, user, time, …
+internal-app                [global]                   host, env, status
+internal-app-override       [local, overrides global]  host, env, status
+my-personal-format          [local]                    user, action
+```
+
+The override label names the **immediately replaced** layer. If a local
+entry shadows a built-in directly (no global in between), the label is
+`[local, overrides built-in]`.
+
+### Brew installs (macOS)
+
+`/etc/tess/` works on macOS but requires `sudo` to populate. The brew
+formula does not drop config files into `/etc/tess/`; operators who want
+a shared config on a macOS host either write there with sudo or set
+`$TESS_GLOBAL_CONFIG_DIR` to a brew-writable path
+(e.g. `$HOMEBREW_PREFIX/etc/tess/`).
+
+---
+
 ## Marks
 
 Save and restore positions in the file. Marks are session-local: they

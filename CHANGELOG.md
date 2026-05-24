@@ -10,6 +10,26 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-05-24
+
+### Added
+
+- Global config layer at `/etc/tess/formats.toml` and `/etc/tess/keys.toml`
+  (override path via `$TESS_GLOBAL_CONFIG_DIR`). The per-user files at
+  `~/.config/tess/` are now layered on top with per-section-key replace
+  semantics: a local `[format.X]` overrides the global `[format.X]` of
+  the same name, but every other global entry survives. Same rule for
+  `[group.X]` and individual keys inside `[bindings]`.
+- `tess --list-formats` annotates each format with its source:
+  `[built-in]`, `[global]`, `[local]`, or
+  `[<layer>, overrides <lower-layer>]`.
+
+### Changed
+
+- A malformed global config file prints a warning on stderr and is
+  treated as empty; the binary continues with built-ins + local config.
+  (Malformed local configs still fail startup as before.)
+
 ## [0.29.1] — 2026-05-24
 
 ### Fixed
