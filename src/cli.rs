@@ -30,6 +30,12 @@ pub struct Args {
     #[arg(long = "header", value_name = "L[,C]")]
     pub header: Option<String>,
 
+    /// Character to show at the right edge of a chopped line (`-S` chop
+    /// mode) indicating "more content right". Default `>`. Pass an empty
+    /// string to disable. Mirrors `less --rscroll=c`.
+    #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
+    pub rscroll: String,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.

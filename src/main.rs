@@ -716,6 +716,7 @@ showing raw (use --content-type=NAME to override)"
         let (lines, cols) = parse_header_spec(spec).map_err(Error::Runtime)?;
         viewport.set_header(lines, cols);
     }
+    viewport.opts.rscroll_char = args.rscroll.chars().next();
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

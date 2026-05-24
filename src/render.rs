@@ -46,11 +46,18 @@ pub struct RenderOpts {
     pub wrap: bool,
     pub cols: u16,
     pub mode: AnsiMode,
+    /// In chop mode, when a line overflows the right edge, replace the
+    /// last cell with this character to signal "more content right".
+    /// `None` disables the marker. Matches less's `--rscroll=c`.
+    pub rscroll_char: Option<char>,
 }
 
 impl Default for RenderOpts {
     fn default() -> Self {
-        Self { tab_width: 8, wrap: true, cols: 80, mode: AnsiMode::Strict }
+        Self {
+            tab_width: 8, wrap: true, cols: 80,
+            mode: AnsiMode::Strict, rscroll_char: None,
+        }
     }
 }
 
@@ -210,17 +217,20 @@ pub fn render_line(
     // Pre-filter: resolve styles and strip escape sequences for Interpret mode.
     let filtered = prefilter(bytes, opts.mode, state);
 
-    fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts) {
+    /// Returns true if the cell was dropped due to chop-mode overflow.
+    /// The caller uses this to decide whether to paint the `rscroll` marker.
+    fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts) -> bool {
         if current.len() >= opts.cols as usize {
             if opts.wrap {
                 let mut full = std::mem::replace(current, Vec::with_capacity(opts.cols as usize));
                 while full.len() < opts.cols as usize { full.push(Cell::Empty); }
                 rows.push(full);
             } else {
-                return;
+                return true;
             }
         }
         current.push(cell);
+        false
     }
 
     fn push_str(
@@ -230,15 +240,17 @@ pub fn render_line(
         style: crate::ansi::Style,
         hyperlink: Option<Arc<str>>,
         opts: &RenderOpts,
-    ) {
+    ) -> bool {
+        let mut overflowed = false;
         for c in s.chars() {
-            push(
+            overflowed |= push(
                 current,
                 rows,
                 Cell::Char { ch: c, width: 1, style, hyperlink: hyperlink.clone() },
                 opts,
             );
         }
+        overflowed
     }
 
     fn push_wide(
@@ -249,7 +261,7 @@ pub fn render_line(
         style: crate::ansi::Style,
         hyperlink: Option<Arc<str>>,
         opts: &RenderOpts,
-    ) {
+    ) -> bool {
         let cols = opts.cols as usize;
         // If the wide char wouldn't fit in the remainder of this row, wrap first.
         if current.len() + width as usize > cols {
@@ -258,16 +270,19 @@ pub fn render_line(
                 while full.len() < cols { full.push(Cell::Empty); }
                 rows.push(full);
             } else {
-                return; // chop
+                return true; // chop overflow
             }
         }
         current.push(Cell::Char { ch, width, style, hyperlink });
         for _ in 1..width {
             current.push(Cell::Continuation);
         }
+        false
     }
 
     // Walk filtered bytes (raw bytes for Strict, printable-only for Interpret).
+    // Track chop-mode overflow so we can paint the rscroll marker afterward.
+    let mut overflowed = false;
     let mut i = 0;
     while i < filtered.len() {
         let (b, style, hyperlink) = filtered[i].clone();
@@ -276,7 +291,7 @@ pub fn render_line(
             let cur_col = current.len();
             let next_stop = ((cur_col / stop) + 1) * stop;
             for _ in cur_col..next_stop {
-                push(
+                overflowed |= push(
                     &mut current,
                     &mut rows,
                     Cell::Char { ch: ' ', width: 1, style, hyperlink: hyperlink.clone() },
@@ -288,13 +303,13 @@ pub fn render_line(
             i += 1;
         } else if b < 0x20 || b == 0x7F {
             let printable = if b == 0x7F { '?' } else { (b ^ 0x40) as char };
-            push(
+            overflowed |= push(
                 &mut current,
                 &mut rows,
                 Cell::Char { ch: '^', width: 1, style, hyperlink: hyperlink.clone() },
                 opts,
             );
-            push(
+            overflowed |= push(
                 &mut current,
                 &mut rows,
                 Cell::Char { ch: printable, width: 1, style, hyperlink },
@@ -311,7 +326,7 @@ pub fn render_line(
                     let base_char = cluster.chars().next().unwrap_or('\u{FFFD}');
                     if w == 0 {
                         // Lone combining mark with no base — emit replacement.
-                        push(
+                        overflowed |= push(
                             &mut current,
                             &mut rows,
                             Cell::Char {
@@ -323,14 +338,14 @@ pub fn render_line(
                             opts,
                         );
                     } else {
-                        push_wide(&mut current, &mut rows, base_char, w, style, hyperlink, opts);
+                        overflowed |= push_wide(&mut current, &mut rows, base_char, w, style, hyperlink, opts);
                     }
                     i += consumed;
                 }
                 None => {
                     // Invalid byte: emit <HH>, advance one byte.
                     let s = format!("<{:02X}>", b);
-                    push_str(&mut current, &mut rows, &s, style, hyperlink, opts);
+                    overflowed |= push_str(&mut current, &mut rows, &s, style, hyperlink, opts);
                     i += 1;
                 }
             }
@@ -340,6 +355,21 @@ pub fn render_line(
     while current.len() < cols {
         current.push(Cell::Empty);
     }
+
+    // `--rscroll`: in chop mode, when the line overflowed the right edge,
+    // replace the last cell with the marker char (styled dim) so the user
+    // can see that content was truncated.
+    if !opts.wrap && overflowed && cols > 0 {
+        if let Some(marker) = opts.rscroll_char {
+            current[cols - 1] = Cell::Char {
+                ch: marker,
+                width: 1,
+                style: crate::ansi::Style { dim: true, ..Default::default() },
+                hyperlink: None,
+            };
+        }
+    }
+
     rows.push(current);
     rows
 }
@@ -453,8 +483,58 @@ mod tests {
         assert!(!TrueColor::Never.resolve());
     }
 
+    #[test]
+    fn rscroll_marker_appears_on_chopped_row() {
+        let mut o = opts(5, false); // 5 cols, chop mode
+        o.rscroll_char = Some('>');
+        let rows = render_line(b"abcdefgh", &o, None);
+        assert_eq!(rows.len(), 1);
+        match &rows[0][4] {
+            Cell::Char { ch, .. } => assert_eq!(*ch, '>'),
+            other => panic!("expected `>` marker, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rscroll_marker_absent_on_fitting_row() {
+        let mut o = opts(10, false);
+        o.rscroll_char = Some('>');
+        let rows = render_line(b"abc", &o, None);
+        match &rows[0][2] {
+            Cell::Char { ch, .. } => assert_eq!(*ch, 'c'),
+            other => panic!("expected content `c`, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rscroll_marker_disabled_emits_normal_chop() {
+        let mut o = opts(5, false);
+        o.rscroll_char = None;
+        let rows = render_line(b"abcdefgh", &o, None);
+        match &rows[0][4] {
+            Cell::Char { ch, .. } => assert_eq!(*ch, 'e'),
+            other => panic!("expected last fitting char, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rscroll_marker_absent_in_wrap_mode() {
+        let mut o = opts(5, true);
+        o.rscroll_char = Some('>');
+        let rows = render_line(b"abcdefgh", &o, None);
+        // Wrap mode produces multiple rows; rscroll only fires in chop.
+        assert!(rows.len() > 1);
+        for row in &rows {
+            for cell in row {
+                if let Cell::Char { ch, .. } = cell {
+                    assert_ne!(*ch, '>', "rscroll marker leaked into wrap mode");
+                }
+            }
+        }
+    }
+
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None }
     }
 
     fn ch(c: char) -> Cell {
