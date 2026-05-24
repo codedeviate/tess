@@ -99,6 +99,47 @@ After every commit on this branch:
 
 If a commit only touches docs and doesn't change the version, the tarball can be skipped — the previous one is still current. If the version bumped, regenerate.
 
+## Linux release artifacts (`.deb` for amd64 + arm64)
+
+On **every release** (i.e. whenever the version in `Cargo.toml` bumps and gets tagged), also produce statically-linked musl `.deb` packages for the two Linux architectures we ship: `amd64` (`x86_64`) and `arm64` (`aarch64`). These belong in the GitHub release as upload assets.
+
+Prerequisites (one-time, host machine — macOS):
+
+- `cargo install cargo-zigbuild cargo-deb`
+- `brew install zig`
+- `rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl`
+- `~/.cargo/bin` must come **before** `/opt/homebrew/bin` on `PATH`, otherwise Homebrew's `rustc` (which only has the host target) intercepts the build and you get `error[E0463]: can't find crate for core/std` even though the targets are installed. The rustup-managed toolchain is the one that knows about Linux targets.
+
+Build sequence — run from the repo root after the release commit lands:
+
+```sh
+for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+  cargo zigbuild --release --target "$tgt"
+  cargo deb --target "$tgt" --no-build
+done
+```
+
+Outputs:
+
+- `target/x86_64-unknown-linux-musl/release/tess`  — ELF, statically linked musl, x86-64
+- `target/aarch64-unknown-linux-musl/release/tess` — ELF, statically linked musl, aarch64
+- `target/debian/tess-cli_<version>-1_amd64.deb`
+- `target/debian/tess-cli_<version>-1_arm64.deb`
+
+Note: Debian calls the 64-bit ARM arch `arm64`; Rust/Linux call it `aarch64`. They are the same architecture — one target triple, not two. `cargo deb` translates the Rust target triple to the Debian arch name automatically.
+
+The `cargo deb` step emits a `warning: Command dpkg-shlibdeps failed to launch` line. That is a Debian-only tool we don't have on macOS; for static musl binaries there are no shared-lib deps to auto-detect, so the warning is harmless and the `.deb` is still produced correctly.
+
+Attach both `.deb` files to the GitHub release:
+
+```sh
+gh release upload vX.Y.Z \
+  target/debian/tess-cli_X.Y.Z-1_amd64.deb \
+  target/debian/tess-cli_X.Y.Z-1_arm64.deb
+```
+
+(If the release was created with `--generate-notes` per the Versioning section above, this is the follow-up step that adds the binaries to it.)
+
 ## Where to put new work
 
 - New design specs → `~/Development/Starweb/superpowers/tess/specs/YYYY-MM-DD-<topic>-design.md`
