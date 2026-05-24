@@ -48,6 +48,14 @@ pub struct Args {
     #[arg(long = "wordwrap")]
     pub word_wrap: bool,
 
+    /// Follow the file by path rather than by descriptor (matches
+    /// `tail -F` / `less --follow-name`). `tess` already does this —
+    /// rotation and truncation are detected on every poll and the
+    /// source re-opens by path (since 0.25.0). This flag is accepted
+    /// for compatibility and currently has no behavioral effect.
+    #[arg(long = "follow-name")]
+    pub follow_name: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.

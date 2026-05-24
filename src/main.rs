@@ -343,6 +343,14 @@ fn real_main() -> Result<()> {
     let ansi_mode = resolve_ansi_mode(&args);
     // Validate --truecolor early; the resolved bool is consumed inside app::run.
     resolve_truecolor(&args).map_err(Error::Runtime)?;
+
+    // `--follow-name` is accepted for compatibility but already matches our
+    // default behavior (rotation/truncation handled by re-opening the path).
+    // When given without `-f`, surface a one-line stderr note so users don't
+    // think they've also enabled follow mode.
+    if args.follow_name && !args.follow {
+        eprintln!("tess: --follow-name has no effect without -f / --follow");
+    }
     if args.manual {
         if io::stdout().is_terminal() {
             return page_bytes("(manual)", MANUAL_TEXT.as_bytes(), ansi_mode);
