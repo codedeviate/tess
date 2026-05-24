@@ -94,6 +94,12 @@ pub struct Args {
     #[arg(short = 'G', long = "no-hilite-search")]
     pub no_hilite_search: bool,
 
+    /// Don't enter the alt-screen on startup. Content remains in
+    /// terminal scrollback after exit. Crucial for piped use and
+    /// debugging. Mirrors `less -X` / `--no-init`.
+    #[arg(short = 'X', long = "no-init")]
+    pub no_init: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,

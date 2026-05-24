@@ -5,20 +5,29 @@ use std::sync::atomic::AtomicBool;
 use crossterm::cursor::{Hide, Show};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 
-/// RAII guard that enables raw mode + alt screen on construction and restores
-/// the terminal on drop (including during panic unwind).
+/// RAII guard that enables raw mode + (optionally) alt screen on construction
+/// and restores the terminal on drop (including during panic unwind).
+///
+/// `with_alt_screen = false` is the `less -X` / `--no-init` mode: stay on
+/// the primary screen so content remains in scrollback after exit. Raw
+/// mode is still enabled because we need keystroke capture either way.
 pub struct TerminalGuard {
     mouse: bool,
+    alt_screen: bool,
 }
 
 impl TerminalGuard {
-    pub fn enter(mouse: bool) -> io::Result<Self> {
+    pub fn enter(mouse: bool, with_alt_screen: bool) -> io::Result<Self> {
         enable_raw_mode()?;
-        crossterm::execute!(io::stdout(), EnterAlternateScreen, Hide)?;
+        if with_alt_screen {
+            crossterm::execute!(io::stdout(), EnterAlternateScreen, Hide)?;
+        } else {
+            crossterm::execute!(io::stdout(), Hide)?;
+        }
         if mouse {
             crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
-        Ok(TerminalGuard { mouse })
+        Ok(TerminalGuard { mouse, alt_screen: with_alt_screen })
     }
 }
 
@@ -27,7 +36,11 @@ impl Drop for TerminalGuard {
         if self.mouse {
             let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
         }
-        let _ = crossterm::execute!(io::stdout(), Show, LeaveAlternateScreen);
+        if self.alt_screen {
+            let _ = crossterm::execute!(io::stdout(), Show, LeaveAlternateScreen);
+        } else {
+            let _ = crossterm::execute!(io::stdout(), Show);
+        }
         let _ = disable_raw_mode();
     }
 }
