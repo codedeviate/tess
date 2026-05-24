@@ -106,6 +106,12 @@ pub struct Args {
     #[arg(short = 'F', long = "quit-if-one-screen")]
     pub quit_if_one_screen: bool,
 
+    /// Accepted for `less` compatibility. tess always exits on Ctrl-C
+    /// (Ctrl-C → Command::Quit in the input table), so this flag is a
+    /// no-op. Provided so existing `less` invocations work unchanged.
+    #[arg(short = 'K', long = "quit-on-intr")]
+    pub quit_on_intr: bool,
+
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,
