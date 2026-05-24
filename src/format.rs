@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use regex::Regex;
 use serde::Deserialize;
 
+use crate::config_path;
+
 /// A named log format: a regex with named capture groups identifying the
 /// fields of one log line. Used by filtering to look up field values by name.
 #[derive(Debug)]
@@ -236,7 +238,7 @@ impl DisplayRenderer {
 /// follow = true
 /// filter = ["level=ERROR"]
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct UserConfig {
     #[serde(default)]
     format: HashMap<String, FormatEntry>,
@@ -347,26 +349,50 @@ const BUILTINS: &[(&str, &str)] = &[
     ),
 ];
 
-fn user_config_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| {
-        let mut p = PathBuf::from(h);
-        p.push(".config");
-        p.push("tess");
-        p.push("formats.toml");
-        p
-    })
+fn formats_path_in(dir: &std::path::Path) -> PathBuf {
+    dir.join("formats.toml")
 }
 
-fn load_user_config() -> Result<UserConfig, String> {
-    let Some(path) = user_config_path() else {
-        return Ok(UserConfig { format: HashMap::new(), group: HashMap::new() });
-    };
-    if !path.exists() {
-        return Ok(UserConfig { format: HashMap::new(), group: HashMap::new() });
-    }
-    let text = std::fs::read_to_string(&path)
+/// Parsed contents of both global and local `formats.toml`. Empty
+/// `UserConfig` represents "layer absent or unreadable".
+#[derive(Debug, Default)]
+struct LayeredConfig {
+    global: UserConfig,
+    local: UserConfig,
+}
+
+fn read_formats_toml(path: &std::path::Path) -> Result<UserConfig, String> {
+    let text = std::fs::read_to_string(path)
         .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    toml::from_str(&text).map_err(|e| format!("parsing {}: {e}", path.display()))
+    toml::from_str(&text)
+        .map_err(|e| format!("parsing {}: {e}", path.display()))
+}
+
+fn load_layered_config() -> Result<LayeredConfig, String> {
+    let mut layered = LayeredConfig::default();
+
+    // Global: warn-and-continue on parse error.
+    if let Some(dir) = config_path::global_config_dir() {
+        let path = formats_path_in(&dir);
+        if path.exists() {
+            match read_formats_toml(&path) {
+                Ok(cfg) => layered.global = cfg,
+                Err(e) => eprintln!(
+                    "tess: warning: {e}; ignoring global config"
+                ),
+            }
+        }
+    }
+
+    // Local: fail-startup on parse error (unchanged behavior).
+    if let Some(dir) = config_path::user_config_dir() {
+        let path = formats_path_in(&dir);
+        if path.exists() {
+            layered.local = read_formats_toml(&path)?;
+        }
+    }
+
+    Ok(layered)
 }
 
 struct FormatSource {
@@ -378,23 +404,44 @@ struct FormatSource {
 }
 
 fn load_user_formats() -> Result<HashMap<String, FormatSource>, String> {
-    let cfg = load_user_config()?;
-    Ok(cfg.format.into_iter().map(|(k, v)| (k, FormatSource {
-        regex: v.regex,
-        display: v.display,
-        record_start: v.record_start,
-        prompt: v.prompt,
-        prompt_style: v.prompt_style,
-    })).collect())
+    let cfg = load_layered_config()?;
+    let mut out: HashMap<String, FormatSource> = HashMap::new();
+    // Global first; local overwrites.
+    for (k, v) in cfg.global.format {
+        out.insert(k, FormatSource {
+            regex: v.regex,
+            display: v.display,
+            record_start: v.record_start,
+            prompt: v.prompt,
+            prompt_style: v.prompt_style,
+        });
+    }
+    for (k, v) in cfg.local.format {
+        out.insert(k, FormatSource {
+            regex: v.regex,
+            display: v.display,
+            record_start: v.record_start,
+            prompt: v.prompt,
+            prompt_style: v.prompt_style,
+        });
+    }
+    Ok(out)
 }
 
-/// Load all user-defined groups from `~/.config/tess/formats.toml`. Built-ins
+/// Load all user-defined groups from global and local `formats.toml`. Built-ins
 /// are not provided — groups are entirely user-defined. Validates that group
 /// names don't shadow built-in flag names.
 pub fn load_groups() -> Result<HashMap<String, Group>, String> {
-    let cfg = load_user_config()?;
-    let mut out = HashMap::with_capacity(cfg.group.len());
-    for (name, entry) in cfg.group {
+    let cfg = load_layered_config()?;
+    let mut merged: HashMap<String, GroupEntry> = HashMap::new();
+    for (k, v) in cfg.global.group {
+        merged.insert(k, v);
+    }
+    for (k, v) in cfg.local.group {
+        merged.insert(k, v);
+    }
+    let mut out = HashMap::with_capacity(merged.len());
+    for (name, entry) in merged {
         if RESERVED_LONG_FLAGS.contains(&name.as_str()) {
             return Err(format!(
                 "group `{name}`: name collides with built-in --{name} flag"
@@ -1000,6 +1047,139 @@ regex = "^(?P<custom>\\S+)$"
         let cfg: UserConfig = toml::from_str(toml_text).expect("parse");
         let entry = cfg.format.get("myapp").expect("myapp present");
         assert!(entry.record_start.is_none());
+    }
+
+    #[test]
+    fn layered_loader_local_overrides_global() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("TESS_GLOBAL_CONFIG_DIR", global.path());
+
+        std::fs::write(
+            global.path().join("formats.toml"),
+            r#"
+[format.shared]
+regex = "^GLOBAL (?P<msg>.+)$"
+
+[format.both]
+regex = "^GLOBAL_BOTH (?P<msg>.+)$"
+"#,
+        )
+        .unwrap();
+
+        let cfg_dir = home.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("formats.toml"),
+            r#"
+[format.both]
+regex = "^LOCAL_BOTH (?P<msg>.+)$"
+
+[format.local-only]
+regex = "^LOCAL (?P<msg>.+)$"
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_layered_config().unwrap();
+
+        // Global-only format survives.
+        assert!(cfg.global.format.contains_key("shared"));
+        assert!(!cfg.local.format.contains_key("shared"));
+
+        // Same-name format: both layers carry it, merge step (next task)
+        // is responsible for resolving. Here we just verify both files
+        // parsed correctly.
+        assert_eq!(
+            cfg.global.format.get("both").unwrap().regex,
+            "^GLOBAL_BOTH (?P<msg>.+)$"
+        );
+        assert_eq!(
+            cfg.local.format.get("both").unwrap().regex,
+            "^LOCAL_BOTH (?P<msg>.+)$"
+        );
+
+        // Local-only format present.
+        assert!(cfg.local.format.contains_key("local-only"));
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
+    }
+
+    #[test]
+    fn layered_loader_warns_on_bad_global_toml() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        let global = tempfile::tempdir().unwrap();
+
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("TESS_GLOBAL_CONFIG_DIR", global.path());
+
+        std::fs::write(
+            global.path().join("formats.toml"),
+            "this is not valid toml = = =",
+        )
+        .unwrap();
+
+        // Should NOT error — global parse failures are warnings, not errors.
+        let cfg = load_layered_config().unwrap();
+        assert!(cfg.global.format.is_empty());
+        assert!(cfg.global.group.is_empty());
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
+    }
+
+    #[test]
+    fn layered_loader_fails_on_bad_local_toml() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
+
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", home.path());
+        std::env::remove_var("TESS_GLOBAL_CONFIG_DIR");
+
+        let cfg_dir = home.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("formats.toml"),
+            "this is not valid toml = = =",
+        )
+        .unwrap();
+
+        let err = load_layered_config().unwrap_err();
+        assert!(err.contains("formats.toml"), "got: {err}");
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_global {
+            Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
+            None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
+        }
     }
 
     #[test]
