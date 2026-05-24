@@ -84,6 +84,9 @@ enum ColonCommand {
     Tag(String),
     TagNext,
     TagPrev,
+    /// `:tselect [NAME]` — open the tag picker overlay. With a name, look
+    /// up matches; without, use the currently-active TagStack matches.
+    TagSelect(Option<String>),
     OpenPicker,
     OpenHelp,
     /// `:hex N` — set hex group width to N hex characters (2/4/8/16/32).
@@ -165,6 +168,13 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "tnext" => Ok(ColonCommand::TagNext),
         "tprev" => Ok(ColonCommand::TagPrev),
+        "tselect" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::TagSelect(None))
+            } else {
+                Ok(ColonCommand::TagSelect(Some(rest.to_string())))
+            }
+        }
         "b" | "buffers" => Ok(ColonCommand::OpenPicker),
         "h" | "help"    => Ok(ColonCommand::OpenHelp),
         "hex" => {
@@ -697,6 +707,34 @@ fn dispatch_colon_command(
                 ColonOutcome::Continue(msg)
             }
         },
+        ColonCommand::TagSelect(name) => {
+            let prepared = match name {
+                Some(n) => {
+                    let tf = match tag_file {
+                        Some(t) => t,
+                        None => {
+                            return ColonOutcome::Continue(Some(
+                                "[no tags file loaded]".into(),
+                            ))
+                        }
+                    };
+                    let matches: Vec<crate::tags::TagEntry> = tf.lookup(&n).to_vec();
+                    if matches.is_empty() {
+                        return ColonOutcome::Continue(Some(
+                            format!("[no matches for `{n}`]"),
+                        ));
+                    }
+                    tag_stack.set_active(n, matches);
+                    true
+                }
+                None => tag_stack.active.is_some(),
+            };
+            if prepared {
+                ColonOutcome::DispatchCommand(Command::OpenTagPicker)
+            } else {
+                ColonOutcome::Continue(Some("[no active tag]".into()))
+            }
+        }
         ColonCommand::TagPrev => match tag_stack.prev() {
             TagStepResult::NoActive => ColonOutcome::Continue(Some("[no active tag]".into())),
             TagStepResult::AtBoundary => ColonOutcome::Continue(Some("[at first match]".into())),
@@ -1130,7 +1168,8 @@ pub fn run(
                                                     &cmd,
                                                     ColonCommand::Tag(_)
                                                         | ColonCommand::TagNext
-                                                        | ColonCommand::TagPrev,
+                                                        | ColonCommand::TagPrev
+                                                        | ColonCommand::TagSelect(_),
                                                 );
                                                 let reload_msg = if is_tag_cmd {
                                                     refresh_tag_file(&mut tag_file)
@@ -1170,6 +1209,18 @@ pub fn run(
                                                             crate::overlay::help::HelpOverlay::new(remaps)
                                                         ));
                                                         needs_redraw = true;
+                                                    }
+                                                    ColonOutcome::DispatchCommand(Command::OpenTagPicker) => {
+                                                        if let Some(active) = tag_stack.active.as_ref() {
+                                                            overlay = Some(Box::new(
+                                                                crate::overlay::tag_picker::TagPicker::new(
+                                                                    active.name.clone(),
+                                                                    active.matches.clone(),
+                                                                    active.cursor,
+                                                                )
+                                                            ));
+                                                            needs_redraw = true;
+                                                        }
                                                     }
                                                     ColonOutcome::DispatchCommand(cmd) => {
                                                         debug_assert!(false, "colon dispatcher emitted unexpected Command: {cmd:?}");
@@ -1334,6 +1385,28 @@ pub fn run(
                                         &mut viewport, &mut src, &mut idx,
                                     ) {
                                         transient_status = Some(msg);
+                                    }
+                                }
+                            } else if let Command::SelectTagMatch(idx_pick) = cmd {
+                                if let Some(active) = tag_stack.active.as_mut() {
+                                    if idx_pick < active.matches.len() {
+                                        active.cursor = idx_pick;
+                                        let entry = active.matches[idx_pick].clone();
+                                        let msg = dispatch_match(
+                                            &entry,
+                                            &mut file_set,
+                                            &mut current_file_index,
+                                            &args,
+                                            preprocessor.as_ref(),
+                                            record_start_regex.as_ref(),
+                                            &mut viewport,
+                                            &mut src,
+                                            &mut idx,
+                                        );
+                                        update_viewport_tag_indicator(&tag_stack, &mut viewport);
+                                        if let Some(m) = msg {
+                                            transient_status = Some(m);
+                                        }
                                     }
                                 }
                             }
@@ -1673,7 +1746,10 @@ pub fn run(
                         ));
                         needs_redraw = true;
                     }
-                    Command::SelectFile(_) | Command::DropFileAt(_) => {
+                    Command::SelectFile(_)
+                    | Command::DropFileAt(_)
+                    | Command::SelectTagMatch(_)
+                    | Command::OpenTagPicker => {
                         // Overlay-only outcomes; consumed by the routing block above.
                     }
                     Command::MouseEvent(_) => {
@@ -2363,6 +2439,19 @@ mod tests {
     fn parse_colon_tnext_and_tprev() {
         assert_eq!(parse_colon_command("tnext").unwrap(), ColonCommand::TagNext);
         assert_eq!(parse_colon_command("tprev").unwrap(), ColonCommand::TagPrev);
+    }
+
+    #[test]
+    fn parse_colon_tselect_without_arg_uses_active() {
+        assert_eq!(parse_colon_command("tselect").unwrap(), ColonCommand::TagSelect(None));
+    }
+
+    #[test]
+    fn parse_colon_tselect_with_name() {
+        assert_eq!(
+            parse_colon_command("tselect foo").unwrap(),
+            ColonCommand::TagSelect(Some("foo".into())),
+        );
     }
 
     #[test]

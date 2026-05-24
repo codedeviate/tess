@@ -9,6 +9,7 @@ use crate::input::Command;
 
 pub mod picker;
 pub mod help;
+pub mod tag_picker;
 
 #[derive(Debug)]
 pub struct OverlayFrame {

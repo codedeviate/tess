@@ -77,6 +77,9 @@ pub enum Command {
     TagPop,
     /// `:b` — open the file picker overlay.
     OpenPicker,
+    /// `:tselect` — open the tag-match picker overlay. Caller must
+    /// pre-populate the active TagStack match list before dispatch.
+    OpenTagPicker,
     /// `:help` or `F1` — open the help overlay.
     OpenHelp,
     /// Issued by the file picker when the user selects a file. The
@@ -85,6 +88,9 @@ pub enum Command {
     /// Issued by the file picker when Ctrl-D removes a file. The
     /// argument is the index into the working FileSet.
     DropFileAt(usize),
+    /// Issued by the `:tselect` tag-picker when the user selects a match.
+    /// The argument is the index into the currently-active TagStack matches.
+    SelectTagMatch(usize),
     /// Mouse event surfaced to the app loop. Translation to a concrete
     /// scroll command happens in `app::run` based on whether an overlay
     /// is active and on which axis the event was.
