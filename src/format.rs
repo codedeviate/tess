@@ -116,6 +116,26 @@ impl DisplayTemplate {
                 '\\' => match chars.next() {
                     Some('<') => buf.push('<'),
                     Some('\\') => buf.push('\\'),
+                    Some('n') => buf.push('\n'),
+                    Some('t') => buf.push('\t'),
+                    Some('r') => buf.push('\r'),
+                    Some('e') => buf.push('\x1b'),
+                    Some('x') => {
+                        let h1 = chars.next().ok_or_else(|| "incomplete `\\xHH` escape".to_string())?;
+                        let h2 = chars.next().ok_or_else(|| "incomplete `\\xHH` escape".to_string())?;
+                        let hex: String = [h1, h2].iter().collect();
+                        let byte = u8::from_str_radix(&hex, 16)
+                            .map_err(|_| format!("invalid `\\x{hex}` escape"))?;
+                        buf.push(byte as char);
+                    }
+                    Some('0') => {
+                        let d1 = chars.next().ok_or_else(|| "incomplete `\\NNN` escape".to_string())?;
+                        let d2 = chars.next().ok_or_else(|| "incomplete `\\NNN` escape".to_string())?;
+                        let oct: String = ['0', d1, d2].iter().collect();
+                        let byte = u8::from_str_radix(&oct, 8)
+                            .map_err(|_| format!("invalid `\\{oct}` escape"))?;
+                        buf.push(byte as char);
+                    }
                     Some(other) => {
                         // Unknown escape: keep both bytes literally so users
                         // don't have to escape every backslash in regex-like
@@ -625,6 +645,55 @@ mod tests {
         map.insert("level".to_string(), "X".to_string());
         let out = t.render(|n| map.get(n).cloned());
         assert_eq!(out, r"a\b X");
+    }
+
+    #[test]
+    fn display_template_escape_e_emits_esc() {
+        let t = DisplayTemplate::compile(r"\e[31m<level>\e[0m", &fields()).unwrap();
+        let mut map = std::collections::HashMap::new();
+        map.insert("level".to_string(), "X".to_string());
+        let out = t.render(|n| map.get(n).cloned());
+        assert_eq!(out, "\x1b[31mX\x1b[0m");
+    }
+
+    #[test]
+    fn display_template_escape_x1b_emits_esc() {
+        let t = DisplayTemplate::compile(r"\x1b[1m<level>", &fields()).unwrap();
+        let out = t.render(|_| Some("Y".to_string()));
+        assert_eq!(out, "\x1b[1mY");
+    }
+
+    #[test]
+    fn display_template_escape_octal_emits_esc() {
+        let t = DisplayTemplate::compile(r"\033[1m<level>", &fields()).unwrap();
+        let out = t.render(|_| Some("Z".to_string()));
+        assert_eq!(out, "\x1b[1mZ");
+    }
+
+    #[test]
+    fn display_template_escape_n_t_r() {
+        let t = DisplayTemplate::compile(r"\n\t\r<level>", &fields()).unwrap();
+        let out = t.render(|_| Some("Q".to_string()));
+        assert_eq!(out, "\n\t\rQ");
+    }
+
+    #[test]
+    fn display_template_escape_unknown_preserves_backslash() {
+        let t = DisplayTemplate::compile(r"\q<level>", &fields()).unwrap();
+        let out = t.render(|_| Some("Q".to_string()));
+        assert_eq!(out, r"\qQ");
+    }
+
+    #[test]
+    fn display_template_escape_x_incomplete_errors() {
+        let err = DisplayTemplate::compile(r"\x1", &fields()).unwrap_err();
+        assert!(err.contains("incomplete"), "{err}");
+    }
+
+    #[test]
+    fn display_template_escape_invalid_hex_errors() {
+        let err = DisplayTemplate::compile(r"\xZZ", &fields()).unwrap_err();
+        assert!(err.contains("invalid"), "{err}");
     }
 
     #[test]

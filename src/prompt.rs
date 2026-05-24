@@ -2,6 +2,11 @@
 //! parser from `format.rs`, validating against a fixed set of prompt-only
 //! placeholder names. Rendered against a `PromptContext` populated by the
 //! viewport on every frame.
+//!
+//! Escape sequences supported in template literals (inherited from
+//! `DisplayTemplate`): `\<` (literal `<`), `\\` (literal `\`), `\n` / `\t`
+//! / `\r` (newline / tab / CR), `\e` / `\x1b` / `\033` (ESC — useful for
+//! embedding raw SGR sequences in prompts).
 
 use crate::format::DisplayTemplate;
 
