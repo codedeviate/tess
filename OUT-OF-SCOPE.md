@@ -29,13 +29,6 @@ should be added without their own spec → plan cycle.
 
 ## Deferred
 
-### Tag-feature follow-ups — **S each**
-
-- Tag-name completion in the `:tag` / `Ctrl-]` prompt.
-- Auto-reload of the tags file when its mtime changes.
-- Support for `ex` command tag addresses beyond simple `/pattern/` and line numbers.
-- `:tselect` — a numbered picker for multi-match tags up front (vim has both cycling and select).
-
 ### Follow-mode follow-ups — **S each**
 
 - **File rotation / truncation**: real `tail -F` re-opens the file when it shrinks or its inode changes. We currently keep a single `File` handle and would read garbage past a truncation. Detect via `metadata().len() < known_size` (or inode change) and re-open from offset 0.

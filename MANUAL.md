@@ -230,10 +230,15 @@ Set a per-format default in `~/.config/tess/formats.toml`:
 [format.app]
 regex = '^(?P<ts>\S+) (?P<level>\w+) (?P<msg>.+)$'
 prompt = '<label>  <top>-<bottom>/<total>  <pct>%<filter-tag><hide-tag>'
+prompt_style = 'fg=bright-blue,bold'   # optional — see Theming below
 ```
 
 CLI `--prompt` overrides `format.prompt`, which overrides the built-in
 default. The built-in default reproduces tess's standard status format.
+
+CLI `--prompt-style` overrides `format.prompt_style`, which overrides
+`--status-style`. See [Color and ANSI escapes →
+Theming](#theming-the-status-line-and-prompt).
 
 Available placeholders:
 
@@ -561,6 +566,44 @@ already happened, so `Ctrl-T` returns to where you came from.
 The `<tag-tag>` placeholder in `--prompt` templates resolves to
 `  [tag: NAME (N/M)]` when a multi-match cycle is active, empty
 otherwise.
+
+### Completion
+
+In the `:tag` / `Ctrl-]` prompt, `Tab` autocompletes the buffer to the
+longest common prefix of matching tag names. A second consecutive `Tab`
+shows the match count in the prompt hint. Typing or `Backspace` clears
+the cached match list so the next `Tab` re-queries.
+
+### Auto-reload
+
+The tags file is re-stat'd before every tag operation (`:tag NAME`,
+`Ctrl-]`, `:tnext` / `:tprev` / `:tselect`, `Tab` completion). When the
+mtime has advanced, the file is re-parsed in place and a transient
+`[tags reloaded]` status hint is shown. Run `ctags` in another terminal
+and the next `Ctrl-]` will see the fresh entries.
+
+### `:tselect` — picker for multi-match tags
+
+`:tselect NAME` looks up the tag and opens a picker overlay listing
+every match (`N. <file>:<addr>`). Use `↑`/`↓` or `j`/`k` to navigate,
+`Enter` to jump, `Esc` to cancel. Number keys `1`–`9` pick directly
+when there are fewer than 10 matches.
+
+`:tselect` with no arg uses the currently-active multi-match list (the
+one `:tnext` / `:tprev` cycle through), so you can switch from cycling
+to direct-select mid-session.
+
+### Chained `;` addresses
+
+`tess` recognizes ctags addresses chained with `;`:
+`/^outer_anchor$/;/inner_pattern/`. The second step searches starting
+from the line matched by the first, matching vim's behavior. `;` inside
+`/.../` or `?...?` is treated as literal so patterns containing
+semicolons are preserved.
+
+Unsupported address forms (`:s/foo/bar/`, `:call ...`, etc.) jump to
+line 1 of the target file and surface a `[tag address not supported:
+<raw>]` status hint instead of silently failing.
 
 ---
 
