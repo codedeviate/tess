@@ -278,6 +278,12 @@ pub struct Viewport {
     /// a single blank line at display time. Real line numbers / counts
     /// in `idx` are preserved.
     squeeze_blanks: bool,
+    /// `--header=L,C`: pin the top `L` source lines at the top of the
+    /// viewport and the left `C` columns at the left. The cols dimension
+    /// is currently inert (no horizontal scroll yet); wired so future
+    /// horizontal-scroll support can opt into it without re-plumbing.
+    header_lines: usize,
+    header_cols: usize,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -324,6 +330,8 @@ impl Viewport {
             quit_at_eof: QuitAtEof::default(),
             eof_hits: 0,
             squeeze_blanks: false,
+            header_lines: 0,
+            header_cols: 0,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
@@ -342,6 +350,18 @@ impl Viewport {
 
     pub fn set_squeeze_blanks(&mut self, on: bool) { self.squeeze_blanks = on; }
     pub fn squeeze_blanks(&self) -> bool { self.squeeze_blanks }
+
+    pub fn set_header(&mut self, lines: usize, cols: usize) {
+        self.header_lines = lines;
+        self.header_cols = cols;
+        // Don't let top_line land inside the pinned region — the scrolling
+        // window starts at line `header_lines` once the feature is on.
+        if self.top_line < self.header_lines {
+            self.top_line = self.header_lines;
+        }
+    }
+    pub fn header_lines(&self) -> usize { self.header_lines }
+    pub fn header_cols(&self) -> usize { self.header_cols }
 
     /// Notify the EOF state machine of a motion. Returns `true` when the
     /// caller should quit. `forward = true` for any motion that could
@@ -918,6 +938,54 @@ impl Viewport {
         let hide = self.hide_mode();
         let total_lines = idx.line_count();
 
+        // `--header=L`: pin the first L source lines as the top L rows of
+        // the body. Renders only the first cell-row of each pinned line
+        // (matches less semantics; long pinned lines truncate). Skipped in
+        // hide mode where "first L lines" might not be visible. Skipped in
+        // raw passthrough since the user's intent there is byte-faithful
+        // emission, not pinned headers.
+        let header_rows = if !hide && !raw_passthrough {
+            self.header_lines.min(body_rows).min(total_lines)
+        } else {
+            0
+        };
+        if header_rows > 0 {
+            for hl in 0..header_rows {
+                let raw = src.bytes(idx.line_range(hl, src));
+                let display_bytes = if let Some(r) = self.display.as_ref() {
+                    match r.render_line(&raw) {
+                        Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
+                        None => raw.clone(),
+                    }
+                } else {
+                    raw.clone()
+                };
+                let rows = render_line(&display_bytes, &r_opts, None);
+                let mut content_row = rows.into_iter().next().unwrap_or_else(|| {
+                    let mut v = Vec::with_capacity(self.cols as usize);
+                    while v.len() < self.cols as usize { v.push(Cell::Empty); }
+                    v
+                });
+                let mut full: Vec<Cell> = Vec::with_capacity(self.cols as usize);
+                if gutter > 0 {
+                    let label = format!("{:>width$} ", hl + 1, width = (gutter as usize - 1));
+                    for c in label.chars() {
+                        full.push(Cell::Char {
+                            ch: c,
+                            width: 1,
+                            style: crate::ansi::Style::default(),
+                            hyperlink: None,
+                        });
+                    }
+                }
+                full.append(&mut content_row);
+                body.push(full);
+                row_styles.push(RowStyle::Normal);
+                highlights.push(Vec::new());
+                raw_rows.push(None);
+            }
+        }
+
         // For hide mode, find where the viewport starts in visible_lines.
         let mut hide_pos = if hide {
             self.visible_lines
@@ -930,9 +998,11 @@ impl Viewport {
         let mut line_n = if hide {
             self.visible_lines.get(hide_pos).copied().unwrap_or(total_lines)
         } else {
-            self.top_line
+            // When header pinning is on, skip past the pinned region so the
+            // scrolling window doesn't show those lines a second time.
+            self.top_line.max(self.header_lines)
         };
-        let mut skip = if hide { 0 } else { self.top_row };
+        let mut skip = if hide || header_rows > 0 { 0 } else { self.top_row };
 
         while body.len() < body_rows {
             if line_n >= total_lines {
@@ -1958,6 +2028,50 @@ mod tests {
         assert_eq!(&rows[0], "a");
         assert_eq!(&rows[1], "");
         assert_eq!(&rows[2], "b");
+    }
+
+    #[test]
+    fn header_pins_top_rows_when_scrolling() {
+        // 12 lines, 6-row terminal → body_rows = 5. header=2 pins lines 0,1.
+        let mut content = Vec::new();
+        for n in 0..12 { content.extend_from_slice(format!("line{n}\n").as_bytes()); }
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(20, 6, "f".into());
+        v.set_header(2, 0);
+        // set_header floors top_line at header_lines, so we start showing
+        // line2 in the scroll window. Scrolling down 5 advances by 5
+        // logical lines from there.
+        v.scroll_lines(5, &m, &mut idx);
+        let f = v.frame(&m, &mut idx);
+        let chs = |row: &Vec<Cell>| -> String {
+            row.iter().filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            }).collect::<String>().trim().to_string()
+        };
+        // Rows 0 and 1 are the pinned header (line0, line1) regardless of scroll.
+        assert_eq!(&chs(&f.body[0]), "line0");
+        assert_eq!(&chs(&f.body[1]), "line1");
+        // top_line is now 2 + 5 = 7; row 2 shows line7.
+        assert_eq!(&chs(&f.body[2]), "line7");
+    }
+
+    #[test]
+    fn header_zero_lines_renders_like_no_header() {
+        let mut content = Vec::new();
+        for n in 0..10 { content.extend_from_slice(format!("line{n}\n").as_bytes()); }
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(20, 6, "f".into());
+        v.set_header(0, 0);
+        let f = v.frame(&m, &mut idx);
+        let chs = |row: &Vec<Cell>| -> String {
+            row.iter().filter_map(|c| match c {
+                Cell::Char { ch, .. } => Some(*ch),
+                _ => None,
+            }).collect::<String>().trim().to_string()
+        };
+        assert_eq!(&chs(&f.body[0]), "line0");
+        assert_eq!(&chs(&f.body[1]), "line1");
     }
 
     #[test]

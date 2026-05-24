@@ -266,6 +266,25 @@ enum PlusCmd {
     SearchBackward(String),
 }
 
+/// Parse `--header=L` or `--header=L,C` into `(L, C)`. Single arg
+/// implies `C = 0`. Both fields default to 0 when missing.
+fn parse_header_spec(s: &str) -> std::result::Result<(usize, usize), String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    match parts.as_slice() {
+        [l] => l.parse::<usize>()
+            .map(|n| (n, 0))
+            .map_err(|_| format!("--header: not a number `{l}`")),
+        [l, c] => {
+            let l = l.parse::<usize>()
+                .map_err(|_| format!("--header: bad L `{l}`"))?;
+            let c = c.parse::<usize>()
+                .map_err(|_| format!("--header: bad C `{c}`"))?;
+            Ok((l, c))
+        }
+        _ => Err("--header takes L or L,C".to_string()),
+    }
+}
+
 fn parse_plus_cmd(s: &str) -> std::result::Result<PlusCmd, String> {
     debug_assert!(s.starts_with('+') && s.len() > 1);
     let rest = &s[1..];
@@ -693,6 +712,10 @@ showing raw (use --content-type=NAME to override)"
     };
     viewport.set_quit_at_eof(qae);
     viewport.set_squeeze_blanks(args.squeeze_blanks);
+    if let Some(spec) = args.header.as_deref() {
+        let (lines, cols) = parse_header_spec(spec).map_err(Error::Runtime)?;
+        viewport.set_header(lines, cols);
+    }
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

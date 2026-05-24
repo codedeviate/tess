@@ -23,6 +23,13 @@ pub struct Args {
     #[arg(short = 's', long = "squeeze-blank-lines")]
     pub squeeze_blanks: bool,
 
+    /// Pin the top L source lines (and the left C columns, when
+    /// horizontal scroll is supported) at the top of the viewport.
+    /// Form: `L` or `L,C`. Default `0,0` (off). Mirrors `less --header`.
+    /// Runtime adjustment: `:header L [C]`.
+    #[arg(long = "header", value_name = "L[,C]")]
+    pub header: Option<String>,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.

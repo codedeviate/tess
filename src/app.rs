@@ -99,6 +99,8 @@ enum ColonCommand {
     /// `:hlsearch` (true) / `:nohlsearch` (false) — toggle search-match
     /// highlighting at runtime.
     HlSearch(bool),
+    /// `:header L [C]` — pin top L source rows and left C cols.
+    Header(usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +112,7 @@ enum ColonParseError {
     HexGroupInvalid(String),
     ColorInvalid(String),
     CaseInvalid(String),
+    HeaderInvalid(String),
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -129,6 +132,9 @@ impl std::fmt::Display for ColonParseError {
             }
             ColonParseError::CaseInvalid(v) => {
                 write!(f, ":case mode must be sensitive, smart, or insensitive (got {v})")
+            }
+            ColonParseError::HeaderInvalid(v) => {
+                write!(f, ":header expects `L` or `L C` (got {v})")
             }
         }
     }
@@ -211,6 +217,24 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
+        "header" => {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            match parts.as_slice() {
+                [l] => {
+                    let n: usize = l.parse()
+                        .map_err(|_| ColonParseError::HeaderInvalid(l.to_string()))?;
+                    Ok(ColonCommand::Header(n, 0))
+                }
+                [l, c] => {
+                    let nl: usize = l.parse()
+                        .map_err(|_| ColonParseError::HeaderInvalid(l.to_string()))?;
+                    let nc: usize = c.parse()
+                        .map_err(|_| ColonParseError::HeaderInvalid(c.to_string()))?;
+                    Ok(ColonCommand::Header(nl, nc))
+                }
+                _ => Err(ColonParseError::HeaderInvalid(rest.to_string())),
+            }
+        }
         "case" => {
             if rest.is_empty() {
                 Ok(ColonCommand::Case(None))
@@ -808,6 +832,10 @@ fn dispatch_colon_command(
                 AnsiMode::Raw => "raw",
             };
             ColonOutcome::Continue(Some(format!("[color: {label}]")))
+        }
+        ColonCommand::Header(l, c) => {
+            viewport.set_header(l, c);
+            ColonOutcome::Continue(Some(format!("[header: {l} rows, {c} cols]")))
         }
         ColonCommand::HlSearch(on) => {
             viewport.set_hilite_search(on);
