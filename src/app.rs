@@ -277,6 +277,16 @@ impl TagStack {
 
 /// Resolve a tag name to a list of matches, push the current position
 /// onto the tag stack, set it as the active match list, and dispatch
+/// Stat the tag file and reload it if its mtime moved. Returns a transient
+/// status message when a reload happened so the caller can surface it.
+/// Errors are swallowed (the previously-loaded state stays valid).
+fn refresh_tag_file(tag_file: &mut Option<crate::tags::TagFile>) -> Option<String> {
+    match tag_file.as_mut()?.reload_if_changed() {
+        Ok(true) => Some("[tags reloaded]".into()),
+        _ => None,
+    }
+}
+
 /// Longest common prefix among a slice of strings. Returns "" for an empty
 /// slice or when the items don't share any prefix. Used by Tab-completion
 /// in the `:tag` / `Ctrl-]` prompt.
@@ -711,7 +721,7 @@ pub fn run(
     record_start_regex: Option<regex::bytes::Regex>,
     args: crate::cli::Args,
     preprocessor: Option<crate::preprocess::Preprocessor>,
-    tag_file: Option<crate::tags::TagFile>,
+    mut tag_file: Option<crate::tags::TagFile>,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -757,6 +767,7 @@ pub fn run(
     let mouse_enabled = args.mouse;
 
     if let Some(tag_name) = args.tag.as_deref() {
+        let _ = refresh_tag_file(&mut tag_file);
         if let Some(msg) = dispatch_tag_jump(
             tag_name,
             tag_file.as_ref(),
@@ -1074,6 +1085,17 @@ pub fn run(
                                     } else {
                                         match parse_colon_command(buffer) {
                                             Ok(cmd) => {
+                                                let is_tag_cmd = matches!(
+                                                    &cmd,
+                                                    ColonCommand::Tag(_)
+                                                        | ColonCommand::TagNext
+                                                        | ColonCommand::TagPrev,
+                                                );
+                                                let reload_msg = if is_tag_cmd {
+                                                    refresh_tag_file(&mut tag_file)
+                                                } else {
+                                                    None
+                                                };
                                                 let outcome = dispatch_colon_command(
                                                     cmd,
                                                     &mut file_set,
@@ -1089,7 +1111,7 @@ pub fn run(
                                                 );
                                                 match outcome {
                                                     ColonOutcome::Continue(msg) => {
-                                                        transient_status = msg;
+                                                        transient_status = msg.or(reload_msg);
                                                     }
                                                     ColonOutcome::Quit => break,
                                                     ColonOutcome::DispatchCommand(Command::OpenPicker) => {
@@ -1149,6 +1171,7 @@ pub fn run(
                                         mode = InputMode::Normal;
                                     } else {
                                         let name = buffer.clone();
+                                        let reload_msg = refresh_tag_file(&mut tag_file);
                                         let msg = dispatch_tag_jump(
                                             &name,
                                             tag_file.as_ref(),
@@ -1162,9 +1185,7 @@ pub fn run(
                                             &mut src,
                                             &mut idx,
                                         );
-                                        if let Some(m) = msg {
-                                            transient_status = Some(m);
-                                        }
+                                        transient_status = msg.or(reload_msg);
                                         mode = InputMode::Normal;
                                     }
                                     needs_redraw = true;
@@ -1176,6 +1197,7 @@ pub fn run(
                                     needs_redraw = true;
                                 }
                                 KeyCode::Tab => {
+                                    let _ = refresh_tag_file(&mut tag_file);
                                     let names: Vec<String> = match tag_file.as_ref() {
                                         Some(tf) => tf
                                             .names()

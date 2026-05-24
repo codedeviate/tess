@@ -1,10 +1,11 @@
 //! Tag-file parsing and lookup. Supports ctags (traditional + exuberant
 //! suffix) and etags formats. Public API: `TagFile::load`, `TagFile::lookup`,
-//! `TagFile::find_walking_up`.
+//! `TagFile::find_walking_up`, `TagFile::reload_if_changed`.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::error::Error;
 
@@ -25,6 +26,12 @@ pub struct TagEntry {
 #[derive(Debug, Clone)]
 pub struct TagFile {
     base_dir: PathBuf,
+    /// On-disk path of the tag file, retained so `reload_if_changed` can
+    /// re-stat and re-parse without a separate handle.
+    path: PathBuf,
+    /// Mtime captured at last load. `UNIX_EPOCH` if the filesystem couldn't
+    /// report one (treated as "unknown" — any next mtime triggers reload).
+    mtime: SystemTime,
     by_name: HashMap<String, Vec<TagEntry>>,
 }
 
@@ -35,6 +42,9 @@ impl TagFile {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
+        let mtime = fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
         let by_name = if bytes.first().copied() == Some(b'\x0c') {
             parse_etags(&bytes, &base_dir, path)?
@@ -45,7 +55,26 @@ impl TagFile {
             parse_ctags(text, &base_dir)
         };
 
-        Ok(TagFile { base_dir, by_name })
+        Ok(TagFile { base_dir, path: path.to_path_buf(), mtime, by_name })
+    }
+
+    /// Re-stat the on-disk tag file and, if its mtime changed, re-parse it
+    /// in place. Returns `Ok(true)` when a reload happened, `Ok(false)`
+    /// otherwise. Stat or parse errors that occur during reload are
+    /// surfaced as `Err`; callers may choose to surface them as a status
+    /// hint and keep using the previously-loaded state.
+    pub fn reload_if_changed(&mut self) -> Result<bool, Error> {
+        let new_mtime = match fs::metadata(&self.path).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(_) => return Ok(false),
+        };
+        if new_mtime == self.mtime {
+            return Ok(false);
+        }
+        let fresh = Self::load(&self.path)?;
+        self.mtime = fresh.mtime;
+        self.by_name = fresh.by_name;
+        Ok(true)
     }
 
     pub fn lookup(&self, name: &str) -> &[TagEntry] {
@@ -200,6 +229,8 @@ mod tests {
         let by_name = parse_ctags(text, Path::new("/proj"));
         TagFile {
             base_dir: PathBuf::from("/proj"),
+            path: PathBuf::from("/proj/tags"),
+            mtime: std::time::SystemTime::UNIX_EPOCH,
             by_name,
         }
     }
@@ -335,5 +366,24 @@ mod tests {
     fn find_walking_up_returns_none_when_missing() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(TagFile::find_walking_up(dir.path()), None);
+    }
+
+    #[test]
+    fn reload_if_changed_picks_up_new_entries() {
+        use std::{thread, time::Duration};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tags");
+        std::fs::write(&path, "foo\tsrc/a.rs\t1\n").unwrap();
+        let mut tf = TagFile::load(&path).unwrap();
+        assert_eq!(tf.lookup("bar").len(), 0);
+
+        // Sleep past filesystem mtime granularity (HFS+ / APFS = 1s).
+        thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&path, "foo\tsrc/a.rs\t1\nbar\tsrc/b.rs\t2\n").unwrap();
+
+        assert!(tf.reload_if_changed().unwrap());
+        assert_eq!(tf.lookup("bar").len(), 1);
+        // A second call without further changes returns false.
+        assert!(!tf.reload_if_changed().unwrap());
     }
 }
