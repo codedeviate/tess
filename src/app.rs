@@ -1788,9 +1788,12 @@ const SYNC_UPDATE_BEGIN: &[u8] = b"\x1b[?2026h";
 const SYNC_UPDATE_END: &[u8] = b"\x1b[?2026l";
 
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, truecolor: bool) -> io::Result<()> {
-    // Raw mode: in the kernel and writer, Raw is treated like Strict for
-    // MVP. Full -r passthrough (bypass cell pipeline entirely, emit source
-    // bytes raw) is parked as a follow-up.
+    // Raw mode (`-r` / `:color raw`) routes each visible body row through the
+    // `frame.raw_rows` slot (populated by `Viewport::frame` when ansi_mode is
+    // Raw). The writer below blasts those bytes to the terminal verbatim so
+    // escape sequences like cursor moves and SGR pass through. Wrap math is
+    // best-effort — terminal-driven wrapping may shift sub-rows under long
+    // lines, matching `less -r`'s documented limitation.
 
     // Begin a synchronized update so the whole frame is presented atomically
     // (see SYNC_UPDATE_BEGIN). Paired with per-row `Clear(UntilNewLine)`
@@ -1811,6 +1814,21 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, trueco
         // Defensive: every row begins with a full attribute reset, so a
         // mis-handled reset on the previous row can't bleed forward.
         out.queue(SetAttribute(Attribute::Reset))?;
+
+        // Raw passthrough: when the viewport set this row's `raw_rows` entry,
+        // write the original source bytes directly to the terminal instead of
+        // rendering cells. Empty Vec means "skip" (mid-line wrap continuation
+        // whose first row already emitted the bytes).
+        if let Some(Some(raw)) = frame.raw_rows.get(i) {
+            if !raw.is_empty() {
+                out.write_all(raw)?;
+            }
+            // Trailing reset so a bare `\x1b[31m` doesn't leak into the next row.
+            out.queue(ResetColor)?;
+            out.queue(SetAttribute(Attribute::Reset))?;
+            continue;
+        }
+
         let row_style = frame.row_styles.get(i).copied().unwrap_or(RowStyle::Normal);
         // Build the base style representing the terminal state after the
         // defensive reset above. Dim rows get a dim base so the style-diff
@@ -2015,6 +2033,7 @@ mod tests {
             highlights: vec![Vec::new(), Vec::new()],
             status: "status".into(),
             status_style: crate::ansi::Style { reverse: true, ..Default::default() },
+            raw_rows: vec![None, None],
         };
 
         let mut buf: Vec<u8> = Vec::new();
@@ -2036,6 +2055,37 @@ mod tests {
             "full-screen Clear(All) reintroduced — flicker fix regressed: {s:?}",
         );
         assert!(s.contains("\x1b[K"), "expected at least one Clear(UntilNewLine)");
+    }
+
+    #[test]
+    fn raw_rows_passthrough_emits_original_bytes_and_skips_continuation() {
+        use crate::ansi::Style;
+        use crate::render::Cell;
+        use crate::viewport::{Frame, RowStyle};
+
+        // One body row (since rows=2 means body_rows=1).
+        let placeholder_row: Vec<Cell> = (0..3)
+            .map(|_| Cell::Char { ch: 'X', width: 1, style: Style::default(), hyperlink: None })
+            .collect();
+        let frame = Frame {
+            body: vec![placeholder_row.clone(), placeholder_row],
+            row_styles: vec![RowStyle::Normal, RowStyle::Normal],
+            highlights: vec![Vec::new(), Vec::new()],
+            status: "s".into(),
+            status_style: Style { reverse: true, ..Default::default() },
+            // Row 0 emits raw bytes (with an embedded ESC); row 1 is a
+            // continuation and emits nothing.
+            raw_rows: vec![Some(b"\x1b[31mABC\x1b[0m".to_vec()), Some(Vec::new())],
+        };
+
+        let mut buf: Vec<u8> = Vec::new();
+        write_frame(&mut buf, &frame, 3, 3, true).unwrap();
+        let s = std::str::from_utf8(&buf).expect("ascii");
+
+        // The original SGR bytes must appear (raw passthrough).
+        assert!(s.contains("\x1b[31mABC\x1b[0m"), "raw bytes missing in output: {s:?}");
+        // The placeholder cells must NOT appear — we bypassed the cell pipeline.
+        assert!(!s.contains("XXX"), "cell content leaked through despite raw passthrough: {s:?}");
     }
 
     #[test]

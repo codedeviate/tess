@@ -140,6 +140,14 @@ pub struct Frame {
     pub status: String,
     /// Style applied to the status row by the writer.
     pub status_style: crate::ansi::Style,
+    /// `AnsiMode::Raw` passthrough hints — parallel to `body`. `Some(bytes)`
+    /// on a row instructs the writer to emit those original source bytes
+    /// instead of rendering the cell grid (lets escape sequences pass to
+    /// the terminal verbatim). `Some(empty)` skips emission (continuation
+    /// row of a wrapped line whose first row already wrote the bytes).
+    /// `None` means "render cells normally". Only populated when the
+    /// viewport's ansi_mode is Raw.
+    pub raw_rows: Vec<Option<Vec<u8>>>,
 }
 
 pub struct Viewport {
@@ -726,6 +734,8 @@ impl Viewport {
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
+        let mut raw_rows: Vec<Option<Vec<u8>>> = Vec::with_capacity(body_rows);
+        let raw_passthrough = self.ansi_mode == crate::render::AnsiMode::Raw;
         // In hide mode we walk visible_lines; otherwise we walk logical lines.
         let hide = self.hide_mode();
         let total_lines = idx.line_count();
@@ -756,6 +766,7 @@ impl Viewport {
                 body.push(row);
                 row_styles.push(RowStyle::Normal);
                 highlights.push(Vec::new());
+                raw_rows.push(None);
                 line_n += 1;
                 continue;
             }
@@ -787,6 +798,7 @@ impl Viewport {
                 RowStyle::Normal
             };
 
+            let mut first_emitted_for_this_line = true;
             for (i, mut content_row) in rows.into_iter().enumerate() {
                 if i < skip { continue; }
                 if body.len() >= body_rows { break; }
@@ -809,6 +821,20 @@ impl Viewport {
                 body.push(full);
                 row_styles.push(style);
                 highlights.push(row_highlights);
+                if raw_passthrough {
+                    if first_emitted_for_this_line {
+                        // Emit the original line bytes verbatim once. Sub-rows
+                        // (mid-line wrap continuations) are no-ops — the
+                        // terminal will have already consumed enough columns
+                        // from the line's full byte stream to fill them.
+                        raw_rows.push(Some(raw.to_vec()));
+                        first_emitted_for_this_line = false;
+                    } else {
+                        raw_rows.push(Some(Vec::new()));
+                    }
+                } else {
+                    raw_rows.push(None);
+                }
             }
             skip = 0;
             // Advance to next line — visible-space if hiding, logical-space otherwise.
@@ -825,7 +851,7 @@ impl Viewport {
         self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
-        Frame { body, row_styles, highlights, status, status_style: self.status_style }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
@@ -1080,7 +1106,8 @@ impl Viewport {
         }
 
         let status = self.format_status_hex(src);
-        Frame { body, row_styles, highlights, status, status_style: self.status_style }
+        let raw_rows = vec![None; body.len()];
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
     }
 
     fn format_status_hex(&self, src: &dyn Source) -> String {
