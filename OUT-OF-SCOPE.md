@@ -33,7 +33,7 @@ should be added without their own spec → plan cycle.
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some are non-trivial behavior. Add as needed; document each in its own commit.
 
-**Picked up:** 0.26.0 (`-i`, `-I`, `-G`), 0.27.0 (`-X`, `-F`, `-K`, `-e`, `-E`, `+CMD`).
+**Picked up:** 0.26.0 (`-i`, `-I`, `-G`), 0.27.0 (`-X`, `-F`, `-K`, `-e`, `-E`, `+CMD`), 0.28.0 (`-s`, `--header`, `--rscroll`, `-z`, `--wordwrap`).
 
 ### Windows support — **M**
 

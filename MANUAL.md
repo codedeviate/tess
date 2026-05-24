@@ -209,6 +209,16 @@ tess +G app.log                 # open at end (like `-f` without the follow)
 | `-F` / `--quit-if-one-screen` | If the entire source fits on one screen, print verbatim and exit — no pager. |
 | `-K` / `--quit-on-intr` | No-op; Ctrl-C already quits. Accepted for compatibility. |
 
+### Display tweaks
+
+| Flag | Behavior |
+|---|---|
+| `-s` / `--squeeze-blank-lines` | Collapse runs of blank lines to a single blank at display time. Line counts / search / tag-jumps unaffected. |
+| `--header=L[,C]` | Pin top L source rows (and the left C columns, when horizontal scroll lands). Long pinned lines truncate at the right edge. Runtime: `:header L [C]`. |
+| `--rscroll=CHAR` | Character at the right edge when a line is chopped in `-S` mode. Default `>`. Pass `''` to disable. |
+| `-z N` / `--window=N` | PageDown / PageUp step size in lines (default: full body height). Half-page commands always advance by half the screen regardless. |
+| `--wordwrap` | In wrap mode, break on whitespace boundaries instead of mid-character. Falls back to mid-character break when no whitespace fits. |
+
 ### Skipping the alt-screen (`-X`)
 
 `-X` / `--no-init` prevents `tess` from switching to the terminal's
