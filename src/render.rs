@@ -54,6 +54,52 @@ impl Default for RenderOpts {
     }
 }
 
+/// Whether the writer should pass 24-bit RGB colors through to the terminal
+/// or downsample to the 256-color cube first. Resolved once at startup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrueColor {
+    Always,
+    Never,
+    /// Inspect `$COLORTERM` to decide.
+    Auto,
+}
+
+impl Default for TrueColor {
+    fn default() -> Self { TrueColor::Auto }
+}
+
+impl TrueColor {
+    /// Resolve this mode to a concrete pass-through flag. `Auto` looks at
+    /// the `COLORTERM` env var and treats values `truecolor` / `24bit` as
+    /// supporting truecolor.
+    pub fn resolve(self) -> bool {
+        match self {
+            TrueColor::Always => true,
+            TrueColor::Never => false,
+            TrueColor::Auto => matches!(
+                std::env::var("COLORTERM").ok().as_deref(),
+                Some("truecolor") | Some("24bit"),
+            ),
+        }
+    }
+}
+
+/// Downsample 24-bit RGB to the xterm 256-color palette. Uses the standard
+/// 6×6×6 cube plus the 24-step grayscale ramp.
+pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
+    if r == g && g == b {
+        if r < 8 { return 16; }
+        if r > 248 { return 231; }
+        return 232 + ((r as u16 - 8) * 24 / 240) as u8;
+    }
+    let q = |c: u8| -> u8 {
+        if c < 48 { 0 }
+        else if c < 115 { 1 }
+        else { ((c as u16 - 35) / 40) as u8 }
+    };
+    16 + 36 * q(r) + 6 * q(g) + q(b)
+}
+
 /// Try to decode one grapheme cluster starting at `bytes[i]`.
 /// Returns the cluster as &str and number of bytes consumed.
 /// Returns None if `bytes[i..]` does not begin with a valid UTF-8 sequence.
@@ -362,6 +408,50 @@ pub fn count_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rgb_to_256_pure_corners_map_to_palette_extremes() {
+        assert_eq!(rgb_to_256(0, 0, 0), 16);
+        assert_eq!(rgb_to_256(255, 255, 255), 231);
+    }
+
+    #[test]
+    fn rgb_to_256_mid_gray_lands_in_grayscale_ramp() {
+        let n = rgb_to_256(128, 128, 128);
+        assert!((232..=255).contains(&n), "expected grayscale slot 232..=255, got {n}");
+    }
+
+    #[test]
+    fn rgb_to_256_pure_rgb_lands_in_cube_extremes() {
+        assert_eq!(rgb_to_256(255, 0, 0), 196);
+        assert_eq!(rgb_to_256(0, 255, 0), 46);
+        assert_eq!(rgb_to_256(0, 0, 255), 21);
+    }
+
+    #[test]
+    fn rgb_to_256_low_channel_quantizes_to_zero() {
+        assert_eq!(rgb_to_256(40, 200, 0), 16 + 0 * 36 + 4 * 6 + 0);
+    }
+
+    #[test]
+    fn rgb_to_256_near_black_gray_is_palette_black() {
+        assert_eq!(rgb_to_256(5, 5, 5), 16);
+    }
+
+    #[test]
+    fn rgb_to_256_near_white_gray_is_palette_white() {
+        assert_eq!(rgb_to_256(250, 250, 250), 231);
+    }
+
+    #[test]
+    fn truecolor_always_resolves_true_regardless_of_env() {
+        assert!(TrueColor::Always.resolve());
+    }
+
+    #[test]
+    fn truecolor_never_resolves_false_regardless_of_env() {
+        assert!(!TrueColor::Never.resolve());
+    }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
         RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict }

@@ -211,6 +211,18 @@ fn resolve_ansi_mode(args: &Args) -> tess::render::AnsiMode {
     AnsiMode::Interpret
 }
 
+fn resolve_truecolor(args: &Args) -> std::result::Result<bool, String> {
+    use tess::render::TrueColor;
+    match args.truecolor.as_str() {
+        "always" => Ok(true),
+        "never" => Ok(false),
+        "auto" => Ok(TrueColor::Auto.resolve()),
+        other => Err(format!(
+            "--truecolor: unknown mode `{other}` (expected auto, always, never)"
+        )),
+    }
+}
+
 fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) -> Result<()> {
     let src = MockSource::new();
     src.append(content);
@@ -251,6 +263,8 @@ fn real_main() -> Result<()> {
     // content doesn't fly past — the user gets scroll/search/quit. When stdout
     // is redirected (`tess --manual | grep …`, `> out.txt`), print plain text.
     let ansi_mode = resolve_ansi_mode(&args);
+    // Validate --truecolor early; the resolved bool is consumed inside app::run.
+    resolve_truecolor(&args).map_err(Error::Runtime)?;
     if args.manual {
         if io::stdout().is_terminal() {
             return page_bytes("(manual)", MANUAL_TEXT.as_bytes(), ansi_mode);

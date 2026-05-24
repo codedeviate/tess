@@ -172,6 +172,13 @@ pub struct Args {
     #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
     pub raw_control_chars: bool,
 
+    /// Truecolor (24-bit RGB) handling. `auto` (default) checks `$COLORTERM`
+    /// and downsamples when truecolor isn't advertised; `never` always
+    /// downsamples to the 256-color palette; `always` passes RGB through
+    /// regardless of terminal capability.
+    #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
+    pub truecolor: String,
+
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
     /// grep, and the status line — all operate on whole records when set.

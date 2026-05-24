@@ -690,6 +690,12 @@ pub fn run(
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
 
+    let truecolor = match args.truecolor.as_str() {
+        "always" => true,
+        "never" => false,
+        _ => crate::render::TrueColor::Auto.resolve(),
+    };
+
     let mut stdout = io::stdout();
     let timeout = Duration::from_millis(250);
     let mut last_revision = src.revision();
@@ -799,7 +805,7 @@ pub fn run(
                     }
                 }
             }
-            write_frame(&mut stdout, &frame, cols, rows)
+            write_frame(&mut stdout, &frame, cols, rows, truecolor)
                 .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
             needs_redraw = false;
         }
@@ -1655,7 +1661,7 @@ fn rebuild_after_replace(
     viewport.clamp_top_line(idx.line_count());
 }
 
-fn to_crossterm_color(c: crate::ansi::Color) -> crossterm::style::Color {
+fn to_crossterm_color(c: crate::ansi::Color, truecolor: bool) -> crossterm::style::Color {
     use crossterm::style::Color as CC;
     use crate::ansi::Color;
     match c {
@@ -1677,7 +1683,13 @@ fn to_crossterm_color(c: crate::ansi::Color) -> crossterm::style::Color {
         Color::Ansi(15) => CC::White,
         Color::Ansi(_) => CC::Reset,
         Color::Indexed(n) => CC::AnsiValue(n),
-        Color::Rgb(r, g, b) => CC::Rgb { r, g, b },
+        Color::Rgb(r, g, b) => {
+            if truecolor {
+                CC::Rgb { r, g, b }
+            } else {
+                CC::AnsiValue(crate::render::rgb_to_256(r, g, b))
+            }
+        }
         Color::Default => CC::Reset,
     }
 }
@@ -1688,6 +1700,7 @@ fn emit_style_diff<W: Write>(
     out: &mut W,
     prev: &crate::ansi::Style,
     next: &crate::ansi::Style,
+    truecolor: bool,
 ) -> io::Result<()> {
     // For attribute toggles, crossterm has individual on/off pairs.
     // `NormalIntensity` cancels both bold AND dim — handle them together
@@ -1704,20 +1717,20 @@ fn emit_style_diff<W: Write>(
         out.queue(ResetColor)?;
         // After ResetColor, re-emit any color that should remain set.
         if let Some(c) = next.fg {
-            out.queue(SetForegroundColor(to_crossterm_color(c)))?;
+            out.queue(SetForegroundColor(to_crossterm_color(c, truecolor)))?;
         }
         if let Some(c) = next.bg {
-            out.queue(SetBackgroundColor(to_crossterm_color(c)))?;
+            out.queue(SetBackgroundColor(to_crossterm_color(c, truecolor)))?;
         }
     } else {
         if fg_changed {
             if let Some(c) = next.fg {
-                out.queue(SetForegroundColor(to_crossterm_color(c)))?;
+                out.queue(SetForegroundColor(to_crossterm_color(c, truecolor)))?;
             }
         }
         if bg_changed {
             if let Some(c) = next.bg {
-                out.queue(SetBackgroundColor(to_crossterm_color(c)))?;
+                out.queue(SetBackgroundColor(to_crossterm_color(c, truecolor)))?;
             }
         }
     }
@@ -1774,7 +1787,7 @@ fn emit_hyperlink_diff<W: Write>(
 const SYNC_UPDATE_BEGIN: &[u8] = b"\x1b[?2026h";
 const SYNC_UPDATE_END: &[u8] = b"\x1b[?2026l";
 
-fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io::Result<()> {
+fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, truecolor: bool) -> io::Result<()> {
     // Raw mode: in the kernel and writer, Raw is treated like Strict for
     // MVP. Full -r passthrough (bypass cell pipeline entirely, emit source
     // bytes raw) is parked as a follow-up.
@@ -1811,7 +1824,7 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16) -> io:
         };
         let no_highlights = Vec::new();
         let highlights = frame.highlights.get(i).unwrap_or(&no_highlights);
-        write_row_with_highlights(out, row, cols, highlights, base_style)?;
+        write_row_with_highlights(out, row, cols, highlights, base_style, truecolor)?;
     }
     // Status row
     out.queue(MoveTo(0, rows.saturating_sub(1)))?;
@@ -1851,6 +1864,7 @@ fn write_row_with_highlights(
     cols: u16,
     highlights: &[std::ops::Range<usize>],
     base_style: crate::ansi::Style,
+    truecolor: bool,
 ) -> io::Result<()> {
     let cols_usize = cols as usize;
 
@@ -1888,7 +1902,7 @@ fn write_row_with_highlights(
                 if base_style.dim && !eff.bold {
                     eff.dim = true;
                 }
-                emit_style_diff(out, &prev_style, &eff)?;
+                emit_style_diff(out, &prev_style, &eff, truecolor)?;
                 emit_hyperlink_diff(out, &prev_link, hyperlink)?;
                 out.queue(Print(*ch))?;
                 prev_style = eff;
@@ -1908,7 +1922,7 @@ fn write_row_with_highlights(
                 } else {
                     crate::ansi::Style::default()
                 };
-                emit_style_diff(out, &prev_style, &default)?;
+                emit_style_diff(out, &prev_style, &default, truecolor)?;
                 emit_hyperlink_diff(out, &prev_link, &None)?;
                 out.queue(Print(' '))?;
                 prev_style = default;
@@ -2003,7 +2017,7 @@ mod tests {
         };
 
         let mut buf: Vec<u8> = Vec::new();
-        write_frame(&mut buf, &frame, 3, 3).unwrap();
+        write_frame(&mut buf, &frame, 3, 3, true).unwrap();
         let s = std::str::from_utf8(&buf).expect("ascii");
 
         // Begin and end synchronized-update markers, in that order.
@@ -2039,7 +2053,7 @@ mod tests {
         ];
         let mut buf: Vec<u8> = Vec::new();
         let base = Style { dim: true, ..Default::default() };
-        write_row_with_highlights(&mut buf, &row, 4, &[], base).unwrap();
+        write_row_with_highlights(&mut buf, &row, 4, &[], base, true).unwrap();
         let s = String::from_utf8_lossy(&buf);
 
         // Locate every emitted character; before any of them is printed, the
@@ -2079,7 +2093,7 @@ mod tests {
         ];
         let mut buf: Vec<u8> = Vec::new();
         let base = Style { dim: true, ..Default::default() };
-        write_row_with_highlights(&mut buf, &row, 1, &[], base).unwrap();
+        write_row_with_highlights(&mut buf, &row, 1, &[], base, true).unwrap();
         let s = String::from_utf8_lossy(&buf);
         // Bold should be emitted (\x1b[1m); dim should not re-appear.
         assert!(s.contains("\x1b[1m"), "expected Bold escape, got {s:?}");
@@ -2352,7 +2366,7 @@ mod tests {
             hyperlink: None,
         }];
         let mut buf: Vec<u8> = Vec::new();
-        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default()).unwrap();
+        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default(), true).unwrap();
         let s = String::from_utf8_lossy(&buf);
         assert!(s.contains("\x1b["), "expected ANSI escape in output: {s:?}");
         assert!(s.contains('h'));
@@ -2368,7 +2382,7 @@ mod tests {
             hyperlink: Some(link),
         }];
         let mut buf: Vec<u8> = Vec::new();
-        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default()).unwrap();
+        write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default(), true).unwrap();
         let s = String::from_utf8_lossy(&buf);
         assert!(s.contains("\x1b]8;;https://example.com\x1b\\"), "got: {s:?}");
     }
