@@ -121,6 +121,39 @@ pub enum SearchDirection {
     Backward,
 }
 
+/// How `--grep`, `--filter ~/!~`, `/`, `?`, and `:tag` patterns interpret
+/// case. `Smart` matches less / ripgrep / vim `smartcase`: a pattern with
+/// no uppercase characters is treated as case-insensitive; one with any
+/// uppercase character is case-sensitive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseMode {
+    Sensitive,
+    Smart,
+    Insensitive,
+}
+
+impl Default for CaseMode {
+    fn default() -> Self { CaseMode::Sensitive }
+}
+
+impl CaseMode {
+    /// Compile this case policy into a regex pattern by prepending the
+    /// `(?i)` inline flag when case-insensitive matching is desired.
+    pub fn apply_to_pattern(self, pattern: &str) -> String {
+        match self {
+            CaseMode::Sensitive => pattern.to_string(),
+            CaseMode::Insensitive => format!("(?i){pattern}"),
+            CaseMode::Smart => {
+                if pattern.chars().any(|c| c.is_uppercase()) {
+                    pattern.to_string()
+                } else {
+                    format!("(?i){pattern}")
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SearchState {
     pub raw: String,
@@ -206,6 +239,10 @@ pub struct Viewport {
     /// 0 in `note_growth`, incremented in `tick_idle`. 20 ticks ≈ 5s at
     /// the 250 ms poll cadence.
     ticks_since_growth: u32,
+    /// Case-sensitivity policy for search / filter / grep regex compile.
+    /// Resolved from -i / -I CLI flags at startup; mutated by the `:case`
+    /// colon command at runtime.
+    case_mode: CaseMode,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -247,8 +284,21 @@ impl Viewport {
             status_style: crate::ansi::Style { reverse: true, ..Default::default() },
             status_flash: None,
             ticks_since_growth: 0,
+            case_mode: CaseMode::default(),
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
+        }
+    }
+
+    pub fn case_mode(&self) -> CaseMode { self.case_mode }
+
+    /// Switch the case-mode policy. Re-compiles any active search so the
+    /// new policy takes effect on the next frame without the user having
+    /// to retype the pattern.
+    pub fn set_case_mode(&mut self, mode: CaseMode) {
+        self.case_mode = mode;
+        if let Some(s) = self.search.clone() {
+            let _ = self.set_search(s.raw, s.direction);
         }
     }
 
@@ -376,7 +426,8 @@ impl Viewport {
     /// regex crate if the pattern is invalid; the previous search (if any)
     /// is preserved on error.
     pub fn set_search(&mut self, raw: String, direction: SearchDirection) -> Result<(), String> {
-        let regex = Regex::new(&raw).map_err(|e| e.to_string())?;
+        let compiled = self.case_mode.apply_to_pattern(&raw);
+        let regex = Regex::new(&compiled).map_err(|e| e.to_string())?;
         self.search = Some(SearchState { raw, regex, direction });
         Ok(())
     }
@@ -1796,6 +1847,41 @@ mod tests {
         v.set_follow_mode(true);
         v.suspend_follow_if(true);
         assert!(!v.follow_mode());
+    }
+
+    #[test]
+    fn case_mode_sensitive_returns_pattern_unchanged() {
+        assert_eq!(CaseMode::Sensitive.apply_to_pattern("foo"), "foo");
+        assert_eq!(CaseMode::Sensitive.apply_to_pattern("FOO"), "FOO");
+    }
+
+    #[test]
+    fn case_mode_insensitive_prepends_i_flag() {
+        assert_eq!(CaseMode::Insensitive.apply_to_pattern("foo"), "(?i)foo");
+        assert_eq!(CaseMode::Insensitive.apply_to_pattern("FOO"), "(?i)FOO");
+    }
+
+    #[test]
+    fn case_mode_smart_lowercase_is_insensitive() {
+        assert_eq!(CaseMode::Smart.apply_to_pattern("foo"), "(?i)foo");
+    }
+
+    #[test]
+    fn case_mode_smart_with_uppercase_is_sensitive() {
+        assert_eq!(CaseMode::Smart.apply_to_pattern("Foo"), "Foo");
+        assert_eq!(CaseMode::Smart.apply_to_pattern("FOO"), "FOO");
+    }
+
+    #[test]
+    fn set_case_mode_recompiles_active_search() {
+        let (m, mut idx) = setup(b"hello WORLD\n");
+        let mut v = Viewport::new(40, 5, "f".into());
+        v.set_search("world".into(), SearchDirection::Forward).unwrap();
+        // Sensitive: no match for lowercase against WORLD.
+        assert!(!v.search_repeat(&m, &mut idx, false));
+        // Switch to insensitive — should re-compile and now match.
+        v.set_case_mode(CaseMode::Insensitive);
+        assert!(v.search_repeat(&m, &mut idx, false));
     }
 
     #[test]
