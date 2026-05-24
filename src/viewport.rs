@@ -284,6 +284,10 @@ pub struct Viewport {
     /// horizontal-scroll support can opt into it without re-plumbing.
     header_lines: usize,
     header_cols: usize,
+    /// `-z` / `--window=N`: PageDown / PageUp step size in lines. `None`
+    /// (default) means "use body_rows" — full-screen page step. Half-page
+    /// commands always use body_rows/2 regardless.
+    page_size: Option<u16>,
     /// Cached SGR/hyperlink state at the start of `render_state_for`.
     /// Invalidated when top_line changes or source grows; reconstructed
     /// by walking up to MAX_RECONSTRUCT_LINES lines back.
@@ -332,6 +336,7 @@ impl Viewport {
             squeeze_blanks: false,
             header_lines: 0,
             header_cols: 0,
+            page_size: None,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
         }
@@ -362,6 +367,9 @@ impl Viewport {
     }
     pub fn header_lines(&self) -> usize { self.header_lines }
     pub fn header_cols(&self) -> usize { self.header_cols }
+
+    pub fn set_page_size(&mut self, n: Option<u16>) { self.page_size = n; }
+    pub fn page_size(&self) -> Option<u16> { self.page_size }
 
     /// Notify the EOF state machine of a motion. Returns `true` when the
     /// caller should quit. `forward = true` for any motion that could
@@ -1496,12 +1504,16 @@ impl Viewport {
     }
 
     pub fn page_down(&mut self, src: &dyn Source, idx: &mut LineIndex) {
-        let n = self.body_rows() as i64;
+        let n = self.page_size
+            .map(|p| p as i64)
+            .unwrap_or_else(|| self.body_rows() as i64);
         self.scroll_lines(n, src, idx);
     }
 
     pub fn page_up(&mut self, src: &dyn Source, idx: &mut LineIndex) {
-        let n = self.body_rows() as i64;
+        let n = self.page_size
+            .map(|p| p as i64)
+            .unwrap_or_else(|| self.body_rows() as i64);
         self.scroll_lines(-n, src, idx);
     }
 
@@ -2054,6 +2066,31 @@ mod tests {
         assert_eq!(&chs(&f.body[1]), "line1");
         // top_line is now 2 + 5 = 7; row 2 shows line7.
         assert_eq!(&chs(&f.body[2]), "line7");
+    }
+
+    #[test]
+    fn page_size_when_set_overrides_body_rows() {
+        let mut content = Vec::new();
+        for n in 0..100 { content.extend_from_slice(format!("L{n}\n").as_bytes()); }
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(20, 10, "f".into());
+        v.set_page_size(Some(3));
+        let before = v.top_line();
+        v.page_down(&m, &mut idx);
+        assert_eq!(v.top_line(), before + 3);
+        v.page_up(&m, &mut idx);
+        assert_eq!(v.top_line(), before);
+    }
+
+    #[test]
+    fn page_size_unset_uses_body_rows() {
+        let mut content = Vec::new();
+        for n in 0..100 { content.extend_from_slice(format!("L{n}\n").as_bytes()); }
+        let (m, mut idx) = setup(&content);
+        let mut v = Viewport::new(20, 10, "f".into());
+        // body_rows = rows - 1 = 9.
+        v.page_down(&m, &mut idx);
+        assert_eq!(v.top_line(), 9);
     }
 
     #[test]

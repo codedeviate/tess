@@ -717,6 +717,7 @@ showing raw (use --content-type=NAME to override)"
         viewport.set_header(lines, cols);
     }
     viewport.opts.rscroll_char = args.rscroll.chars().next();
+    viewport.set_page_size(args.window);
     viewport.set_preprocess_failure(preprocess_failure);
 
     // Resolve --prompt: CLI flag takes priority; fall back to the active

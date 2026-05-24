@@ -36,6 +36,12 @@ pub struct Args {
     #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
     pub rscroll: String,
 
+    /// PageDown / PageUp step size in lines. Default: full screen
+    /// height (body rows). Half-page commands always advance by half
+    /// the screen regardless. Mirrors `less -zn` / `--window=n`.
+    #[arg(short = 'z', long = "window", value_name = "N")]
+    pub window: Option<u16>,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
