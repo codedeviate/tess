@@ -887,9 +887,10 @@ impl Viewport {
     /// follow mode is on.
     pub fn is_at_bottom(&self, src: &dyn Source, idx: &LineIndex) -> bool {
         if self.hide_mode() {
-            // Wrap-aware: at the bottom once the top is at/after the visible
-            // line that anchors the last visible line's tail to the body.
-            self.top_line >= self.hide_bottom_top_line(src, idx)
+            // Wrap-aware: at the bottom once (top_line, top_row) is at/after
+            // the visible-line anchor that puts the last match's tail on the
+            // last body row.
+            (self.top_line, self.top_row) >= self.hide_bottom_anchor(src, idx)
         } else {
             // Compare in display-row units against the wrap-aware bottom
             // anchor — `top_line + body >= line_count` would read true while
@@ -1008,7 +1009,7 @@ impl Viewport {
             // scrolling window doesn't show those lines a second time.
             self.top_line.max(self.header_lines)
         };
-        let mut skip = if hide || header_rows > 0 { 0 } else { self.top_row };
+        let mut skip = if header_rows > 0 { 0 } else { self.top_row };
 
         while body.len() < body_rows {
             if line_n >= total_lines {
@@ -1419,7 +1420,32 @@ impl Viewport {
     pub fn scroll_logical_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
         if delta == 0 { return; }
         if self.hide_mode() {
-            self.scroll_lines(delta, src, idx);
+            // J/K move by whole visible lines (ignoring wrap rows), with K
+            // first snapping to the start of the current line — the visible-
+            // line analogue of the non-hide branch below.
+            self.extend_visible_lines(idx, src);
+            let n = self.visible_lines.len();
+            if n == 0 {
+                self.top_line = 0;
+                self.top_row = 0;
+                return;
+            }
+            let vi = self
+                .visible_lines
+                .iter()
+                .position(|&l| l >= self.top_line)
+                .unwrap_or(n - 1);
+            if delta > 0 {
+                let target = (vi + delta as usize).min(n - 1);
+                self.top_line = self.visible_lines[target];
+                self.top_row = 0;
+            } else {
+                let back = (-delta) as usize;
+                let consumed_for_snap = if self.top_row > 0 { 1 } else { 0 };
+                let extra_back = back.saturating_sub(consumed_for_snap);
+                self.top_line = self.visible_lines[vi.saturating_sub(extra_back)];
+                self.top_row = 0;
+            }
             return;
         }
         if delta > 0 {
@@ -1445,24 +1471,66 @@ impl Viewport {
     pub fn scroll_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
         if delta == 0 { return; }
         if self.hide_mode() {
-            // Scroll by visible (matching) lines. We don't honor wrap rows in
-            // hide mode — top_row stays 0. Each unit of `delta` advances or
-            // retreats one visible line.
+            // Scroll by display rows over the visible (matching) lines, honoring
+            // wrap rows via top_row — the same model as the non-hide branch
+            // below, but walking visible_lines instead of every line.
             self.extend_visible_lines(idx, src);
-            let total = self.visible_lines.len();
-            if total == 0 {
+            let n = self.visible_lines.len();
+            if n == 0 {
                 self.top_line = 0;
                 self.top_row = 0;
                 return;
             }
-            let cur = self
+            let mut vi = self
                 .visible_lines
                 .iter()
                 .position(|&l| l >= self.top_line)
-                .unwrap_or(total);
-            let new = (cur as i64 + delta).clamp(0, total.saturating_sub(1) as i64) as usize;
-            self.top_line = self.visible_lines[new];
-            self.top_row = 0;
+                .unwrap_or(n - 1);
+            // Keep top anchored on a real visible line; a top_row only means
+            // something relative to one.
+            if self.visible_lines[vi] != self.top_line {
+                self.top_row = 0;
+            }
+            self.top_line = self.visible_lines[vi];
+            let r_opts = self.render_opts(self.gutter_width(idx));
+            if delta > 0 {
+                let mut remaining = delta as usize;
+                while remaining > 0 {
+                    let line = self.visible_lines[vi];
+                    let rows = count_rows(&self.line_display_bytes(src, idx, line), &r_opts, None).max(1);
+                    if self.top_row + 1 < rows {
+                        self.top_row += 1;
+                    } else if vi + 1 < n {
+                        self.top_row = 0;
+                        vi += 1;
+                        self.top_line = self.visible_lines[vi];
+                    } else {
+                        break;
+                    }
+                    remaining -= 1;
+                }
+                let anchor = self.hide_bottom_anchor(src, idx);
+                if (self.top_line, self.top_row) > anchor {
+                    self.top_line = anchor.0;
+                    self.top_row = anchor.1;
+                }
+            } else {
+                let mut remaining = (-delta) as usize;
+                while remaining > 0 {
+                    if self.top_row > 0 {
+                        self.top_row -= 1;
+                    } else if vi > 0 {
+                        vi -= 1;
+                        self.top_line = self.visible_lines[vi];
+                        let line = self.visible_lines[vi];
+                        let rows = count_rows(&self.line_display_bytes(src, idx, line), &r_opts, None).max(1);
+                        self.top_row = rows.saturating_sub(1);
+                    } else {
+                        break;
+                    }
+                    remaining -= 1;
+                }
+            }
             return;
         }
         if delta > 0 {
@@ -1570,40 +1638,40 @@ impl Viewport {
         }
     }
 
-    /// Hide-mode bottom: the earliest *visible* line whose wrap rows, summed
-    /// with everything after it, still fit the body — so the last visible
-    /// line's final row lands at (or near) the bottom. `top_row` stays 0
-    /// because hide-mode scrolling is line-granular; a single visible line
-    /// taller than the whole body can't show its tail here (known limitation).
-    fn hide_bottom_top_line(&self, src: &dyn Source, idx: &LineIndex) -> usize {
+    /// Hide-mode bottom anchor, in display-row units over the *visible*
+    /// (matching) lines: the top `(line, row)` such that the last visible
+    /// line's final wrap row lands on the last body row. Mirrors
+    /// `bottom_anchor`, but walks `visible_lines` instead of every line.
+    fn hide_bottom_anchor(&self, src: &dyn Source, idx: &LineIndex) -> (usize, usize) {
         let body = self.body_rows() as usize;
-        let vis = &self.visible_lines;
-        if vis.is_empty() {
-            return 0;
+        let n = self.visible_lines.len();
+        if n == 0 || body == 0 {
+            return (0, 0);
         }
         let r_opts = self.render_opts(self.gutter_width(idx));
-        let mut rows_sum = 0usize;
-        let mut chosen = *vis.last().unwrap();
-        for &vl in vis.iter().rev() {
-            let rows = count_rows(&self.line_display_bytes(src, idx, vl), &r_opts, None).max(1);
-            if rows_sum > 0 && rows_sum + rows > body {
-                break;
+        let mut remaining = body;
+        let mut vi = n - 1;
+        loop {
+            let line = self.visible_lines[vi];
+            let rows = count_rows(&self.line_display_bytes(src, idx, line), &r_opts, None).max(1);
+            if rows >= remaining {
+                return (line, rows - remaining);
             }
-            rows_sum += rows;
-            chosen = vl;
-            if rows_sum >= body {
-                break;
+            remaining -= rows;
+            if vi == 0 {
+                return (self.visible_lines[0], 0);
             }
+            vi -= 1;
         }
-        chosen
     }
 
     pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
         idx.extend_to_end(src);
         if self.hide_mode() {
             self.extend_visible_lines(idx, src);
-            self.top_line = self.hide_bottom_top_line(src, idx);
-            self.top_row = 0;
+            let (line, row) = self.hide_bottom_anchor(src, idx);
+            self.top_line = line;
+            self.top_row = row;
         } else {
             let (line, row) = self.bottom_anchor(src, idx);
             self.top_line = line;
