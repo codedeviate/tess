@@ -47,22 +47,24 @@ pub fn output_rows(img_w: u32, img_h: u32, cols: u16, style: AsciiStyle) -> usiz
     (img_h.div_ceil(ppr)).max(1) as usize
 }
 
-/// Average an `image` source block into one RGB triple, weighting by alpha.
+/// Alpha-weighted average of an image block → one RGB triple. Transparent
+/// pixels contribute proportionally less; a fully transparent block is black.
+/// Uses u64 accumulators so large blocks (few columns, big image) can't overflow.
 fn average_block(img: &RgbaImage, x0: u32, y0: u32, w: u32, h: u32) -> (u8, u8, u8) {
     let (iw, ih) = img.dimensions();
-    let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+    let (mut r, mut g, mut b, mut sum_a) = (0u64, 0u64, 0u64, 0u64);
     for y in y0..(y0 + h).min(ih) {
         for x in x0..(x0 + w).min(iw) {
             let p = img.get_pixel(x, y).0;
-            let a = p[3] as u32;
-            r += p[0] as u32 * a / 255;
-            g += p[1] as u32 * a / 255;
-            b += p[2] as u32 * a / 255;
-            n += 1;
+            let a = p[3] as u64;
+            r += p[0] as u64 * a;
+            g += p[1] as u64 * a;
+            b += p[2] as u64 * a;
+            sum_a += a;
         }
     }
-    if n == 0 { return (0, 0, 0); }
-    ((r / n) as u8, (g / n) as u8, (b / n) as u8)
+    if sum_a == 0 { return (0, 0, 0); }
+    ((r / sum_a) as u8, (g / sum_a) as u8, (b / sum_a) as u8)
 }
 
 fn ramp_char(lum: u8) -> char {
@@ -105,8 +107,7 @@ fn render_ramp(img: &RgbaImage, cols: u16, color: bool) -> Vec<Vec<Cell>> {
 
 // Temporary stub; the real half-block implementation lands in Task 4.
 fn render_blocks(img: &RgbaImage, cols: u16, color: bool) -> Vec<Vec<Cell>> {
-    let _ = color;
-    render_ramp(img, cols, true)
+    render_ramp(img, cols, color)
 }
 
 #[cfg(test)]
@@ -172,5 +173,22 @@ mod tests {
         let img = solid(40, 40, [128, 128, 128, 255]);
         let grid = render_image(&img, 20, AsciiStyle::Ramp, true);
         assert!(grid.iter().all(|row| row.len() == 20));
+    }
+
+    #[test]
+    fn average_block_weights_by_alpha_not_pixel_count() {
+        // 2x1: one opaque white, one fully transparent. Result must be ~white.
+        let mut img = RgbaImage::new(2, 1);
+        img.put_pixel(0, 0, Rgba([255, 255, 255, 255]));
+        img.put_pixel(1, 0, Rgba([0, 0, 0, 0]));
+        // Render at 1 col so both pixels fall in one cell block.
+        let grid = render_image(&img, 1, AsciiStyle::Ramp, true);
+        match &grid[0][0] {
+            Cell::Char { style, .. } => {
+                assert_eq!(style.fg, Some(Color::Rgb(255, 255, 255)),
+                    "opaque white must dominate the transparent pixel");
+            }
+            other => panic!("expected Char, got {other:?}"),
+        }
     }
 }
