@@ -645,6 +645,33 @@ showing raw (use --content-type=NAME to override)"
     // `batch::run` instead of the interactive event loop.
     if let Some(destination) = batch_destination {
         let _ = prettify_label; // batch keeps the prettified bytes; label unused
+
+        #[cfg(feature = "image")]
+        if !args.hex && !args.no_image {
+            let head_len = src.len().min(64);
+            let head = src.bytes(0..head_len);
+            if tess::image_render::sniff_image_format(&head).is_some() {
+                let all = src.bytes(0..src.len());
+                let rgba = tess::image_render::decode_image(&all)
+                    .map_err(|e| Error::Runtime(format!("image decode failed: {e}")))?;
+                let style = if args.blocks {
+                    tess::image_render::AsciiStyle::Blocks
+                } else {
+                    tess::image_render::AsciiStyle::Ramp
+                };
+                let width = args.image_width.map(|w| w as u16).unwrap_or(80);
+                let grid = tess::image_render::render_image(&rgba, width, style, !args.no_color);
+                let mut w: Box<dyn std::io::Write> = match &destination {
+                    BatchDestination::Stdout => Box::new(std::io::stdout().lock()),
+                    BatchDestination::File(p) => Box::new(std::fs::File::create(p)
+                        .map_err(|e| Error::Runtime(format!("{}: {e}", p.display())))?),
+                };
+                tess::image_export::write_grid(&mut w, &grid, !args.no_color)
+                    .map_err(|e| Error::Runtime(e.to_string()))?;
+                return Ok(());
+            }
+        }
+
         let spec = BatchSpec {
             destination,
             follow: args.follow,
