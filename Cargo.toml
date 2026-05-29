@@ -23,6 +23,10 @@ exclude = [
     "CLAUDE.md",
 ]
 
+[features]
+default = ["image"]
+image = ["dep:image"]
+
 [dependencies]
 crossterm = { version = "0.27", features = ["use-dev-tty"] }
 memmap2 = "0.9"
@@ -40,6 +44,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 csv = "1"
 colored = "2"
 clap_mangen = "0.2"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "tiff", "tga", "ico", "pnm"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
