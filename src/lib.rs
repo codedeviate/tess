@@ -29,3 +29,5 @@ pub mod overlay;
 pub mod tags;
 pub mod keymap;
 pub mod config_path;
+#[cfg(feature = "image")]
+pub mod image_render;
