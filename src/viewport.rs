@@ -886,15 +886,10 @@ impl Viewport {
     /// the source. New content added past this point should auto-scroll if
     /// follow mode is on.
     pub fn is_at_bottom(&self, src: &dyn Source, idx: &LineIndex) -> bool {
-        let body = self.body_rows() as usize;
         if self.hide_mode() {
-            // top_line is a logical line; find its position in visible_lines.
-            let pos = self
-                .visible_lines
-                .iter()
-                .position(|&l| l >= self.top_line)
-                .unwrap_or(self.visible_lines.len());
-            pos + body >= self.visible_lines.len()
+            // Wrap-aware: at the bottom once the top is at/after the visible
+            // line that anchors the last visible line's tail to the body.
+            self.top_line >= self.hide_bottom_top_line(src, idx)
         } else {
             // Compare in display-row units against the wrap-aware bottom
             // anchor — `top_line + body >= line_count` would read true while
@@ -1575,14 +1570,39 @@ impl Viewport {
         }
     }
 
+    /// Hide-mode bottom: the earliest *visible* line whose wrap rows, summed
+    /// with everything after it, still fit the body — so the last visible
+    /// line's final row lands at (or near) the bottom. `top_row` stays 0
+    /// because hide-mode scrolling is line-granular; a single visible line
+    /// taller than the whole body can't show its tail here (known limitation).
+    fn hide_bottom_top_line(&self, src: &dyn Source, idx: &LineIndex) -> usize {
+        let body = self.body_rows() as usize;
+        let vis = &self.visible_lines;
+        if vis.is_empty() {
+            return 0;
+        }
+        let r_opts = self.render_opts(self.gutter_width(idx));
+        let mut rows_sum = 0usize;
+        let mut chosen = *vis.last().unwrap();
+        for &vl in vis.iter().rev() {
+            let rows = count_rows(&self.line_display_bytes(src, idx, vl), &r_opts, None).max(1);
+            if rows_sum > 0 && rows_sum + rows > body {
+                break;
+            }
+            rows_sum += rows;
+            chosen = vl;
+            if rows_sum >= body {
+                break;
+            }
+        }
+        chosen
+    }
+
     pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
         idx.extend_to_end(src);
-        let body = self.body_rows() as usize;
         if self.hide_mode() {
             self.extend_visible_lines(idx, src);
-            let total = self.visible_lines.len();
-            let target_visible = total.saturating_sub(body);
-            self.top_line = self.visible_lines.get(target_visible).copied().unwrap_or(0);
+            self.top_line = self.hide_bottom_top_line(src, idx);
             self.top_row = 0;
         } else {
             let (line, row) = self.bottom_anchor(src, idx);

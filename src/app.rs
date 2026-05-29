@@ -1414,9 +1414,19 @@ pub fn run(
                 // Resize must update stored dims even when an overlay is active —
                 // otherwise the overlay renders at stale dimensions until it closes.
                 if let crossterm::event::Event::Resize(c, r) = event {
+                    // Pin the bottom across resizes: a viewport sitting at the
+                    // end (follow/live, or just scrolled to the bottom) must
+                    // stay there when body height changes — otherwise the
+                    // newest content drifts off-screen. Terminals/multiplexers
+                    // often emit a resize right after startup, which is what
+                    // made --follow/--live land short of the end.
+                    let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
                     viewport.resize(c, r);
+                    if was_at_bottom {
+                        viewport.goto_bottom(src.as_ref(), &mut idx);
+                    }
                     needs_redraw = true;
                     if overlay.is_some() {
                         // Overlay still owns the screen; nothing else to do this tick.
@@ -1627,8 +1637,12 @@ pub fn run(
                     }
                     Command::Quit => break,
                     Command::Resize(c, r) => {
+                        let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
                         viewport.resize(c, r);
+                        if was_at_bottom {
+                            viewport.goto_bottom(src.as_ref(), &mut idx);
+                        }
                         needs_redraw = true;
                     }
                     Command::ScrollLines(n) => {
