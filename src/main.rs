@@ -659,7 +659,7 @@ showing raw (use --content-type=NAME to override)"
                 } else {
                     tess::image_render::AsciiStyle::Ramp
                 };
-                let width = args.image_width.map(|w| w as u16).unwrap_or(80);
+                let width = args.image_width.map(|w| w.clamp(1, u16::MAX as usize) as u16).unwrap_or(80);
                 let grid = tess::image_render::render_image(&rgba, width, style, !args.no_color);
                 let mut w: Box<dyn std::io::Write> = match &destination {
                     BatchDestination::Stdout => Box::new(std::io::stdout().lock()),
