@@ -12,6 +12,11 @@ const HELP_STYLES: Styles = Styles::styled()
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tess", version, about = "A less-style terminal pager.", styles = HELP_STYLES)]
 pub struct Args {
+    /// Render images with Unicode half-blocks (▀, fg=top pixel, bg=bottom
+    /// pixel) for ~2× vertical detail instead of the default character ramp.
+    #[arg(long = "blocks")]
+    pub blocks: bool,
+
     /// Chop long lines instead of wrapping.
     #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
@@ -194,6 +199,11 @@ pub struct Args {
     )]
     pub hex_group: usize,
 
+    /// Target width in columns for image rendering. Defaults to the terminal
+    /// width interactively, or 80 when exporting to a file/stdout.
+    #[arg(long = "image-width", value_name = "N")]
+    pub image_width: Option<usize>,
+
     /// Show line numbers.
     #[arg(short = 'N', long = "LINE-NUMBERS")]
     pub line_numbers: bool,
@@ -225,6 +235,11 @@ pub struct Args {
     /// variable (any non-empty value) and `CLICOLOR=0`.
     #[arg(long = "no-color")]
     pub no_color: bool,
+
+    /// Treat a detected image file as raw/normal text instead of rendering it
+    /// as ASCII art. Has no effect on non-image inputs.
+    #[arg(long = "no-image")]
+    pub no_image: bool,
 
     /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
     /// for one invocation.
@@ -520,12 +535,39 @@ mod tests {
     }
 
     #[test]
+    fn parses_no_image_flag() {
+        let a = Args::parse_from(["tess", "--no-image", "cat.png"]);
+        assert!(a.no_image);
+    }
+
+    #[test]
+    fn parses_blocks_flag() {
+        let a = Args::parse_from(["tess", "--blocks", "cat.png"]);
+        assert!(a.blocks);
+    }
+
+    #[test]
+    fn parses_image_width() {
+        let a = Args::parse_from(["tess", "--image-width", "120", "cat.png"]);
+        assert_eq!(a.image_width, Some(120));
+    }
+
+    #[test]
+    fn image_flags_default_off() {
+        let a = Args::parse_from(["tess", "f"]);
+        assert!(!a.no_image);
+        assert!(!a.blocks);
+        assert_eq!(a.image_width, None);
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
         let help = cmd.render_help().to_string();
 
         let expected = [
+            "--blocks",
             "--chop-long-lines",
             "--content-type",
             "--dim",
@@ -538,12 +580,14 @@ mod tests {
             "--head",
             "--hex",
             "--hex-group",
+            "--image-width",
             "--LINE-NUMBERS",
             "--list-formats",
             "--live",
             "--manual",
             "--mouse",
             "--no-color",
+            "--no-image",
             "--no-preprocess",
             "--output",
             "--preprocess",
