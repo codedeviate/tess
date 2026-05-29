@@ -105,9 +105,49 @@ fn render_ramp(img: &RgbaImage, cols: u16, color: bool) -> Vec<Vec<Cell>> {
     grid
 }
 
-// Temporary stub; the real half-block implementation lands in Task 4.
+fn block_shade_char(lum: u8) -> char {
+    let idx = (lum as usize * (BLOCK_SHADES.len() - 1)) / 255;
+    BLOCK_SHADES[idx]
+}
+
 fn render_blocks(img: &RgbaImage, cols: u16, color: bool) -> Vec<Vec<Cell>> {
-    render_ramp(img, cols, color)
+    let (iw, ih) = img.dimensions();
+    let cols_u = cols.max(1) as u32;
+    let px_per_col = iw.max(1).div_ceil(cols_u).max(1);
+    let ppr = pixels_per_cell_row(AsciiStyle::Blocks, px_per_col); // even, >= 2
+    let half = (ppr / 2).max(1);
+    let rows = output_rows(iw, ih, cols, AsciiStyle::Blocks);
+    let mut grid = Vec::with_capacity(rows);
+    for ry in 0..rows {
+        let mut row = Vec::with_capacity(cols as usize);
+        let y_top = ry as u32 * ppr;
+        for cx in 0..cols_u {
+            let x0 = cx * px_per_col;
+            let (tr, tg, tb) = average_block(img, x0, y_top, px_per_col, half);
+            let (br, bg, bb) = average_block(img, x0, y_top + half, px_per_col, half);
+            if color {
+                row.push(Cell::Char {
+                    ch: '▀',
+                    width: 1,
+                    style: Style {
+                        fg: Some(Color::Rgb(tr, tg, tb)),
+                        bg: Some(Color::Rgb(br, bg, bb)),
+                        ..Default::default()
+                    },
+                    hyperlink: None,
+                });
+            } else {
+                let lum = luminance(
+                    ((tr as u16 + br as u16) / 2) as u8,
+                    ((tg as u16 + bg as u16) / 2) as u8,
+                    ((tb as u16 + bb as u16) / 2) as u8,
+                );
+                row.push(cell_char(block_shade_char(lum), None));
+            }
+        }
+        grid.push(row);
+    }
+    grid
 }
 
 #[cfg(test)]
@@ -187,6 +227,37 @@ mod tests {
             Cell::Char { style, .. } => {
                 assert_eq!(style.fg, Some(Color::Rgb(255, 255, 255)),
                     "opaque white must dominate the transparent pixel");
+            }
+            other => panic!("expected Char, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocks_sets_fg_top_and_bg_bottom() {
+        // 2px wide, 2px tall: top row white, bottom row black.
+        let mut img = RgbaImage::new(2, 2);
+        for x in 0..2 { img.put_pixel(x, 0, Rgba([255, 255, 255, 255])); }
+        for x in 0..2 { img.put_pixel(x, 1, Rgba([0, 0, 0, 255])); }
+        let grid = render_image(&img, 2, AsciiStyle::Blocks, true);
+        match &grid[0][0] {
+            Cell::Char { ch, style, .. } => {
+                assert_eq!(*ch, '▀');
+                assert_eq!(style.fg, Some(Color::Rgb(255, 255, 255)), "fg = top");
+                assert_eq!(style.bg, Some(Color::Rgb(0, 0, 0)), "bg = bottom");
+            }
+            other => panic!("expected Char, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn blocks_no_color_uses_block_shades() {
+        let img = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+        let grid = render_image(&img, 2, AsciiStyle::Blocks, false);
+        match &grid[0][0] {
+            Cell::Char { ch, style, .. } => {
+                assert_eq!(*ch, '█', "brightest → full block");
+                assert_eq!(style.fg, None);
+                assert_eq!(style.bg, None);
             }
             other => panic!("expected Char, got {other:?}"),
         }
