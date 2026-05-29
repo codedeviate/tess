@@ -169,8 +169,11 @@ Each segment appears only when relevant. The `+12/50` indicator surfaces wrap-ro
 `tess` auto-detects image files by magic bytes (PNG, JPEG, GIF, BMP, WebP, TIFF, TGA, ICO, PNM) and renders them as colored ASCII art directly in the pager. No flags needed — just open the file:
 
 ```sh
-tess photo.png
-tess logo.gif           # GIFs render their first frame
+tess photo.png                                # colored ASCII art in the pager
+tess logo.gif                                 # GIFs render their first frame
+tess --blocks --image-width 100 photo.png     # higher-detail half-block render
+tess photo.png -o art.txt                     # save the art (ANSI color) to a file
+tess photo.png --no-color --stdout > art.txt  # plain, portable text
 ```
 
 Flags:
