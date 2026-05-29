@@ -896,9 +896,11 @@ pub fn run(
         viewport.extend_visible_lines(&idx, src.as_ref());
     }
 
-    // If follow mode is on at startup, snap to the bottom of the (possibly
-    // filtered) source so the user sees the newest content (tail-style).
-    if viewport.follow_mode() {
+    // If follow or live mode is on at startup, snap to the bottom of the
+    // (possibly filtered) source so the user sees the newest content
+    // (tail-style). Live mode tracks whole-file rewrites; starting at the end
+    // keeps the latest content in view as the file is regenerated.
+    if viewport.follow_mode() || viewport.live_mode() {
         src.pump();
         viewport.extend_visible_lines(&idx, src.as_ref());
         viewport.goto_bottom(src.as_ref(), &mut idx);
@@ -1632,37 +1634,37 @@ pub fn run(
                     Command::ScrollLines(n) => {
                         viewport.scroll_lines(n, src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(n > 0, &idx) { break; }
+                        if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::ScrollLogicalLines(n) => {
                         viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(n > 0, &idx) { break; }
+                        if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::PageDown => {
                         viewport.page_down(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(true, &idx) { break; }
+                        if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::PageUp => {
                         viewport.page_up(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        viewport.note_motion_for_eof(false, &idx);
+                        viewport.note_motion_for_eof(false, src.as_ref(), &idx);
                         needs_redraw = true;
                     }
                     Command::HalfPageDown => {
                         viewport.half_page_down(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(true, &idx) { break; }
+                        if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
                         needs_redraw = true;
                     }
                     Command::HalfPageUp => {
                         viewport.half_page_up(src.as_ref(), &mut idx);
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        viewport.note_motion_for_eof(false, &idx);
+                        viewport.note_motion_for_eof(false, src.as_ref(), &idx);
                         needs_redraw = true;
                     }
                     Command::Refresh => {
@@ -1855,7 +1857,7 @@ pub fn run(
             Ok(false) => {
                 // Timeout — check whether the source has grown or been rewritten.
                 if viewport.live_mode() {
-                    let was_at_bottom = viewport.is_at_bottom(&idx);
+                    let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     src.pump();
                     if src.revision() != last_revision {
                         rebuild_after_replace(
@@ -1868,7 +1870,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                 } else if viewport.follow_mode() {
-                    let was_at_bottom = viewport.is_at_bottom(&idx);
+                    let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     src.pump();
                     if src.take_rotated() {
                         // File was rotated or truncated. Re-open from offset 0

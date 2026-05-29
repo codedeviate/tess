@@ -375,11 +375,11 @@ impl Viewport {
     /// caller should quit. `forward = true` for any motion that could
     /// advance past EOF; `false` for backward motions (which reset the
     /// hit counter under `QuitAtEof::Second`).
-    pub fn note_motion_for_eof(&mut self, forward: bool, idx: &LineIndex) -> bool {
+    pub fn note_motion_for_eof(&mut self, forward: bool, src: &dyn Source, idx: &LineIndex) -> bool {
         match self.quit_at_eof {
             QuitAtEof::Off => false,
-            QuitAtEof::First if forward && self.is_at_bottom(idx) => true,
-            QuitAtEof::Second if forward && self.is_at_bottom(idx) => {
+            QuitAtEof::First if forward && self.is_at_bottom(src, idx) => true,
+            QuitAtEof::Second if forward && self.is_at_bottom(src, idx) => {
                 self.eof_hits = self.eof_hits.saturating_add(1);
                 self.eof_hits >= 2
             }
@@ -885,7 +885,7 @@ impl Viewport {
     /// True when the viewport's body window already covers the last line of
     /// the source. New content added past this point should auto-scroll if
     /// follow mode is on.
-    pub fn is_at_bottom(&self, idx: &LineIndex) -> bool {
+    pub fn is_at_bottom(&self, src: &dyn Source, idx: &LineIndex) -> bool {
         let body = self.body_rows() as usize;
         if self.hide_mode() {
             // top_line is a logical line; find its position in visible_lines.
@@ -896,7 +896,10 @@ impl Viewport {
                 .unwrap_or(self.visible_lines.len());
             pos + body >= self.visible_lines.len()
         } else {
-            self.top_line + body >= idx.line_count()
+            // Compare in display-row units against the wrap-aware bottom
+            // anchor — `top_line + body >= line_count` would read true while
+            // a wrapped tail is still off-screen below.
+            (self.top_line, self.top_row) >= self.bottom_anchor(src, idx)
         }
     }
 
@@ -1485,6 +1488,17 @@ impl Viewport {
                 }
                 remaining -= 1;
             }
+            // Don't scroll past the natural bottom (the last line resting on
+            // the last body row). Only clamp once the source is fully
+            // scanned — mid-scan the true end is unknown, and clamping to a
+            // partial index would strand the viewport short of unread content.
+            if idx.scanned_through() >= src.len() {
+                let anchor = self.bottom_anchor(src, idx);
+                if (self.top_line, self.top_row) > anchor {
+                    self.top_line = anchor.0;
+                    self.top_row = anchor.1;
+                }
+            }
         } else {
             let mut remaining = (-delta) as usize;
             while remaining > 0 {
@@ -1532,6 +1546,35 @@ impl Viewport {
         self.top_row = 0;
     }
 
+    /// The top `(line, row)` position such that the source's final display row
+    /// lands on the last body row. Computed in display-row units by walking
+    /// backward from the end, so it stays correct when lines wrap (the
+    /// default): the last `body` logical lines can occupy more than `body`
+    /// rows. Returns `(0, 0)` when the whole document fits within the body.
+    /// Non-hide-mode only — hide mode scrolls by whole visible lines.
+    fn bottom_anchor(&self, src: &dyn Source, idx: &LineIndex) -> (usize, usize) {
+        let body = self.body_rows() as usize;
+        let total = idx.line_count();
+        if total == 0 || body == 0 {
+            return (0, 0);
+        }
+        let r_opts = self.render_opts(self.gutter_width(idx));
+        let mut remaining = body;
+        let mut line = total - 1;
+        loop {
+            let bytes = self.line_display_bytes(src, idx, line);
+            let line_rows = count_rows(&bytes, &r_opts, None).max(1);
+            if line_rows >= remaining {
+                return (line, line_rows - remaining);
+            }
+            remaining -= line_rows;
+            if line == 0 {
+                return (0, 0);
+            }
+            line -= 1;
+        }
+    }
+
     pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
         idx.extend_to_end(src);
         let body = self.body_rows() as usize;
@@ -1542,9 +1585,9 @@ impl Viewport {
             self.top_line = self.visible_lines.get(target_visible).copied().unwrap_or(0);
             self.top_row = 0;
         } else {
-            let total = idx.line_count();
-            self.top_line = total.saturating_sub(body);
-            self.top_row = 0;
+            let (line, row) = self.bottom_anchor(src, idx);
+            self.top_line = line;
+            self.top_row = row;
         }
     }
 
@@ -1640,7 +1683,9 @@ mod tests {
 
     #[test]
     fn scroll_down_advances_top_line() {
-        let (m, mut idx) = setup(b"a\nb\nc\nd\n");
+        // 8 lines, body=4 → there are 4 lines below the first screen to scroll
+        // into, so scrolling down by 2 lands cleanly above the bottom anchor.
+        let (m, mut idx) = setup(b"a\nb\nc\nd\ne\nf\ng\nh\n");
         let mut v = Viewport::new(10, 5, "test".into());
         v.scroll_lines(2, &m, &mut idx);
         assert_eq!(v.top_line, 2);
@@ -1658,10 +1703,15 @@ mod tests {
 
     #[test]
     fn scroll_down_clamps_at_last_line() {
-        let (m, mut idx) = setup(b"a\nb\nc\n");
+        // 8 single-row lines, body=4. Scrolling far past the end clamps at the
+        // bottom anchor: the last line resting on the last body row, i.e.
+        // top_line = 8 - 4 = 4. (Not line 7 at the top — that would strand the
+        // tail off-screen, the bug this guards against.)
+        let (m, mut idx) = setup(b"a\nb\nc\nd\ne\nf\ng\nh\n");
         let mut v = Viewport::new(10, 5, "test".into());
         v.scroll_lines(50, &m, &mut idx);
-        assert_eq!(v.top_line, 2);
+        assert_eq!((v.top_line, v.top_row), (4, 0));
+        assert!(v.is_at_bottom(&m, &idx));
     }
 
     #[test]
@@ -1682,9 +1732,14 @@ mod tests {
     #[test]
     fn scroll_logical_lines_back_snaps_to_line_start() {
         // Mid-wrap K should snap to start of current line first, then go back.
+        // Three 50-char lines (5 wrap rows each) with body=8 put the bottom
+        // anchor at (1, 2), so scrolling down 7 rows lands inside line 1's
+        // wraps without being clamped.
         let mut content = vec![b'A'; 50];
         content.push(b'\n');
         content.extend_from_slice(&[b'B'; 50]);
+        content.push(b'\n');
+        content.extend_from_slice(&[b'C'; 50]);
         content.push(b'\n');
         let (m, mut idx) = setup(&content);
         let mut v = Viewport::new(10, 8, "f".into());
@@ -1699,9 +1754,11 @@ mod tests {
 
     #[test]
     fn scroll_down_walks_wraps_of_last_line() {
-        // Last line is 30 chars in a 10-col viewport → 3 wrap rows.
+        // Last line is 60 chars in a 10-col viewport → 6 wrap rows. With body=4
+        // the bottom anchor sits at (1, 2), so walking into the last line's
+        // wraps up to row 2 is legitimate (it doesn't strand the tail).
         let mut content = b"first\n".to_vec();
-        content.extend_from_slice(&[b'X'; 30]);
+        content.extend_from_slice(&[b'X'; 60]);
         content.push(b'\n');
         let (m, mut idx) = setup(&content);
         let mut v = Viewport::new(10, 5, "f".into());
@@ -1710,15 +1767,20 @@ mod tests {
         v.scroll_lines(1, &m, &mut idx);
         assert_eq!((v.top_line, v.top_row), (1, 1), "should advance into wraps of last line");
         v.scroll_lines(1, &m, &mut idx);
-        assert_eq!((v.top_line, v.top_row), (1, 2), "should reach last wrap row");
+        assert_eq!((v.top_line, v.top_row), (1, 2), "should reach the bottom anchor row");
+        // Already at the anchor — scrolling further must not strand the tail.
+        v.scroll_lines(5, &m, &mut idx);
+        assert_eq!((v.top_line, v.top_row), (1, 2), "clamped at the bottom anchor");
     }
 
     #[test]
     fn scroll_down_walks_wrap_rows_within_long_line() {
         // Line 0 is 30 chars in a 10-col viewport → 3 wrap rows. Body = 4.
+        // Six short lines follow so the bottom anchor sits well below line 0,
+        // leaving room to walk through line 0's wrap rows and into line 1.
         let mut content = vec![b'X'; 30];
         content.push(b'\n');
-        content.extend_from_slice(b"second\n");
+        content.extend_from_slice(b"a\nb\nc\nd\ne\nf\n");
         let (m, mut idx) = setup(&content);
         let mut v = Viewport::new(10, 5, "f".into());
         v.scroll_lines(1, &m, &mut idx);
@@ -1757,7 +1819,9 @@ mod tests {
 
     #[test]
     fn half_page_down_advances_by_half_body() {
-        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");
+        // 12 lines, body=6 → bottom anchor at line 6, so a half-page (3) lands
+        // cleanly above it.
+        let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n");
         let mut v = Viewport::new(10, 7, "f".into());  // body = 6, half = 3
         v.half_page_down(&m, &mut idx);
         assert_eq!(v.top_line, 3);
@@ -1909,7 +1973,7 @@ mod tests {
         let (m, mut idx) = setup(b"a\nb\n");  // 2 lines
         let v = Viewport::new(10, 5, "f".into());  // body = 4 ≥ 2
         idx.extend_to_end(&m);
-        assert!(v.is_at_bottom(&idx), "small file fits in body, top is at bottom");
+        assert!(v.is_at_bottom(&m, &idx), "small file fits in body, top is at bottom");
     }
 
     #[test]
@@ -1917,7 +1981,7 @@ mod tests {
         let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");  // 8 lines
         let v = Viewport::new(10, 5, "f".into());  // body = 4
         idx.extend_to_end(&m);
-        assert!(!v.is_at_bottom(&idx), "top of 8-line file with body=4 is not at bottom");
+        assert!(!v.is_at_bottom(&m, &idx), "top of 8-line file with body=4 is not at bottom");
     }
 
     #[test]
@@ -1925,7 +1989,7 @@ mod tests {
         let (m, mut idx) = setup(b"1\n2\n3\n4\n5\n6\n7\n8\n");
         let mut v = Viewport::new(10, 5, "f".into());
         v.goto_bottom(&m, &mut idx);
-        assert!(v.is_at_bottom(&idx));
+        assert!(v.is_at_bottom(&m, &idx));
     }
 
     #[test]
@@ -1984,7 +2048,7 @@ mod tests {
         let mut v = Viewport::new(20, 5, "f".into());
         v.set_quit_at_eof(QuitAtEof::Off);
         v.goto_bottom(&m, &mut idx);
-        assert!(!v.note_motion_for_eof(true, &idx));
+        assert!(!v.note_motion_for_eof(true, &m, &idx));
     }
 
     #[test]
@@ -1993,7 +2057,7 @@ mod tests {
         let mut v = Viewport::new(20, 5, "f".into());
         v.set_quit_at_eof(QuitAtEof::First);
         v.goto_bottom(&m, &mut idx);
-        assert!(v.note_motion_for_eof(true, &idx));
+        assert!(v.note_motion_for_eof(true, &m, &idx));
     }
 
     #[test]
@@ -2005,8 +2069,8 @@ mod tests {
         let mut v = Viewport::new(20, 5, "f".into());
         v.set_quit_at_eof(QuitAtEof::First);
         // top_line is 0; with 50 lines and a 5-row body, we're not at bottom.
-        assert!(!v.is_at_bottom(&idx));
-        assert!(!v.note_motion_for_eof(true, &idx));
+        assert!(!v.is_at_bottom(&m, &idx));
+        assert!(!v.note_motion_for_eof(true, &m, &idx));
     }
 
     #[test]
@@ -2016,9 +2080,9 @@ mod tests {
         v.set_quit_at_eof(QuitAtEof::Second);
         v.goto_bottom(&m, &mut idx);
         // 1st forward at EOF: count, don't quit.
-        assert!(!v.note_motion_for_eof(true, &idx));
+        assert!(!v.note_motion_for_eof(true, &m, &idx));
         // 2nd forward at EOF: quit.
-        assert!(v.note_motion_for_eof(true, &idx));
+        assert!(v.note_motion_for_eof(true, &m, &idx));
     }
 
     #[test]
@@ -2138,13 +2202,13 @@ mod tests {
         let mut v = Viewport::new(20, 5, "f".into());
         v.set_quit_at_eof(QuitAtEof::Second);
         v.goto_bottom(&m, &mut idx);
-        assert!(!v.note_motion_for_eof(true, &idx));
+        assert!(!v.note_motion_for_eof(true, &m, &idx));
         // Backward motion clears the counter.
-        v.note_motion_for_eof(false, &idx);
+        v.note_motion_for_eof(false, &m, &idx);
         // Next forward starts fresh: counts, doesn't quit.
-        assert!(!v.note_motion_for_eof(true, &idx));
+        assert!(!v.note_motion_for_eof(true, &m, &idx));
         // Now the second consecutive forward triggers quit.
-        assert!(v.note_motion_for_eof(true, &idx));
+        assert!(v.note_motion_for_eof(true, &m, &idx));
     }
 
     #[test]
@@ -2271,7 +2335,7 @@ mod tests {
         idx: &mut LineIndex,
     ) {
         if !v.follow_mode() { return; }
-        let was_at_bottom = v.is_at_bottom(idx);
+        let was_at_bottom = v.is_at_bottom(src, idx);
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src);
         if idx.line_count() != lines_before && was_at_bottom {
@@ -2287,7 +2351,7 @@ mod tests {
         let mut v = Viewport::new(10, 5, "f".into());
         v.set_follow_mode(true);
         idx.extend_to_end(&m);
-        assert!(v.is_at_bottom(&idx));
+        assert!(v.is_at_bottom(&m, &idx));
         let top_before = {
             let f = v.frame(&m, &mut idx);
             f.status.clone()  // unused, just exercise frame
@@ -2297,7 +2361,7 @@ mod tests {
         m.append(b"5\n6\n7\n8\n");
         simulate_growth_tick(&mut v, &m, &mut idx);
         // After auto-scroll, top_line should have advanced so the new last line is in view.
-        assert!(v.is_at_bottom(&idx), "after auto-scroll, viewport should still be at bottom");
+        assert!(v.is_at_bottom(&m, &idx), "after auto-scroll, viewport should still be at bottom");
         let frame = v.frame(&m, &mut idx);
         // The bottom-most body row should now contain the last logical line ('8').
         // Find which row has '8'.
@@ -2316,7 +2380,7 @@ mod tests {
         v.goto_bottom(&m, &mut idx);
         // Now scroll up off the bottom.
         v.scroll_lines(-2, &m, &mut idx);
-        assert!(!v.is_at_bottom(&idx));
+        assert!(!v.is_at_bottom(&m, &idx));
         let frame_before = v.frame(&m, &mut idx);
         let top_first_cell_before = frame_before.body[0][0].clone();
         // Simulate growth.
