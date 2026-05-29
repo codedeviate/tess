@@ -45,6 +45,9 @@ cmd | tess [OPTIONS]
 - **`-S`, `--chop-long-lines`** — truncate long lines at the right edge instead of wrapping. Toggle interactively with `Shift-S`.
 - **`--tab-width N`** — tab-stop width (default `8`).
 - **`--hex`** — render the source as an `xxd`-style hex dump. Mutually exclusive with `--filter`, `--grep`, `--prettify`, `--format`, `--display`, `--record-start`, and `--prompt`.
+- **`--no-image`** — disable image auto-detection; treat image files as raw bytes. Combine with `--hex` for a byte-level view of image data.
+- **`--blocks`** — render detected images in Unicode half-block (`▀`) mode instead of the default character ramp. Each cell encodes two pixel rows.
+- **`--image-width N`** — scale the rendered image to N columns (default: terminal width).
 
 ### Source
 
@@ -882,6 +885,43 @@ so you can find ASCII strings in the gutter or hex byte sequences:
 ```
 /Hello       # find the ASCII string in the gutter
 /4865 6c6c   # find the same bytes by their hex
+```
+
+---
+
+## Images
+
+`tess` detects image files by magic bytes (PNG, JPEG, GIF, BMP, WebP, TIFF, TGA, ICO, PNM) and renders them as colored ASCII art. No flags required — just open the file:
+
+```sh
+tess photo.png
+tess logo.gif           # GIFs render their first frame
+```
+
+### Flags
+
+- **`--no-image`** — skip rendering and show the raw bytes instead (combine with `--hex` for a byte-level view).
+- **`--blocks`** — Unicode half-block (`▀`) mode. Each terminal cell encodes two pixel rows (top as fg, bottom as bg), doubling vertical resolution.
+- **`--image-width N`** — render at N columns. Defaults to the current terminal width.
+
+### Color and export
+
+Color output uses 24-bit truecolor SGR. Pass `--no-color` for a plain-text render using the character ramp (`@#%*+=-.  `) or block-shade characters (`█▓▒░ `) with no SGR codes.
+
+Export the rendered art with `-o FILE` or `--stdout`:
+
+```sh
+tess --stdout photo.png > art.txt          # plain text (redirected stdout → no ANSI)
+tess --stdout photo.png | cat              # same
+tess --stdout --no-color photo.png         # force plain text
+```
+
+### Cargo feature
+
+The `image` feature is enabled by default. Build without it to produce a smaller binary that treats all inputs as text:
+
+```sh
+cargo build --release --no-default-features
 ```
 
 ---

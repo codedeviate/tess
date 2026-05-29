@@ -164,6 +164,29 @@ Each segment appears only when relevant. The `+12/50` indicator surfaces wrap-ro
 
 ---
 
+## Images
+
+`tess` auto-detects image files by magic bytes (PNG, JPEG, GIF, BMP, WebP, TIFF, TGA, ICO, PNM) and renders them as colored ASCII art directly in the pager. No flags needed — just open the file:
+
+```sh
+tess photo.png
+tess logo.gif           # GIFs render their first frame
+```
+
+Flags:
+
+| Flag | Behavior |
+| ---- | -------- |
+| `--blocks` | Unicode half-block (`▀`) mode — twice the vertical resolution per terminal row. |
+| `--image-width N` | Scale to N columns (default: terminal width). |
+| `--no-image` | View raw bytes instead of rendering; useful with `--hex`. |
+
+Color output uses 24-bit truecolor SGR; pass `--no-color` for a plain character-only render. Export the art with `-o FILE` or `--stdout` — ANSI-colored by default, plain text under `--no-color`.
+
+The `image` feature is on by default. Build without it (`--no-default-features`) for a smaller binary that treats all inputs as text.
+
+---
+
 ## Project status
 
 Pre-1.0; the CLI is settling but small breakage at minor-version boundaries is permitted (and called out in commit messages). Daily-driver-quality on macOS and Linux. **No Windows support** — the stdin / `/dev/tty` plumbing is Unix-specific.

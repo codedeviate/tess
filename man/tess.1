@@ -1,13 +1,16 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.30.0" 
+.TH tess 1  "tess 0.32.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-\-header\fR] [\fB\-\-rscroll\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-\-follow\-name\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-\-header\fR] [\fB\-\-rscroll\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-\-follow\-name\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-\-head\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-\-image\-width\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-\-no\-image\fR] [\fB\-\-no\-preprocess\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-truecolor\fR] [\fB\-\-status\-style\fR] [\fB\-\-prompt\-style\fR] [\fB\-\-record\-start\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
+.TP
+\fB\-\-blocks\fR
+Render images with Unicode half\-blocks (▀, fg=top pixel, bg=bottom pixel) for ~2× vertical detail instead of the default character ramp
 .TP
 \fB\-S\fR, \fB\-\-chop\-long\-lines\fR
 Chop long lines instead of wrapping
@@ -93,6 +96,9 @@ Render the source as an xxd\-style hex dump instead of byte\-faithful text. 16 b
 \fB\-\-hex\-group\fR \fI<N>\fR [default: 4]
 Hex characters per group in `\-\-hex` mode. One of 2, 4, 8, 16, 32 (default 4, matching `xxd`). 32 means the whole row as a single group with no spacing between hex pairs. Requires `\-\-hex`. Can be changed at runtime with `:hex N`
 .TP
+\fB\-\-image\-width\fR \fI<N>\fR
+Target width in columns for image rendering. Defaults to the terminal width interactively, or 80 when exporting to a file/stdout
+.TP
 \fB\-N\fR, \fB\-\-LINE\-NUMBERS\fR
 Show line numbers
 .TP
@@ -110,6 +116,9 @@ Enable mouse capture: click rows in the file picker / help overlay, and scrollwh
 .TP
 \fB\-\-no\-color\fR
 Show raw control bytes as `^X` glyphs (pre\-0.18 default). Disables SGR / OSC interpretation. Honoured also by the `NO_COLOR` environment variable (any non\-empty value) and `CLICOLOR=0`
+.TP
+\fB\-\-no\-image\fR
+Treat a detected image file as raw/normal text instead of rendering it as ASCII art. Has no effect on non\-image inputs
 .TP
 \fB\-\-no\-preprocess\fR
 Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted for one invocation
@@ -165,4 +174,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.30.0
+v0.32.0
