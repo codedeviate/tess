@@ -150,10 +150,58 @@ fn render_blocks(img: &RgbaImage, cols: u16, color: bool) -> Vec<Vec<Cell>> {
     grid
 }
 
+/// Identify an image by its leading bytes. Returns a short format name (for the
+/// status line) or `None` if the bytes are not a supported image. Content-based
+/// only — never guesses from a file extension — so text never misfires.
+pub fn sniff_image_format(head: &[u8]) -> Option<&'static str> {
+    match image::guess_format(head).ok()? {
+        image::ImageFormat::Png => Some("png"),
+        image::ImageFormat::Jpeg => Some("jpeg"),
+        image::ImageFormat::Gif => Some("gif"),
+        image::ImageFormat::Bmp => Some("bmp"),
+        image::ImageFormat::WebP => Some("webp"),
+        image::ImageFormat::Tiff => Some("tiff"),
+        image::ImageFormat::Tga => Some("tga"),
+        image::ImageFormat::Ico => Some("ico"),
+        image::ImageFormat::Pnm => Some("pnm"),
+        _ => None,
+    }
+}
+
+/// Decode the full image bytes to RGBA8. For animated GIFs this yields the
+/// first frame. Returns the decoder error string on failure.
+pub fn decode_image(bytes: &[u8]) -> Result<RgbaImage, String> {
+    image::load_from_memory(bytes)
+        .map(|img| img.to_rgba8())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{Rgba, RgbaImage};
+
+    #[test]
+    fn sniff_detects_png_and_gif_and_rejects_text() {
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        assert_eq!(sniff_image_format(&png), Some("png"));
+        let gif = b"GIF89a............";
+        assert_eq!(sniff_image_format(gif), Some("gif"));
+        assert_eq!(sniff_image_format(b"hello, world\n"), None);
+        assert_eq!(sniff_image_format(b""), None);
+    }
+
+    #[test]
+    fn decode_roundtrips_a_generated_png() {
+        let src = RgbaImage::from_pixel(3, 2, Rgba([10, 20, 30, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(src.clone())
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let decoded = decode_image(buf.get_ref()).unwrap();
+        assert_eq!(decoded.dimensions(), (3, 2));
+        assert_eq!(decoded.get_pixel(0, 0).0, [10, 20, 30, 255]);
+    }
 
     fn solid(w: u32, h: u32, px: [u8; 4]) -> RgbaImage {
         RgbaImage::from_pixel(w, h, Rgba(px))
