@@ -832,6 +832,32 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
+    // Image auto-detection: sniff the source's leading bytes. If it is a
+    // supported image and the user did not force raw (--no-image) or hex
+    // (--hex wins), decode and switch the viewport into ASCII-art mode.
+    #[cfg(feature = "image")]
+    if !args.hex && !args.no_image {
+        let head_len = src.len().min(64);
+        let head = src.bytes(0..head_len);
+        if let Some(fmt) = tess::image_render::sniff_image_format(&head) {
+            let all = src.bytes(0..src.len());
+            match tess::image_render::decode_image(&all) {
+                Ok(rgba) => {
+                    let style = if args.blocks {
+                        tess::image_render::AsciiStyle::Blocks
+                    } else {
+                        tess::image_render::AsciiStyle::Ramp
+                    };
+                    viewport.set_image(rgba, fmt, style, args.image_width);
+                    viewport.set_image_no_color(args.no_color);
+                }
+                Err(e) => {
+                    eprintln!("tess: image decode failed ({e}); showing raw");
+                }
+            }
+        }
+    }
+
     app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file)?;
     Ok(())
 }
