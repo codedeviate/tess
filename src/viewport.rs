@@ -232,6 +232,16 @@ pub struct Viewport {
     /// Filtering still operates on the raw line (it uses captures, not text).
     display: Option<crate::format::DisplayRenderer>,
     hex_mode: bool,
+    #[cfg(feature = "image")]
+    image: Option<image::RgbaImage>,
+    image_mode: bool,
+    image_no_color: bool,
+    #[cfg_attr(not(feature = "image"), allow(dead_code))]
+    image_format: String,
+    #[cfg(feature = "image")]
+    image_style: crate::image_render::AsciiStyle,
+    #[cfg_attr(not(feature = "image"), allow(dead_code))]
+    image_width: Option<usize>,
     /// Bytes per hex group in `--hex` mode. One of 1, 2, 4, 8, 16.
     /// Default 2 (matches the historical `xxd` 2-byte / 4-char grouping).
     hex_group_size: usize,
@@ -320,6 +330,14 @@ impl Viewport {
             search: None,
             display: None,
             hex_mode: false,
+            #[cfg(feature = "image")]
+            image: None,
+            image_mode: false,
+            image_no_color: false,
+            image_format: String::new(),
+            #[cfg(feature = "image")]
+            image_style: crate::image_render::AsciiStyle::Ramp,
+            image_width: None,
             hex_group_size: 2,
             prompt: None,
             preprocess_failure: None,
@@ -454,6 +472,43 @@ impl Viewport {
     /// Returns whether `--hex` rendering is active.
     pub fn hex_mode(&self) -> bool {
         self.hex_mode
+    }
+
+    #[cfg(feature = "image")]
+    pub fn set_image(&mut self, img: image::RgbaImage, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
+        self.image = Some(img);
+        self.image_format = format.to_string();
+        self.image_style = style;
+        self.image_width = width;
+        self.image_mode = true;
+        self.top_line = 0;
+        self.top_row = 0;
+    }
+
+    pub fn set_image_no_color(&mut self, on: bool) { self.image_no_color = on; }
+
+    pub fn image_mode(&self) -> bool { self.image_mode }
+
+    #[cfg(feature = "image")]
+    fn image_cols(&self) -> u16 {
+        self.image_width.map(|w| w.clamp(1, u16::MAX as usize) as u16).unwrap_or(self.cols.max(1))
+    }
+
+    #[cfg(feature = "image")]
+    pub fn image_total_rows(&self) -> usize {
+        match &self.image {
+            Some(img) => {
+                let (w, h) = img.dimensions();
+                crate::image_render::output_rows(w, h, self.image_cols(), self.image_style)
+            }
+            None => 0,
+        }
+    }
+
+    #[cfg(feature = "image")]
+    pub fn is_at_bottom_image(&self) -> bool {
+        let body = self.body_rows() as usize;
+        self.top_line + body >= self.image_total_rows()
     }
 
     /// Set bytes-per-group for `--hex` rendering. Accepts 1, 2, 4, 8, or 16.
@@ -886,6 +941,10 @@ impl Viewport {
     /// the source. New content added past this point should auto-scroll if
     /// follow mode is on.
     pub fn is_at_bottom(&self, src: &dyn Source, idx: &LineIndex) -> bool {
+        #[cfg(feature = "image")]
+        if self.image_mode {
+            return self.is_at_bottom_image();
+        }
         if self.hide_mode() {
             // Wrap-aware: at the bottom once (top_line, top_row) is at/after
             // the visible-line anchor that puts the last match's tail on the
@@ -915,6 +974,10 @@ impl Viewport {
     }
 
     pub fn frame(&mut self, src: &dyn Source, idx: &mut LineIndex) -> Frame {
+        #[cfg(feature = "image")]
+        if self.image_mode {
+            return self.frame_image();
+        }
         if self.hex_mode {
             return self.frame_hex(src);
         }
@@ -1413,12 +1476,70 @@ impl Viewport {
         )
     }
 
+    #[cfg(feature = "image")]
+    fn frame_image(&self) -> Frame {
+        use crate::render::Cell;
+        let body_rows = self.body_rows() as usize;
+        let cols = self.cols as usize;
+        let img = match &self.image {
+            Some(i) => i,
+            None => {
+                let body = vec![vec![Cell::Empty; cols]; body_rows];
+                return Frame {
+                    body,
+                    row_styles: vec![RowStyle::Normal; body_rows],
+                    highlights: vec![Vec::new(); body_rows],
+                    status: self.image_format.clone(),
+                    status_style: self.status_style,
+                    raw_rows: vec![None; body_rows],
+                };
+            }
+        };
+        let color = !self.image_no_color;
+        let grid = crate::image_render::render_image(img, self.image_cols(), self.image_style, color);
+        let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
+        for r in 0..body_rows {
+            let gi = self.top_line + r;
+            if gi < grid.len() {
+                let mut row = grid[gi].clone();
+                row.truncate(cols);
+                while row.len() < cols { row.push(Cell::Empty); }
+                body.push(row);
+            } else {
+                body.push(vec![Cell::Empty; cols]);
+            }
+        }
+        let status = self.format_status_image(grid.len());
+        Frame {
+            body,
+            row_styles: vec![RowStyle::Normal; body_rows],
+            highlights: vec![Vec::new(); body_rows],
+            status,
+            status_style: self.status_style,
+            raw_rows: vec![None; body_rows],
+        }
+    }
+
+    #[cfg(feature = "image")]
+    fn format_status_image(&self, total_rows: usize) -> String {
+        let body = self.body_rows() as usize;
+        let top = self.top_line + 1;
+        let bottom = (self.top_line + body).min(total_rows.max(1));
+        let dims = self.image.as_ref().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
+        format!("{}  {}  {}  rows {}-{}/{}", self.source_label, dims, self.image_format, top, bottom, total_rows)
+    }
+
     /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
     /// reset to 0 so the start of the destination line is at the top of
     /// the viewport. In hide mode this is equivalent to `scroll_lines`
     /// (which already moves by visible/logical lines).
     pub fn scroll_logical_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
         if delta == 0 { return; }
+        #[cfg(feature = "image")]
+        if self.image_mode {
+            self.scroll_lines(delta, src, idx);
+            return;
+        }
         if self.hide_mode() {
             // J/K move by whole visible lines (ignoring wrap rows), with K
             // first snapping to the start of the current line — the visible-
@@ -1470,6 +1591,16 @@ impl Viewport {
 
     pub fn scroll_lines(&mut self, delta: i64, src: &dyn Source, idx: &mut LineIndex) {
         if delta == 0 { return; }
+        #[cfg(feature = "image")]
+        if self.image_mode {
+            let total = self.image_total_rows();
+            let body = self.body_rows() as usize;
+            let max_top = total.saturating_sub(body);
+            let next = (self.top_line as i64 + delta).clamp(0, max_top as i64);
+            self.top_line = next as usize;
+            self.top_row = 0;
+            return;
+        }
         if self.hide_mode() {
             // Scroll by display rows over the visible (matching) lines, honoring
             // wrap rows via top_row — the same model as the non-hide branch
@@ -1666,6 +1797,13 @@ impl Viewport {
     }
 
     pub fn goto_bottom(&mut self, src: &dyn Source, idx: &mut LineIndex) {
+        #[cfg(feature = "image")]
+        if self.image_mode {
+            let body = self.body_rows() as usize;
+            self.top_line = self.image_total_rows().saturating_sub(body);
+            self.top_row = 0;
+            return;
+        }
         idx.extend_to_end(src);
         if self.hide_mode() {
             self.extend_visible_lines(idx, src);
@@ -1932,6 +2070,25 @@ mod tests {
         v.goto_bottom(&m, &mut idx);
         // Last page should show lines 7..=10 → top_line = 6.
         assert_eq!(v.top_line, 6);
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn image_mode_frame_renders_and_scrolls() {
+        use image::{Rgba, RgbaImage};
+        let img = RgbaImage::from_pixel(20, 200, Rgba([255, 255, 255, 255]));
+        let mut v = Viewport::new(20, 6, "cat.png".into()); // body = 5
+        v.set_image(img, "png", crate::image_render::AsciiStyle::Ramp, Some(20));
+        assert!(v.image_mode());
+        let total = v.image_total_rows();
+        assert!(total > 5, "tall image should exceed the body");
+        assert!(!v.is_at_bottom_image(), "starts at top");
+        let mut idx = LineIndex::new();
+        let m = MockSource::new();
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(frame.body.len(), 5);
+        v.goto_bottom(&m, &mut idx);
+        assert!(v.is_at_bottom_image());
     }
 
     #[test]
