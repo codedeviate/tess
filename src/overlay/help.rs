@@ -44,7 +44,7 @@ impl HelpOverlay {
         if let Some(user) = self.user_remaps.get(entry.command_name) {
             user.iter().map(String::as_str).collect()
         } else {
-            entry.keys.iter().copied().collect()
+            entry.keys.to_vec()
         }
     }
 }

@@ -67,16 +67,13 @@ impl Default for RenderOpts {
 
 /// Whether the writer should pass 24-bit RGB colors through to the terminal
 /// or downsample to the 256-color cube first. Resolved once at startup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrueColor {
     Always,
     Never,
     /// Inspect `$COLORTERM` to decide.
+    #[default]
     Auto,
-}
-
-impl Default for TrueColor {
-    fn default() -> Self { TrueColor::Auto }
 }
 
 impl TrueColor {
@@ -492,7 +489,8 @@ mod tests {
 
     #[test]
     fn rgb_to_256_low_channel_quantizes_to_zero() {
-        assert_eq!(rgb_to_256(40, 200, 0), 16 + 0 * 36 + 4 * 6 + 0);
+        // 256-cube index = 16 + 36*r6 + 6*g6 + b6, here r6=0 g6=4 b6=0 -> 40.
+        assert_eq!(rgb_to_256(40, 200, 0), 40);
     }
 
     #[test]

@@ -78,7 +78,7 @@ fn bench_regex_search(c: &mut Criterion) {
 }
 
 fn bench_render_line(c: &mut Criterion) {
-    let opts = RenderOpts { tab_width: 8, wrap: true, cols: 80, mode: tess::render::AnsiMode::Strict };
+    let opts = RenderOpts { tab_width: 8, wrap: true, cols: 80, mode: tess::render::AnsiMode::Strict, ..Default::default() };
     let line: &[u8] = b"a fairly long line with \t tabs and \x1b control bytes and \xff invalid \xfe utf8 to stress decoding";
     c.bench_function("render_line_80cols", |b| {
         b.iter(|| {

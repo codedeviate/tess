@@ -132,30 +132,24 @@ pub enum SearchDirection {
 /// case. `Smart` matches less / ripgrep / vim `smartcase`: a pattern with
 /// no uppercase characters is treated as case-insensitive; one with any
 /// uppercase character is case-sensitive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CaseMode {
+    #[default]
     Sensitive,
     Smart,
     Insensitive,
-}
-
-impl Default for CaseMode {
-    fn default() -> Self { CaseMode::Sensitive }
 }
 
 /// Controls auto-exit on end-of-file. `Off` (default) never quits.
 /// `Second` (less `-e`) quits on the second forward-motion that lands at
 /// EOF in a row. `First` (less `-E`) quits the moment a forward motion
 /// lands at EOF.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuitAtEof {
+    #[default]
     Off,
     Second,
     First,
-}
-
-impl Default for QuitAtEof {
-    fn default() -> Self { QuitAtEof::Off }
 }
 
 impl CaseMode {

@@ -302,7 +302,12 @@ pub struct Group {
     pub tab_width: Option<u8>,
     pub filter: Vec<String>,
     pub grep: Vec<String>,
+    // Populated by the layered loader to track which config layer a group came
+    // from (and what it overrode); reserved for group source annotation in
+    // `--list-formats`. Not yet read, hence the allow.
+    #[allow(dead_code)]
     pub(crate) source: crate::config_path::ConfigSource,
+    #[allow(dead_code)]
     pub(crate) overrides: Option<crate::config_path::ConfigSource>,
 }
 

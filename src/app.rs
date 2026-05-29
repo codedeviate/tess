@@ -506,7 +506,7 @@ fn resolve_tag_address(
             }
             // Subtract 1 from the final "next-search start" to land on the
             // last matched line itself.
-            AddressResult::Line(here.saturating_sub(1).max(0))
+            AddressResult::Line(here.saturating_sub(1))
         }
         crate::tags::TagAddress::Unsupported(raw) => {
             AddressResult::Unsupported(raw.clone())
@@ -1275,14 +1275,12 @@ pub fn run(
                                                         overlay = Some(Box::new(
                                                             crate::overlay::picker::FilePicker::new(&file_set, saved)
                                                         ));
-                                                        needs_redraw = true;
                                                     }
                                                     ColonOutcome::DispatchCommand(Command::OpenHelp) => {
                                                         let remaps = keymap.user_keys_by_command_name();
                                                         overlay = Some(Box::new(
                                                             crate::overlay::help::HelpOverlay::new(remaps)
                                                         ));
-                                                        needs_redraw = true;
                                                     }
                                                     ColonOutcome::DispatchCommand(Command::OpenTagPicker) => {
                                                         if let Some(active) = tag_stack.active.as_ref() {
@@ -1293,7 +1291,6 @@ pub fn run(
                                                                     active.cursor,
                                                                 )
                                                             ));
-                                                            needs_redraw = true;
                                                         }
                                                     }
                                                     ColonOutcome::DispatchCommand(cmd) => {

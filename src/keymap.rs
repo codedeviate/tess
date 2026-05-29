@@ -6,6 +6,7 @@
 //! User remaps from `~/.config/tess/keys.toml` are layered on top in the help
 //! overlay via `KeyMap::user_keys_by_command_name`.
 
+#[cfg(test)]
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::input::Command;
@@ -342,6 +343,7 @@ pub static KEY_REGISTRY: &[KeyEntry] = &[
 /// Parse the first entry of `keys` into a `KeyEvent`. Used by the sync-check
 /// test. Returns None for entries that don't represent a single keystroke
 /// (e.g. colon commands like ":n", mark sequences like "m<a-z>").
+#[cfg(test)]
 fn parse_canonical_key(spec: &str) -> Option<KeyEvent> {
     if spec.starts_with(':') || spec.contains(' ') || spec.contains('<') {
         return None;

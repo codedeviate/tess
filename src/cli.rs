@@ -11,6 +11,10 @@ const HELP_STYLES: Styles = Styles::styled()
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tess", version, about = "A less-style terminal pager.", styles = HELP_STYLES)]
+// `IGNORE_CASE` (-I) and `QUIT_AT_EOF` (-E) are intentionally upper-case to
+// mirror less's case-distinguished flag pairs (`-i`/`-I`, `-e`/`-E`) and to
+// stay distinct from their lower-case `ignore_case`/`quit_at_eof` siblings.
+#[allow(non_snake_case)]
 pub struct Args {
     /// Render images with Unicode half-blocks (▀, fg=top pixel, bg=bottom
     /// pixel) for ~2× vertical detail instead of the default character ramp.
@@ -136,7 +140,6 @@ pub struct Args {
     /// Force case-insensitive search regardless of pattern case. Mirrors
     /// `less -I`. Mutually exclusive with `-i`.
     #[arg(short = 'I', long = "IGNORE-CASE")]
-    #[allow(non_snake_case)]
     pub IGNORE_CASE: bool,
 
     /// Disable search-match highlighting by default. Search still
@@ -171,7 +174,6 @@ pub struct Args {
 
     /// Quit the first time end-of-file is reached. Mirrors `less -E`.
     #[arg(short = 'E', long = "QUIT-AT-EOF")]
-    #[allow(non_snake_case)]
     pub QUIT_AT_EOF: bool,
 
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
