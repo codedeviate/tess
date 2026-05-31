@@ -10,6 +10,82 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.33.3] — 2026-05-31
+
+### Documentation
+
+- README: new `## Command-line flags` section listing all 52 flags
+  alphabetically by long name, matching `tess --help` (the ordering
+  introduced in 0.33.2). Cut as a release so the crates.io page — whose
+  rendered README is pinned per published version — carries the table.
+
+## [0.33.2] — 2026-05-31
+
+### Changed
+
+- `tess --help` now lists flags alphabetically by long name
+  (case-insensitive) instead of struct-declaration order. The `Args` fields
+  were reordered and a test pins the ordering; the man page was regenerated
+  to match. No functional change.
+
+## [0.33.1] — 2026-05-29
+
+### Documentation
+
+- README: added image-rendering examples to the Images section.
+
+### Changed
+
+- Internal cleanup: silenced compiler warnings, fixed the Criterion
+  benchmarks, and brought `clippy` to green. No user-visible change.
+
+## [0.33.0] — 2026-05-29
+
+### Added
+
+- **Image-to-ASCII rendering.** `tess cat.png` auto-detects
+  PNG/GIF/JPEG/BMP/WebP/TIFF/TGA/ICO/PNM by magic bytes and renders colored
+  ASCII art (24-bit truecolor SGR by default, plain under `--no-color`). New
+  flags:
+  - `--blocks` — Unicode half-block (`▀`) mode for ~2× vertical resolution.
+  - `--image-width N` — scale the rendered art to N columns.
+  - `--no-image` — treat a detected image as raw bytes instead of rendering.
+  - Export with `-o FILE` / `--stdout` (ANSI-colored, or plain text under
+    `--no-color`).
+
+  GIFs render their first frame. Lives behind the default-on `image` Cargo
+  feature; build with `--no-default-features` for a smaller binary that
+  treats all inputs as text.
+
+## [0.32.0] — 2026-05-29
+
+### Added
+
+- `top_row` support in hide mode (`--filter` / `--grep`): a wrapping match
+  taller than the screen can now scroll to reveal its end, matching the
+  wrap-aware scrolling already available outside hide mode.
+
+## [0.31.1] — 2026-05-29
+
+### Fixed
+
+- Re-pin the bottom on terminal resize, and make hide-mode `goto_bottom`
+  wrap-aware, so End / follow land on the true last display row when the
+  final record wraps over multiple rows.
+
+## [0.31.0] — 2026-05-29
+
+### Changed
+
+- `--live` now starts at the end of the file on open (symmetric with `-f` /
+  `--follow`), so the newest content is visible immediately.
+
+### Fixed
+
+- Wrap-aware bottom anchor: the End key and follow/live now land on the
+  actual last display row instead of roughly one page above it when the last
+  line wraps over multiple rows.
+
 ## [0.30.0] — 2026-05-24
 
 ### Added
@@ -651,7 +727,14 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.33.3...HEAD
+[0.33.3]: https://github.com/codedeviate/tess/compare/v0.33.2...v0.33.3
+[0.33.2]: https://github.com/codedeviate/tess/compare/v0.33.1...v0.33.2
+[0.33.1]: https://github.com/codedeviate/tess/compare/v0.33.0...v0.33.1
+[0.33.0]: https://github.com/codedeviate/tess/compare/v0.32.0...v0.33.0
+[0.32.0]: https://github.com/codedeviate/tess/compare/v0.31.1...v0.32.0
+[0.31.1]: https://github.com/codedeviate/tess/compare/v0.31.0...v0.31.1
+[0.31.0]: https://github.com/codedeviate/tess/compare/v0.30.0...v0.31.0
 [0.19.0]: https://github.com/codedeviate/tess/compare/v0.18.5...v0.19.0
 [0.18.5]: https://github.com/codedeviate/tess/compare/v0.18.4...v0.18.5
 [0.18.4]: https://github.com/codedeviate/tess/compare/v0.18.3...v0.18.4
