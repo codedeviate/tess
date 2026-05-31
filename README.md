@@ -190,6 +190,67 @@ The `image` feature is on by default. Build without it (`--no-default-features`)
 
 ---
 
+## Command-line flags
+
+The full set, alphabetical by long name — the same order `tess --help` lists them. Run `tess --manual` for the long-form descriptions.
+
+| Flag | Description |
+| ---- | ----------- |
+| `--blocks` | Render images with Unicode half-blocks (`▀`) for ~2× vertical detail. |
+| `-S, --chop-long-lines` | Chop long lines instead of wrapping. |
+| `--content-type TYPE` | Force the `--prettify` content type (`auto`/`raw`/`json`/`yaml`/`toml`/`xml`/`html`/`csv`). |
+| `--dim` | With `--filter`/`--grep`, dim non-matching lines instead of hiding them. |
+| `--display TEMPLATE` | Render each parsed line through a `<field>` template (requires `--format`). |
+| `--examples` | Print a curated list of usage examples and exit. |
+| `--exit-follow-on-close` | In follow mode with piped stdin, exit when the writer closes the pipe. |
+| `--filter FIELD<op>VALUE` | Filter visible lines by parsed field (repeatable, AND'd; requires `--format`). |
+| `-f, --follow` | Follow the source for new bytes (like `tail -f`); toggle with `Shift-F`. |
+| `--follow-name` | Follow by path (compat no-op — tess already re-opens on rotation/truncation). |
+| `--follow-suspend-on-motion` | Any user motion suspends following (`less +F` semantics). |
+| `--format NAME` | Apply a named log format (built-in or from `formats.toml`). |
+| `--grep PATTERN` | Filter visible lines by regex on the raw line (repeatable, AND'd; no `--format` needed). |
+| `--head N` | Show only the first N lines. Mutually exclusive with `--tail`. |
+| `--header L[,C]` | Pin the top L lines (and left C columns) at the top of the viewport. |
+| `--hex` | Render the source as an xxd-style hex dump. |
+| `--hex-group N` | Hex bytes per group in `--hex` mode (`2`/`4`/`8`/`16`/`32`; default `4`). |
+| `-i, --ignore-case` | Smart-case search (insensitive unless the pattern has an uppercase char). |
+| `-I, --IGNORE-CASE` | Force case-insensitive search regardless of pattern. |
+| `--image-width N` | Target width in columns for image rendering. |
+| `-N, --LINE-NUMBERS` | Show line numbers. |
+| `--list-formats` | Print available log formats and their fields, then exit. |
+| `--live` | Re-read the file when its on-disk content changes. Mutually exclusive with `--follow`. |
+| `--manual` | Print the full user manual and exit. |
+| `--mouse` | Enable mouse capture (click picker/help rows, scrollwheel scrolls the body). |
+| `--no-color` | Show raw control bytes as `^X`; disable SGR/OSC interpretation. |
+| `-G, --no-hilite-search` | Disable search-match highlighting by default (navigation still works). |
+| `--no-image` | Treat a detected image file as raw text instead of rendering it. |
+| `-X, --no-init` | Don't enter the alt-screen; leave content in terminal scrollback. |
+| `--no-preprocess` | Ignore `$LESSOPEN` for this invocation. |
+| `-o, --output FILE` | Batch mode: write filtered output to FILE (`-` = stdout) and exit. |
+| `--preprocess CMD` | Pipe the source through CMD before rendering (`%s` = file path). |
+| `--prettify` | Pretty-print structured content (JSON/YAML/TOML/XML/HTML/CSV). |
+| `--prompt TEMPLATE` | Replace the status line with a templated string. |
+| `--prompt-style SPEC` | Style for `--prompt` output (e.g. `bold,fg=cyan`). |
+| `-e, --quit-at-eof` | Quit when scrolling forward past EOF a second time (`less -e`). |
+| `-E, --QUIT-AT-EOF` | Quit the first time EOF is reached (`less -E`). |
+| `-F, --quit-if-one-screen` | Exit without paging if the source fits on one screen. |
+| `-K, --quit-on-intr` | `less` compat no-op (tess always quits on `Ctrl-C`). |
+| `-r, --raw-control-chars` | Pass every byte to the terminal raw, including escapes (`less -r`). |
+| `--record-start REGEX` | Treat lines matching REGEX as record boundaries; others join the prior record. |
+| `--rscroll CHAR` | Right-edge marker for chopped lines (default `>`; empty disables). |
+| `-s, --squeeze-blank-lines` | Collapse runs of blank lines into one (`less -s`). |
+| `--status-style SPEC` | Style for the status row (e.g. `reverse`, `fg=COLOR`). |
+| `--stdout` | Synonym for `--output -`: write batch output to stdout. |
+| `--tab-width N` | Tab stop width (default `8`). |
+| `-t, --tag NAME` | Jump to tag NAME at startup (requires a tags file). |
+| `-T, --tag-file PATH` | Path to the tags file (default: walk up from CWD for `tags`). |
+| `--tail N` | Show only the last N lines (cheap on huge files). Mutually exclusive with `--head`. |
+| `--truecolor MODE` | 24-bit RGB handling (`auto`/`never`/`always`). |
+| `-z, --window N` | PageDown / PageUp step size in lines (default: full screen). |
+| `--wordwrap` | In wrap mode, break on whitespace boundaries instead of mid-character. |
+
+---
+
 ## Project status
 
 Pre-1.0; the CLI is settling but small breakage at minor-version boundaries is permitted (and called out in commit messages). Daily-driver-quality on macOS and Linux. **No Windows support** — the stdin / `/dev/tty` plumbing is Unix-specific.
