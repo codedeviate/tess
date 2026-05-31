@@ -11,6 +11,11 @@ const HELP_STYLES: Styles = Styles::styled()
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tess", version, about = "A less-style terminal pager.", styles = HELP_STYLES)]
+// Fields are ordered alphabetically by long-flag name (case-insensitive) so
+// that `--help` lists them in that order — clap's derive renders options in
+// field-declaration order. The `help_lists_flags_in_alphabetical_order` test
+// enforces this; keep new flags in their sorted slot.
+//
 // `IGNORE_CASE` (-I) and `QUIT_AT_EOF` (-E) are intentionally upper-case to
 // mirror less's case-distinguished flag pairs (`-i`/`-I`, `-e`/`-E`) and to
 // stay distinct from their lower-case `ignore_case`/`quit_at_eof` siblings.
@@ -24,53 +29,6 @@ pub struct Args {
     /// Chop long lines instead of wrapping.
     #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
-
-    /// Collapse runs of two or more consecutive blank lines into a
-    /// single blank line at display time. Real line numbers, search,
-    /// and tag jumps are unaffected (they reference the original
-    /// count). Mirrors `less -s`.
-    #[arg(short = 's', long = "squeeze-blank-lines")]
-    pub squeeze_blanks: bool,
-
-    /// Pin the top L source lines (and the left C columns, when
-    /// horizontal scroll is supported) at the top of the viewport.
-    /// Form: `L` or `L,C`. Default `0,0` (off). Mirrors `less --header`.
-    /// Runtime adjustment: `:header L [C]`.
-    #[arg(long = "header", value_name = "L[,C]")]
-    pub header: Option<String>,
-
-    /// Character to show at the right edge of a chopped line (`-S` chop
-    /// mode) indicating "more content right". Default `>`. Pass an empty
-    /// string to disable. Mirrors `less --rscroll=c`.
-    #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
-    pub rscroll: String,
-
-    /// PageDown / PageUp step size in lines. Default: full screen
-    /// height (body rows). Half-page commands always advance by half
-    /// the screen regardless. Mirrors `less -zn` / `--window=n`.
-    #[arg(short = 'z', long = "window", value_name = "N")]
-    pub window: Option<u16>,
-
-    /// In wrap mode, break lines on whitespace boundaries instead of
-    /// mid-character when possible. Falls back to mid-character break
-    /// when no whitespace fits in the row. Mirrors `less --wordwrap`.
-    #[arg(long = "wordwrap")]
-    pub word_wrap: bool,
-
-    /// Follow the file by path rather than by descriptor (matches
-    /// `tail -F` / `less --follow-name`). `tess` already does this —
-    /// rotation and truncation are detected on every poll and the
-    /// source re-opens by path (since 0.25.0). This flag is accepted
-    /// for compatibility and currently has no behavioral effect.
-    #[arg(long = "follow-name")]
-    pub follow_name: bool,
-
-    /// In follow mode with piped stdin, exit when the upstream writer
-    /// closes the pipe. Default behavior (off): tess remains open on
-    /// the captured content after stdin EOF. Mirrors
-    /// `less --exit-follow-on-close`.
-    #[arg(long = "exit-follow-on-close")]
-    pub exit_follow_on_close: bool,
 
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
@@ -96,6 +54,13 @@ pub struct Args {
     #[arg(long = "examples")]
     pub examples: bool,
 
+    /// In follow mode with piped stdin, exit when the upstream writer
+    /// closes the pipe. Default behavior (off): tess remains open on
+    /// the captured content after stdin EOF. Mirrors
+    /// `less --exit-follow-on-close`.
+    #[arg(long = "exit-follow-on-close")]
+    pub exit_follow_on_close: bool,
+
     /// Filter visible lines by parsed field. Repeatable; multiple filters AND.
     /// Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠),
     /// `<`, `<=`, `>`, `>=` (numeric if both sides parse as numbers, else
@@ -109,6 +74,14 @@ pub struct Args {
     /// Jumps to the bottom on startup. Toggle with Shift-F at runtime.
     #[arg(short = 'f', long = "follow")]
     pub follow: bool,
+
+    /// Follow the file by path rather than by descriptor (matches
+    /// `tail -F` / `less --follow-name`). `tess` already does this —
+    /// rotation and truncation are detected on every poll and the
+    /// source re-opens by path (since 0.25.0). This flag is accepted
+    /// for compatibility and currently has no behavioral effect.
+    #[arg(long = "follow-name")]
+    pub follow_name: bool,
 
     /// In follow mode, any user motion (scroll, page, goto-line) suspends
     /// following. Re-engage with Shift-F. Default off: today's behavior
@@ -130,55 +103,16 @@ pub struct Args {
     #[arg(long = "grep", value_name = "PATTERN")]
     pub grep: Vec<String>,
 
-    /// Smart-case search. `/`, `?`, `--grep`, and `--filter`'s `~` / `!~`
-    /// operators match case-insensitively unless the pattern contains an
-    /// uppercase character. Mirrors `less -i` / ripgrep / vim smartcase.
-    /// Mutually exclusive with `-I`. Runtime toggle: `:case`.
-    #[arg(short = 'i', long = "ignore-case", conflicts_with = "IGNORE_CASE")]
-    pub ignore_case: bool,
-
-    /// Force case-insensitive search regardless of pattern case. Mirrors
-    /// `less -I`. Mutually exclusive with `-i`.
-    #[arg(short = 'I', long = "IGNORE-CASE")]
-    pub IGNORE_CASE: bool,
-
-    /// Disable search-match highlighting by default. Search still
-    /// navigates (`n` / `N` jump to matches); the visual reverse-video
-    /// highlight is suppressed. Runtime toggle: `:hlsearch` / `:nohlsearch`.
-    /// Mirrors `less -G`.
-    #[arg(short = 'G', long = "no-hilite-search")]
-    pub no_hilite_search: bool,
-
-    /// Don't enter the alt-screen on startup. Content remains in
-    /// terminal scrollback after exit. Crucial for piped use and
-    /// debugging. Mirrors `less -X` / `--no-init`.
-    #[arg(short = 'X', long = "no-init")]
-    pub no_init: bool,
-
-    /// Exit immediately (without paging) if the entire source fits on
-    /// one screen. Ignored with piped stdin in follow mode. Mirrors
-    /// `less -F`.
-    #[arg(short = 'F', long = "quit-if-one-screen")]
-    pub quit_if_one_screen: bool,
-
-    /// Accepted for `less` compatibility. tess always exits on Ctrl-C
-    /// (Ctrl-C → Command::Quit in the input table), so this flag is a
-    /// no-op. Provided so existing `less` invocations work unchanged.
-    #[arg(short = 'K', long = "quit-on-intr")]
-    pub quit_on_intr: bool,
-
-    /// Quit when the user tries to scroll forward past end-of-file for
-    /// the second time. Mirrors `less -e`. Mutually exclusive with `-E`.
-    #[arg(short = 'e', long = "quit-at-eof", conflicts_with = "QUIT_AT_EOF")]
-    pub quit_at_eof: bool,
-
-    /// Quit the first time end-of-file is reached. Mirrors `less -E`.
-    #[arg(short = 'E', long = "QUIT-AT-EOF")]
-    pub QUIT_AT_EOF: bool,
-
     /// Show only the first N lines of the source. Mutually exclusive with --tail.
     #[arg(long = "head", value_name = "N", conflicts_with = "tail")]
     pub head: Option<usize>,
+
+    /// Pin the top L source lines (and the left C columns, when
+    /// horizontal scroll is supported) at the top of the viewport.
+    /// Form: `L` or `L,C`. Default `0,0` (off). Mirrors `less --header`.
+    /// Runtime adjustment: `:header L [C]`.
+    #[arg(long = "header", value_name = "L[,C]")]
+    pub header: Option<String>,
 
     /// Render the source as an xxd-style hex dump instead of byte-faithful
     /// text. 16 bytes per row, offset prefix, ASCII gutter. Mutually
@@ -200,6 +134,18 @@ pub struct Args {
         requires = "hex",
     )]
     pub hex_group: usize,
+
+    /// Smart-case search. `/`, `?`, `--grep`, and `--filter`'s `~` / `!~`
+    /// operators match case-insensitively unless the pattern contains an
+    /// uppercase character. Mirrors `less -i` / ripgrep / vim smartcase.
+    /// Mutually exclusive with `-I`. Runtime toggle: `:case`.
+    #[arg(short = 'i', long = "ignore-case", conflicts_with = "IGNORE_CASE")]
+    pub ignore_case: bool,
+
+    /// Force case-insensitive search regardless of pattern case. Mirrors
+    /// `less -I`. Mutually exclusive with `-i`.
+    #[arg(short = 'I', long = "IGNORE-CASE")]
+    pub IGNORE_CASE: bool,
 
     /// Target width in columns for image rendering. Defaults to the terminal
     /// width interactively, or 80 when exporting to a file/stdout.
@@ -238,10 +184,23 @@ pub struct Args {
     #[arg(long = "no-color")]
     pub no_color: bool,
 
+    /// Disable search-match highlighting by default. Search still
+    /// navigates (`n` / `N` jump to matches); the visual reverse-video
+    /// highlight is suppressed. Runtime toggle: `:hlsearch` / `:nohlsearch`.
+    /// Mirrors `less -G`.
+    #[arg(short = 'G', long = "no-hilite-search")]
+    pub no_hilite_search: bool,
+
     /// Treat a detected image file as raw/normal text instead of rendering it
     /// as ASCII art. Has no effect on non-image inputs.
     #[arg(long = "no-image")]
     pub no_image: bool,
+
+    /// Don't enter the alt-screen on startup. Content remains in
+    /// terminal scrollback after exit. Crucial for piped use and
+    /// debugging. Mirrors `less -X` / `--no-init`.
+    #[arg(short = 'X', long = "no-init")]
+    pub no_init: bool,
 
     /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
     /// for one invocation.
@@ -285,32 +244,38 @@ pub struct Args {
     #[arg(long = "prompt", value_name = "TEMPLATE", conflicts_with = "hex")]
     pub prompt: Option<String>,
 
-    /// Pass every byte to the terminal raw, including cursor moves and
-    /// non-SGR escape sequences. Risky: scroll math may break on long lines.
-    /// Less-style -r. Mutually exclusive with --no-color.
-    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
-    pub raw_control_chars: bool,
-
-    /// Truecolor (24-bit RGB) handling. `auto` (default) checks `$COLORTERM`
-    /// and downsamples when truecolor isn't advertised; `never` always
-    /// downsamples to the 256-color palette; `always` passes RGB through
-    /// regardless of terminal capability.
-    #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
-    pub truecolor: String,
-
-    /// Style for the status row. Comma-separated tokens: `bold`, `dim`,
-    /// `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a
-    /// named color (`black`..`white`, optional `bright-` prefix), `#RRGGBB`,
-    /// or an indexed value (0–255). Empty string disables theming.
-    /// Default: `reverse`.
-    #[arg(long = "status-style", value_name = "SPEC", default_value = "reverse")]
-    pub status_style: String,
-
     /// Style for `--prompt` output (and per-format `prompt_style`). Same
     /// grammar as `--status-style`. Default: empty (no extra styling on top
     /// of what the prompt template itself emits).
     #[arg(long = "prompt-style", value_name = "SPEC", default_value = "")]
     pub prompt_style: String,
+
+    /// Quit when the user tries to scroll forward past end-of-file for
+    /// the second time. Mirrors `less -e`. Mutually exclusive with `-E`.
+    #[arg(short = 'e', long = "quit-at-eof", conflicts_with = "QUIT_AT_EOF")]
+    pub quit_at_eof: bool,
+
+    /// Quit the first time end-of-file is reached. Mirrors `less -E`.
+    #[arg(short = 'E', long = "QUIT-AT-EOF")]
+    pub QUIT_AT_EOF: bool,
+
+    /// Exit immediately (without paging) if the entire source fits on
+    /// one screen. Ignored with piped stdin in follow mode. Mirrors
+    /// `less -F`.
+    #[arg(short = 'F', long = "quit-if-one-screen")]
+    pub quit_if_one_screen: bool,
+
+    /// Accepted for `less` compatibility. tess always exits on Ctrl-C
+    /// (Ctrl-C → Command::Quit in the input table), so this flag is a
+    /// no-op. Provided so existing `less` invocations work unchanged.
+    #[arg(short = 'K', long = "quit-on-intr")]
+    pub quit_on_intr: bool,
+
+    /// Pass every byte to the terminal raw, including cursor moves and
+    /// non-SGR escape sequences. Risky: scroll math may break on long lines.
+    /// Less-style -r. Mutually exclusive with --no-color.
+    #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
+    pub raw_control_chars: bool,
 
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
@@ -320,6 +285,27 @@ pub struct Args {
     /// plain text. Example: --record-start '^\['
     #[arg(long = "record-start", value_name = "REGEX")]
     pub record_start: Option<String>,
+
+    /// Character to show at the right edge of a chopped line (`-S` chop
+    /// mode) indicating "more content right". Default `>`. Pass an empty
+    /// string to disable. Mirrors `less --rscroll=c`.
+    #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
+    pub rscroll: String,
+
+    /// Collapse runs of two or more consecutive blank lines into a
+    /// single blank line at display time. Real line numbers, search,
+    /// and tag jumps are unaffected (they reference the original
+    /// count). Mirrors `less -s`.
+    #[arg(short = 's', long = "squeeze-blank-lines")]
+    pub squeeze_blanks: bool,
+
+    /// Style for the status row. Comma-separated tokens: `bold`, `dim`,
+    /// `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a
+    /// named color (`black`..`white`, optional `bright-` prefix), `#RRGGBB`,
+    /// or an indexed value (0–255). Empty string disables theming.
+    /// Default: `reverse`.
+    #[arg(long = "status-style", value_name = "SPEC", default_value = "reverse")]
+    pub status_style: String,
 
     /// Synonym for `--output -`: write the batch-mode output to stdout.
     #[arg(long = "stdout", conflicts_with = "output")]
@@ -342,6 +328,25 @@ pub struct Args {
     /// Mutually exclusive with --head. Streaming stdin is not supported.
     #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
+
+    /// Truecolor (24-bit RGB) handling. `auto` (default) checks `$COLORTERM`
+    /// and downsamples when truecolor isn't advertised; `never` always
+    /// downsamples to the 256-color palette; `always` passes RGB through
+    /// regardless of terminal capability.
+    #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
+    pub truecolor: String,
+
+    /// PageDown / PageUp step size in lines. Default: full screen
+    /// height (body rows). Half-page commands always advance by half
+    /// the screen regardless. Mirrors `less -zn` / `--window=n`.
+    #[arg(short = 'z', long = "window", value_name = "N")]
+    pub window: Option<u16>,
+
+    /// In wrap mode, break lines on whitespace boundaries instead of
+    /// mid-character when possible. Falls back to mid-character break
+    /// when no whitespace fits in the row. Mirrors `less --wordwrap`.
+    #[arg(long = "wordwrap")]
+    pub word_wrap: bool,
 
     /// Files to view (only the first is opened in MVP).
     pub files: Vec<PathBuf>,
@@ -568,6 +573,10 @@ mod tests {
         let mut cmd = Args::command();
         let help = cmd.render_help().to_string();
 
+        // The full set of long flags, in the order we expect `--help` to list
+        // them: alphabetical by long name, case-insensitive. clap's auto-added
+        // --help / --version are excluded (they're not in this list, so the
+        // first-token scan below skips their lines).
         let expected = [
             "--blocks",
             "--chop-long-lines",
@@ -575,13 +584,19 @@ mod tests {
             "--dim",
             "--display",
             "--examples",
+            "--exit-follow-on-close",
             "--filter",
             "--follow",
+            "--follow-name",
+            "--follow-suspend-on-motion",
             "--format",
             "--grep",
             "--head",
+            "--header",
             "--hex",
             "--hex-group",
+            "--ignore-case",
+            "--IGNORE-CASE",
             "--image-width",
             "--LINE-NUMBERS",
             "--list-formats",
@@ -589,20 +604,49 @@ mod tests {
             "--manual",
             "--mouse",
             "--no-color",
+            "--no-hilite-search",
             "--no-image",
+            "--no-init",
             "--no-preprocess",
             "--output",
             "--preprocess",
             "--prettify",
             "--prompt",
+            "--prompt-style",
+            "--quit-at-eof",
+            "--QUIT-AT-EOF",
+            "--quit-if-one-screen",
+            "--quit-on-intr",
             "--raw-control-chars",
             "--record-start",
+            "--rscroll",
+            "--squeeze-blank-lines",
+            "--status-style",
             "--stdout",
             "--tab-width",
             "--tag",
             "--tag-file",
             "--tail",
+            "--truecolor",
+            "--window",
+            "--wordwrap",
         ];
+
+        // Confirm `expected` is itself sorted case-insensitively — this guards
+        // against a typo here masking a real ordering regression in the struct.
+        let mut sorted = expected.to_vec();
+        sorted.sort_by_key(|s| s.trim_start_matches('-').to_ascii_lowercase());
+        assert_eq!(
+            expected.to_vec(),
+            sorted,
+            "the `expected` list must itself be in case-insensitive alphabetical order"
+        );
+
+        // Walk the rendered help line by line. For each option line (after
+        // trimming, it starts with '-'), take the first `--long` token that is
+        // one of our flags. Because the flag name always precedes its own
+        // description on the line, embedded `--flag` references in descriptions
+        // are never matched first.
         let listed: Vec<&str> = help
             .lines()
             .map(str::trim_start)
