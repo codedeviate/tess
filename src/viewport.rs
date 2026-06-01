@@ -1556,7 +1556,7 @@ impl Viewport {
     }
 
     #[cfg(feature = "image")]
-    fn frame_image(&self) -> Frame {
+    fn frame_image(&mut self) -> Frame {
         use crate::render::Cell;
         let body_rows = self.body_rows() as usize;
         let cols = self.cols as usize;
@@ -1576,12 +1576,15 @@ impl Viewport {
         };
         let color = !self.image_no_color;
         let grid = crate::image_render::render_image(img, self.image_cols(), self.image_style, color);
+        let grid_w = grid.first().map(|r| r.len()).unwrap_or(0);
+        let max_off = grid_w.saturating_sub(cols);
+        if self.left_col > max_off { self.left_col = max_off; }
+        let off = self.left_col;
         let mut body: Vec<Vec<Cell>> = Vec::with_capacity(body_rows);
         for r in 0..body_rows {
             let gi = self.top_line + r;
             if gi < grid.len() {
-                let mut row = grid[gi].clone();
-                row.truncate(cols);
+                let mut row: Vec<Cell> = grid[gi].iter().skip(off).take(cols).cloned().collect();
                 while row.len() < cols { row.push(Cell::Empty); }
                 body.push(row);
             } else {
@@ -2205,6 +2208,64 @@ mod tests {
         assert_eq!(frame.body.len(), 5);
         v.goto_bottom(&m, &mut idx);
         assert!(v.is_at_bottom_image());
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn frame_image_slices_at_left_col() {
+        use crate::render::Cell;
+        use image::{Rgba, RgbaImage};
+
+        // Image pixel width = 40, terminal cols = 10.
+        // set_image with width=Some(40) → image_cols() = 40 → grid rows are 40 cells wide.
+        // Terminal is only 10 cols wide, so the grid is wider than the viewport.
+        // Column-varying image so each grid column renders a DISTINCT cell —
+        // otherwise the slice-advance assertions below would be tautological.
+        let img = RgbaImage::from_fn(40, 20, |x, _y| Rgba([(x as u8).saturating_mul(6), 0, 0, 255]));
+        let mut v = Viewport::new(10, 4, "wide.png".into()); // body = 3, cols = 10
+        v.set_image(img, "png", crate::image_render::AsciiStyle::Ramp, Some(40));
+        assert!(v.hscroll_active(), "image mode should make hscroll active");
+
+        let mut idx = LineIndex::new();
+        let m = MockSource::new();
+
+        // --- pass 1: left_col == 0, frame_image returns grid columns 0..10 ---
+        assert_eq!(v.left_col(), 0);
+        let frame0 = v.frame(&m, &mut idx);
+        assert_eq!(frame0.body.len(), 3, "body should have body_rows rows");
+        // The grid row at offset 0 (no scroll) should give us exactly cols=10 cells.
+        assert_eq!(frame0.body[0].len(), 10);
+        // No '<' or '>' marker cells (images never show scroll markers).
+        assert!(
+            !frame0.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '<', .. } | Cell::Char { ch: '>', .. })),
+            "no scroll marker expected on image frame at left_col=0"
+        );
+        // Record the first cell at offset 0 for comparison after scrolling.
+        let cell_at_col0 = frame0.body[0][0].clone();
+        let cell_at_col8 = frame0.body[0][8].clone();
+
+        // --- pass 2: scroll right (left_col = HSCROLL_STEP = 8) ---
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 8);
+        let frame1 = v.frame(&m, &mut idx);
+        assert_eq!(frame1.body[0].len(), 10);
+        // No '<' or '>' marker cells on images.
+        assert!(
+            !frame1.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '<', .. } | Cell::Char { ch: '>', .. })),
+            "no scroll marker expected on image frame after hscroll_right_step"
+        );
+        // The slice DID advance: frame1.body[0][0] is what was at grid column 8.
+        assert_eq!(
+            frame1.body[0][0], cell_at_col8,
+            "after hscroll_right_step the first visible cell should be grid col 8"
+        );
+        // And — because the image varies by column — it must differ from the
+        // pre-scroll first cell, proving the offset was actually applied (not a
+        // no-op that the uniform-image version couldn't have detected).
+        assert_ne!(
+            frame1.body[0][0], cell_at_col0,
+            "the scrolled first cell must differ from the unscrolled one"
+        );
     }
 
     #[test]
