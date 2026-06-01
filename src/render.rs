@@ -54,6 +54,10 @@ pub struct RenderOpts {
     /// mid-character when possible. Falls back to mid-character break
     /// when no whitespace fits in the row. Matches less's `--wordwrap`.
     pub word_wrap: bool,
+    /// Horizontal scroll offset in display columns. Only honored in chop mode
+    /// (`wrap == false`); the first `left_col` columns of each line are skipped
+    /// before emitting up to `cols` cells. Ignored in wrap mode. Default 0.
+    pub left_col: usize,
 }
 
 impl Default for RenderOpts {
@@ -61,6 +65,7 @@ impl Default for RenderOpts {
         Self {
             tab_width: 8, wrap: true, cols: 80,
             mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false,
+            left_col: 0,
         }
     }
 }
@@ -218,9 +223,16 @@ pub fn render_line(
     // Pre-filter: resolve styles and strip escape sequences for Interpret mode.
     let filtered = prefilter(bytes, opts.mode, state);
 
+    // Chop-mode horizontal scroll: skip this many leading display columns.
+    let mut to_skip = if opts.wrap { 0 } else { opts.left_col };
+
     /// Returns true if the cell was dropped due to chop-mode overflow.
     /// The caller uses this to decide whether to paint the `rscroll` marker.
-    fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts) -> bool {
+    fn push(current: &mut Vec<Cell>, rows: &mut Vec<Vec<Cell>>, cell: Cell, opts: &RenderOpts, to_skip: &mut usize) -> bool {
+        if *to_skip > 0 {
+            *to_skip -= 1;   // this column scrolled off the left edge
+            return false;
+        }
         if current.len() >= opts.cols as usize {
             if opts.wrap {
                 let mut full = std::mem::replace(current, Vec::with_capacity(opts.cols as usize));
@@ -256,6 +268,7 @@ pub fn render_line(
         style: crate::ansi::Style,
         hyperlink: Option<Arc<str>>,
         opts: &RenderOpts,
+        to_skip: &mut usize,
     ) -> bool {
         let mut overflowed = false;
         for c in s.chars() {
@@ -264,11 +277,13 @@ pub fn render_line(
                 rows,
                 Cell::Char { ch: c, width: 1, style, hyperlink: hyperlink.clone() },
                 opts,
+                to_skip,
             );
         }
         overflowed
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn push_wide(
         current: &mut Vec<Cell>,
         rows: &mut Vec<Vec<Cell>>,
@@ -277,10 +292,26 @@ pub fn render_line(
         style: crate::ansi::Style,
         hyperlink: Option<Arc<str>>,
         opts: &RenderOpts,
+        to_skip: &mut usize,
     ) -> bool {
         let cols = opts.cols as usize;
+        let w = width as usize;
+        if *to_skip >= w {
+            *to_skip -= w;   // wholly off the left edge
+            return false;
+        }
+        if *to_skip > 0 {
+            // straddles the left edge: emit a blank for each visible half-column
+            let visible = w - *to_skip;
+            *to_skip = 0;
+            let mut of = false;
+            for _ in 0..visible {
+                of |= push(current, rows, Cell::Char { ch: ' ', width: 1, style, hyperlink: hyperlink.clone() }, opts, to_skip);
+            }
+            return of;
+        }
         // If the wide char wouldn't fit in the remainder of this row, wrap first.
-        if current.len() + width as usize > cols {
+        if current.len() + w > cols {
             if opts.wrap {
                 let mut full = std::mem::replace(current, Vec::with_capacity(cols));
                 // `--wordwrap`: prefer a break on the last whitespace. Same
@@ -317,14 +348,21 @@ pub fn render_line(
         let (b, style, hyperlink) = filtered[i].clone();
         if b == b'\t' {
             let stop = opts.tab_width.max(1) as usize;
-            let cur_col = current.len();
+            // Tab stop calculation must account for already-skipped columns.
+            // `current.len()` only tracks emitted cells, not skipped ones, so
+            // we add `opts.left_col - to_skip` (columns already consumed/skipped)
+            // to get the true logical column position for tab-stop math.
+            let skipped_so_far = if opts.wrap { 0 } else { opts.left_col - to_skip };
+            let cur_col = current.len() + skipped_so_far;
             let next_stop = ((cur_col / stop) + 1) * stop;
+            // Emit spaces from logical cur_col up to next_stop.
             for _ in cur_col..next_stop {
                 overflowed |= push(
                     &mut current,
                     &mut rows,
                     Cell::Char { ch: ' ', width: 1, style, hyperlink: hyperlink.clone() },
                     opts,
+                    &mut to_skip,
                 );
             }
             i += 1;
@@ -337,12 +375,14 @@ pub fn render_line(
                 &mut rows,
                 Cell::Char { ch: '^', width: 1, style, hyperlink: hyperlink.clone() },
                 opts,
+                &mut to_skip,
             );
             overflowed |= push(
                 &mut current,
                 &mut rows,
                 Cell::Char { ch: printable, width: 1, style, hyperlink },
                 opts,
+                &mut to_skip,
             );
             i += 1;
         } else {
@@ -365,16 +405,17 @@ pub fn render_line(
                                 hyperlink,
                             },
                             opts,
+                            &mut to_skip,
                         );
                     } else {
-                        overflowed |= push_wide(&mut current, &mut rows, base_char, w, style, hyperlink, opts);
+                        overflowed |= push_wide(&mut current, &mut rows, base_char, w, style, hyperlink, opts, &mut to_skip);
                     }
                     i += consumed;
                 }
                 None => {
                     // Invalid byte: emit <HH>, advance one byte.
                     let s = format!("<{:02X}>", b);
-                    overflowed |= push_str(&mut current, &mut rows, &s, style, hyperlink, opts);
+                    overflowed |= push_str(&mut current, &mut rows, &s, style, hyperlink, opts, &mut to_skip);
                     i += 1;
                 }
             }
@@ -401,6 +442,48 @@ pub fn render_line(
 
     rows.push(current);
     rows
+}
+
+/// Full expanded display width of a line in columns (tabs expanded to tab
+/// stops, cluster widths summed). Used by the viewport to clamp horizontal
+/// scroll. Independent of `cols`/`left_col`.
+pub fn display_width(bytes: &[u8], opts: &RenderOpts) -> usize {
+    let filtered = prefilter(bytes, opts.mode, None);
+    let stop = opts.tab_width.max(1) as usize;
+    let mut col = 0usize;
+    let mut i = 0;
+    while i < filtered.len() {
+        let (b, _, _) = &filtered[i];
+        if *b == b'\t' {
+            col = ((col / stop) + 1) * stop;
+            i += 1;
+            continue;
+        }
+        if *b == b'\n' {
+            i += 1;
+            continue;
+        }
+        if *b < 0x20 || *b == 0x7F {
+            // Control byte renders as ^X (2 columns)
+            col += 2;
+            i += 1;
+            continue;
+        }
+        let raw_bytes: Vec<u8> = filtered[i..].iter().map(|(b, _, _)| *b).collect();
+        match decode_cluster(&raw_bytes, 0) {
+            Some((cluster, consumed)) => {
+                let w = UnicodeWidthStr::width(cluster);
+                col += if w == 0 { 1 } else { w }; // zero-width → replacement char = 1
+                i += consumed;
+            }
+            None => {
+                // Invalid byte: <HH> = 4 columns
+                col += 4;
+                i += 1;
+            }
+        }
+    }
+    col
 }
 
 pub fn count_rows(
@@ -603,7 +686,7 @@ mod tests {
     }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0 }
     }
 
     fn ch(c: char) -> Cell {
@@ -921,5 +1004,76 @@ mod tests {
         });
         let link = click_cell.expect("expected c cell").expect("expected hyperlink");
         assert_eq!(link.as_ref(), "https://example.com");
+    }
+
+    #[test]
+    fn left_col_skips_leading_columns_in_chop() {
+        let opts = RenderOpts { wrap: false, cols: 4, left_col: 3, ..Default::default() };
+        let rows = render_line(b"abcdefgh", &opts, None);
+        assert_eq!(rows.len(), 1);
+        let s: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect();
+        assert_eq!(s, "defg");
+    }
+
+    #[test]
+    fn left_col_zero_is_unchanged() {
+        let opts = RenderOpts { wrap: false, cols: 4, left_col: 0, ..Default::default() };
+        let rows = render_line(b"abcdefgh", &opts, None);
+        let s: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect();
+        assert_eq!(s, "abcd");
+    }
+
+    #[test]
+    fn left_col_ignored_in_wrap_mode() {
+        let opts = RenderOpts { wrap: true, cols: 4, left_col: 3, ..Default::default() };
+        let rows = render_line(b"abcdefgh", &opts, None);
+        let first: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect();
+        assert_eq!(first, "abcd");
+    }
+
+    #[test]
+    fn left_col_past_end_is_blank() {
+        let opts = RenderOpts { wrap: false, cols: 4, left_col: 20, ..Default::default() };
+        let rows = render_line(b"abc", &opts, None);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].iter().all(|c| matches!(c, Cell::Empty)));
+    }
+
+    #[test]
+    fn left_col_tab_expansion_across_boundary() {
+        let opts = RenderOpts { wrap: false, cols: 4, left_col: 2, tab_width: 4, ..Default::default() };
+        let rows = render_line(b"\tX", &opts, None);
+        let cells = &rows[0];
+        assert!(matches!(cells[0], Cell::Char { ch: ' ', .. }));
+        assert!(matches!(cells[1], Cell::Char { ch: ' ', .. }));
+        assert!(matches!(cells[2], Cell::Char { ch: 'X', .. }));
+    }
+
+    #[test]
+    fn left_col_does_not_change_count_rows() {
+        let opts = RenderOpts { wrap: false, cols: 4, left_col: 3, ..Default::default() };
+        assert_eq!(count_rows(b"abcdefgh", &opts, None), 1);
+    }
+
+    #[test]
+    fn display_width_counts_tabs_and_ascii() {
+        let opts = RenderOpts { tab_width: 4, ..Default::default() };
+        assert_eq!(display_width(b"ab", &opts), 2);
+        assert_eq!(display_width(b"\tab", &opts), 6);
+    }
+
+    #[test]
+    fn display_width_agrees_with_rendered_columns() {
+        // A mixed ASCII + wide-char + tab line: display_width must equal the
+        // number of display columns render_line lays out for it in a very wide
+        // chop window (so nothing is dropped).
+        let line = "a\tÅ中b".as_bytes();
+        let opts = RenderOpts { wrap: false, cols: 1000, tab_width: 4, ..Default::default() };
+        let rows = render_line(line, &opts, None);
+        let cols_used = rows[0].iter().take_while(|c| !matches!(c, Cell::Empty)).count();
+        assert_eq!(display_width(line, &opts), cols_used);
     }
 }
