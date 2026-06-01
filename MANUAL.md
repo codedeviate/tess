@@ -1233,8 +1233,20 @@ All optional. Anything left out simply isn't passed.
 | `line_numbers` | bool | `-N` |
 | `chop` | bool | `-S` |
 | `tab_width` | integer | `--tab-width N` |
+| `display` | string | `--display <template>` |
 | `filter` | array of strings | `--filter X` (one entry per element) |
 | `grep`   | array of strings | `--grep X` (one entry per element) |
+
+A group's `display` template is rendered just like the `--display` flag, so
+it needs the group (or a CLI flag) to also set a `format`. A `--display` typed
+on the command line after the group token overrides the group's template:
+
+```toml
+[group.errs]
+format = "myapp"
+filter = ["level=ERROR"]
+display = "<time> <level> <msg>"   # rendered unless a CLI --display overrides
+```
 
 ### Override semantics
 

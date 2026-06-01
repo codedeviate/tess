@@ -11,6 +11,12 @@ const HELP_STYLES: Styles = Styles::styled()
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "tess", version, about = "A less-style terminal pager.", styles = HELP_STYLES)]
+// Repeated scalar flags take the last value rather than erroring. This makes
+// `less`-style "last flag wins" work and, crucially, lets a CLI flag override
+// the same flag injected by a group expansion (e.g. `--mygroup --display ...`
+// overriding the group's own `display`). Repeatable flags (`--filter`,
+// `--grep`) use Append actions and are unaffected — they still accumulate.
+#[command(args_override_self = true)]
 // Fields are ordered alphabetically by long-flag name (case-insensitive) so
 // that `--help` lists them in that order — clap's derive renders options in
 // field-declaration order. The `help_lists_flags_in_alphabetical_order` test
@@ -565,6 +571,24 @@ mod tests {
         assert!(!a.no_image);
         assert!(!a.blocks);
         assert_eq!(a.image_width, None);
+    }
+
+    #[test]
+    fn repeated_scalar_flag_takes_last_value() {
+        // args_override_self: a group can inject `--display X` and a later CLI
+        // `--display Y` wins instead of clap erroring "cannot be used multiple
+        // times". Also covers plain `less`-style last-wins.
+        let a = Args::parse_from(["tess", "--display", "X", "--display", "Y", "--format", "f"]);
+        assert_eq!(a.display.as_deref(), Some("Y"));
+        let b = Args::parse_from(["tess", "--tail", "5", "--tail", "1", "x"]);
+        assert_eq!(b.tail, Some(1));
+    }
+
+    #[test]
+    fn repeatable_flags_still_accumulate_with_override_self() {
+        // args_override_self must not collapse Append-action Vec flags.
+        let a = Args::parse_from(["tess", "--grep", "a", "--grep", "b", "x"]);
+        assert_eq!(a.grep, vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]

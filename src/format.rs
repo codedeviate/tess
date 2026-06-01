@@ -279,6 +279,7 @@ struct GroupEntry {
     line_numbers: Option<bool>,
     chop: Option<bool>,
     tab_width: Option<u8>,
+    display: Option<String>,
     #[serde(default)]
     filter: Vec<String>,
     #[serde(default)]
@@ -300,6 +301,11 @@ pub struct Group {
     pub line_numbers: bool,
     pub chop: bool,
     pub tab_width: Option<u8>,
+    /// Default `--display` template for this group. Emitted as `--display
+    /// <value>` at expansion time; a later CLI `--display` overrides it
+    /// (clap takes the last occurrence). Requires the group (or CLI) to also
+    /// set a `--format`, same as the bare `--display` flag.
+    pub display: Option<String>,
     pub filter: Vec<String>,
     pub grep: Vec<String>,
     // Populated by the layered loader to track which config layer a group came
@@ -335,6 +341,7 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "record-start",
     "hex",
     "prompt",
+    "display",
     "preprocess",
     "no-preprocess",
     "no-color",
@@ -494,6 +501,7 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
                 line_numbers: sg.entry.line_numbers.unwrap_or(false),
                 chop: sg.entry.chop.unwrap_or(false),
                 tab_width: sg.entry.tab_width,
+                display: sg.entry.display,
                 filter: sg.entry.filter,
                 grep: sg.entry.grep,
                 source: sg.source,
@@ -563,15 +571,43 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
 /// flags like `--filter` (clap accumulates the `Vec<String>`).
 /// Long flags that take a separate value as the next argv token (e.g.
 /// `--tail 1000` rather than `--tail=1000`). Used by `expand_argv` so it
-/// doesn't mistake a flag's value for a positional.
+/// doesn't mistake a flag's value for a positional in filter mode — without
+/// this, `--errs --display '<msg>'` would rewrite the template into a
+/// `--filter`. Must list *every* value-taking long flag clap defines.
 const VALUE_TAKING_LONG_FLAGS: &[&str] = &[
-    "--format",
+    "--content-type",
+    "--display",
     "--filter",
+    "--format",
     "--grep",
     "--head",
-    "--tail",
-    "--tab-width",
+    "--header",
+    "--hex-group",
+    "--image-width",
+    "--output",
+    "--preprocess",
+    "--prompt",
+    "--prompt-style",
     "--record-start",
+    "--rscroll",
+    "--status-style",
+    "--tab-width",
+    "--tag",
+    "--tag-file",
+    "--tail",
+    "--truecolor",
+    "--window",
+];
+
+/// Short flags that take a separate value as the next argv token (`-o FILE`,
+/// `-z N`, `-t NAME`, `-T PATH`). The boolean short flags (`-N`, `-S`, `-f`,
+/// …) are intentionally absent — they must not swallow the following token.
+/// The attached form (`-ovalue`) is a single token and needs no entry here.
+const VALUE_TAKING_SHORT_FLAGS: &[&str] = &[
+    "-o",
+    "-z",
+    "-t",
+    "-T",
 ];
 
 pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<String> {
@@ -598,14 +634,19 @@ pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<St
                     filter_mode = true;
                     continue;
                 }
-                if VALUE_TAKING_LONG_FLAGS.contains(&arg.as_str()) {
-                    // The next token is this flag's value; pass it through
-                    // even in filter mode.
-                    out.push(arg);
-                    pass_next = true;
-                    continue;
-                }
             }
+        }
+        // A value-taking flag (long or short, separated form): emit it and
+        // pass its value through untouched, even in filter mode, so the value
+        // isn't mistaken for a positional and rewritten into a `--filter`.
+        // The `--flag=value` / `-ovalue` attached forms are single tokens and
+        // fall through harmlessly (they start with `-`, so aren't converted).
+        if VALUE_TAKING_LONG_FLAGS.contains(&arg.as_str())
+            || VALUE_TAKING_SHORT_FLAGS.contains(&arg.as_str())
+        {
+            out.push(arg);
+            pass_next = true;
+            continue;
         }
         if filter_mode && !arg.starts_with('-') {
             out.push("--filter".into());
@@ -621,6 +662,10 @@ fn expand_group(g: &Group, out: &mut Vec<String>) {
     if let Some(format) = &g.format {
         out.push("--format".into());
         out.push(format.clone());
+    }
+    if let Some(display) = &g.display {
+        out.push("--display".into());
+        out.push(display.clone());
     }
     if g.follow {
         out.push("--follow".into());
@@ -906,6 +951,7 @@ file = "/var/log/access.log"
 follow = true
 tail = 1000
 filter = ["status~^5"]
+display = "<status> <url>"
 
 [group.minimal]
 file = "/tmp/x.log"
@@ -923,10 +969,12 @@ file = "/tmp/x.log"
         assert!(err.follow);
         assert_eq!(err.tail, Some(1000));
         assert_eq!(err.filter, vec!["status~^5".to_string()]);
+        assert_eq!(err.display.as_deref(), Some("<status> <url>"));
         let min = &groups["minimal"];
         assert!(!min.follow);
         assert!(min.tail.is_none());
         assert_eq!(min.filter, Vec::<String>::new());
+        assert!(min.display.is_none());
     }
 
     fn group(name: &str) -> Group {
@@ -1054,6 +1102,88 @@ file = "/tmp/x.log"
         let groups: HashMap<String, Group> = HashMap::new();
         let out = expand_argv(argv(&["tess", "--unknown"]), &groups);
         assert_eq!(out, argv(&["tess", "--unknown"]));
+    }
+
+    #[test]
+    fn expand_argv_passes_display_template_through_after_group() {
+        // Regression: a `--display` template after a group must NOT be
+        // rewritten into a `--filter` (which previously left `--display`
+        // value-less and clap erroring "a value is required").
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert("errorlog".into(), group("errorlog"));
+        let out = expand_argv(
+            argv(&["tess", "--errorlog", "--display", "<lvl>: <msg>", "lvl=ERROR"]),
+            &groups,
+        );
+        assert_eq!(
+            out,
+            argv(&[
+                "tess",
+                "--display", "<lvl>: <msg>",
+                "--filter", "lvl=ERROR",
+            ])
+        );
+    }
+
+    #[test]
+    fn expand_argv_passes_short_value_flag_through_after_group() {
+        // `-o FILE` (and the other separated short value flags) must keep
+        // their value instead of converting it to a filter in filter mode.
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert("errorlog".into(), group("errorlog"));
+        let out = expand_argv(
+            argv(&["tess", "--errorlog", "-o", "out.txt", "lvl=ERROR"]),
+            &groups,
+        );
+        assert_eq!(
+            out,
+            argv(&["tess", "-o", "out.txt", "--filter", "lvl=ERROR"])
+        );
+    }
+
+    #[test]
+    fn expand_group_emits_display_when_set() {
+        let g = Group {
+            name: "errs".into(),
+            format: Some("simple".into()),
+            display: Some("<lvl>!! <msg>".into()),
+            filter: vec!["lvl=ERROR".into()],
+            ..Group::default()
+        };
+        let out = expand_argv(argv(&["tess", "--errs"]), &{
+            let mut m = HashMap::new();
+            m.insert("errs".to_string(), g);
+            m
+        });
+        assert_eq!(
+            out,
+            argv(&[
+                "tess",
+                "--format", "simple",
+                "--display", "<lvl>!! <msg>",
+                "--filter", "lvl=ERROR",
+            ])
+        );
+    }
+
+    #[test]
+    fn expand_argv_cli_display_overrides_group_display() {
+        // Group sets a display; a later CLI `--display` is emitted after it,
+        // so clap's last-occurrence wins (the CLI value).
+        let g = Group {
+            name: "errs".into(),
+            format: Some("simple".into()),
+            display: Some("group-tmpl".into()),
+            ..Group::default()
+        };
+        let out = expand_argv(argv(&["tess", "--errs", "--display", "cli-tmpl"]), &{
+            let mut m = HashMap::new();
+            m.insert("errs".to_string(), g);
+            m
+        });
+        let pos_group = out.iter().position(|x| x == "group-tmpl").unwrap();
+        let pos_cli = out.iter().position(|x| x == "cli-tmpl").unwrap();
+        assert!(pos_group < pos_cli, "CLI display must come after group's so it wins");
     }
 
     #[test]

@@ -10,6 +10,33 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-06-01
+
+### Added
+
+- `display` field for `[group.NAME]` definitions in `formats.toml`. Maps to
+  `--display <template>` at group-expansion time, so a group can carry its own
+  output template. Requires the group (or a CLI flag) to also set a `format`.
+
+### Fixed
+
+- `--display` (and other value-taking flags) used after a group token no
+  longer have their value rewritten into a `--filter`. Previously
+  `tess --mygroup --display '<msg>'` failed with *"a value is required for
+  '--display'"* because the template was consumed as a filter. The
+  value-taking-flag list used by group expansion was completed — it had been
+  missing `--display`, `--prompt`, `--content-type`, `--header`, `--rscroll`,
+  `--window`, `--output`, `--truecolor`, and others, plus the separated short
+  value flags (`-o`, `-z`, `-t`, `-T`).
+
+### Changed
+
+- Repeated scalar flags now take the last value (`less`-style "last wins")
+  instead of erroring with *"cannot be used multiple times"*. This makes a CLI
+  flag after a group token override the group's injected value — e.g.
+  `tess --mygroup --display '<custom>'` overrides the group's `display`.
+  Repeatable flags (`--filter`, `--grep`) still accumulate.
+
 ## [0.33.3] — 2026-05-31
 
 ### Documentation
@@ -727,7 +754,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.33.3...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/codedeviate/tess/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/codedeviate/tess/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/codedeviate/tess/compare/v0.33.1...v0.33.2
 [0.33.1]: https://github.com/codedeviate/tess/compare/v0.33.0...v0.33.1
