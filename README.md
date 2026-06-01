@@ -138,7 +138,7 @@ Three formats ship built-in: `apache-common`, `apache-combined`, `nginx-combined
 
 ```toml
 [format.app]
-pattern = '^(?P<ts>\S+) (?P<level>\w+) (?P<msg>.+)$'
+regex = '^(?P<ts>\S+) (?P<level>\w+) (?P<msg>.+)$'
 ```
 
 Then:
@@ -151,6 +151,27 @@ tess --format app --filter 'level=ERROR' --dim app.log    # keep DEBUG dimmed fo
 Operators: `=` (exact), `!=` (exact ≠), `~` (regex), `!~` (regex ≠). Multiple `--filter` flags AND together. Quote arguments with `'…'` in interactive shells so `!` doesn't trigger history expansion.
 
 Run `tess --list-formats` to see what's available, including your custom ones.
+
+---
+
+## Groups (shortcut bundles)
+
+Define reusable flag bundles in the same `formats.toml`. `tess --<name>` expands the group's flags inline; bare positionals after it become `--filter`s, and any flag you pass after the group token overrides the group's value:
+
+```toml
+[group.errors]
+format = "app"
+filter = ["level=ERROR"]
+display = "<ts> <level> <msg>"   # group's own --display template
+follow = true
+```
+
+```sh
+tess --errors app.log                       # format + filter + display + follow
+tess --errors --display '<msg>' app.log     # override the group's display
+```
+
+Groups accept `format`, `file`, `follow`, `tail`, `head`, `dim`, `line_numbers`, `chop`, `tab_width`, `display`, `filter`, and `grep`. See the [manual](MANUAL.md#groups-command-line-shortcuts) for the full field reference.
 
 ---
 
