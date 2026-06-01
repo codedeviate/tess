@@ -10,6 +10,28 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-06-01
+
+### Added
+
+- **Horizontal scrolling** for non-wrapping content. A `left_col` column offset
+  shifts the visible window in chop mode (`-S`) and image view
+  (`--image-width N` wider than the terminal). Keys: `←`/`→` scroll half a
+  screen, `Shift-←`/`Shift-→` scroll 8 columns; all four remappable in
+  `keys.toml` (`hscroll-left`, `hscroll-right`, `hscroll-left-step`,
+  `hscroll-right-step`). Scroll fully left to return to column 0. No-op in wrap,
+  hex, and raw (`-r`) modes.
+  - The line-number gutter (`-N`) stays fixed while text scrolls. Chopped text
+    shows a `<` "more content left" marker mirroring the existing `>`
+    (`--rscroll`) marker; images shift cleanly with no markers. The status line
+    shows a `»{col}` offset when scrolled, exposed as the `<col-offset>`
+    `--prompt` placeholder.
+  - Under `--mouse`, a native horizontal swipe (`ScrollLeft`/`ScrollRight`) or
+    `Shift`+scroll-wheel also scrolls horizontally **where the terminal reports
+    it** (iTerm2 / kitty / WezTerm / xterm). Warp and macOS Terminal.app report
+    neither, so the keyboard is the horizontal path there.
+  - Frozen left content-columns (`--header ,C`) remain deferred.
+
 ## [0.35.0] — 2026-06-01
 
 ### Added
@@ -778,7 +800,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.35.0...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.36.0...HEAD
+[0.36.0]: https://github.com/codedeviate/tess/compare/v0.35.0...v0.36.0
 [0.35.0]: https://github.com/codedeviate/tess/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/codedeviate/tess/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/codedeviate/tess/compare/v0.33.2...v0.33.3
