@@ -329,6 +329,7 @@ fn real_main() -> Result<()> {
     // remaining bare positionals become `--filter <arg>` pairs.
     let groups = format::load_groups().map_err(Error::Runtime)?;
     let argv = format::expand_argv(cleaned_argv, &groups);
+    let or_spec = tess::or::extract_from_argv(&argv);
     let args = Args::parse_from(argv);
 
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
@@ -384,6 +385,11 @@ fn real_main() -> Result<()> {
     if args.display.is_some() && args.format.is_none() {
         return Err(Error::Runtime(
             "--display requires --format".to_string(),
+        ));
+    }
+    if or_spec.has_filters() && args.format.is_none() {
+        return Err(Error::Runtime(
+            "--or-filter requires --format".to_string(),
         ));
     }
     if args.dim && args.filter.is_empty() && args.grep.is_empty() {
@@ -452,6 +458,11 @@ documents can't be parsed)".to_string(),
         if args.display.is_some() {
             return Err(Error::Runtime(
                 "--prettify is not supported with --display".to_string(),
+            ));
+        }
+        if !or_spec.is_empty() {
+            return Err(Error::Runtime(
+                "--prettify is not supported with --or-filter/--or-grep".to_string(),
             ));
         }
     }
@@ -639,6 +650,27 @@ showing raw (use --content-type=NAME to override)"
         (None, None)
     };
 
+    // Compile OR-groups. Reuse the format if one is set; OR-greps work without
+    // it (OR-filters without a format were already rejected above). `LogFormat`
+    // is NOT Clone, so borrow `fmt` from a `formats` map kept alive inside each
+    // match arm for the duration of the compile call.
+    let compiled_or = if or_spec.is_empty() {
+        tess::or::OrGroups::default()
+    } else {
+        match args.format.as_deref() {
+            Some(name) => {
+                let formats = format::load_all().map_err(Error::Runtime)?;
+                let fmt = formats.get(name).ok_or_else(|| Error::Runtime(format!(
+                    "unknown format `{name}` (run --list-formats to see available)"
+                )))?;
+                tess::or::OrGroups::compile(&or_spec, Some(fmt), case_mode)
+                    .map_err(Error::Runtime)?
+            }
+            None => tess::or::OrGroups::compile(&or_spec, None, case_mode)
+                .map_err(Error::Runtime)?,
+        }
+    };
+
     let sigterm = install_signal_flag();
 
     // Batch mode: skip the terminal guard entirely and route through
@@ -677,8 +709,7 @@ showing raw (use --content-type=NAME to override)"
             follow: args.follow,
             poll_interval: std::time::Duration::from_millis(250),
         };
-        // OR-groups: placeholder until Task 8 wires the real `compiled_or`.
-        return batch::run(src, idx, compiled_filter, compiled_grep, tess::or::OrGroups::default(), display_renderer, spec, sigterm);
+        return batch::run(src, idx, compiled_filter, compiled_grep, compiled_or, display_renderer, spec, sigterm);
     }
 
     // `-F` / `--quit-if-one-screen`: if the entire source fits in one
@@ -720,6 +751,9 @@ showing raw (use --content-type=NAME to override)"
     }
     if let Some(g) = compiled_grep {
         viewport.set_grep(Some(g));
+    }
+    if compiled_or.is_active() {
+        viewport.set_or_groups(compiled_or);
     }
     if args.dim {
         viewport.set_dim_mode(true);
