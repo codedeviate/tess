@@ -10,6 +10,30 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-06-01
+
+### Added
+
+- **OR-group filtering.** New flags `--or-filter FIELD<op>VALUE`,
+  `--or-grep PATTERN`, and `--or-group NAME`. A record is shown when all
+  required `--filter`/`--grep` match **and** every non-empty OR-group has at
+  least one matching condition (OR within a group, AND across groups).
+  `--or-group NAME` is a section marker — subsequent `--or-filter`/`--or-grep`
+  join that group until the next marker; conditions before any marker form the
+  implicit `default` group, which alone behaves as a single "match any of
+  these" pool. `--or-filter` requires `--format` (reads named fields);
+  `--or-grep` works on any input. The status line shows `[or]` when active,
+  with a `<or-tag>` prompt placeholder.
+- `[group.NAME]` definitions in `formats.toml` gain `or_filter` / `or_grep`
+  arrays (the default OR-group) and `[group.NAME.or.<subname>]` sub-tables
+  (named OR-groups), expanded into the same predicate as the CLI flags.
+
+### Changed
+
+- `--dim` is now accepted with OR-only conditions (previously required
+  `--filter`/`--grep`); it dims records that don't satisfy the combined
+  predicate.
+
 ## [0.34.0] — 2026-06-01
 
 ### Added
@@ -754,7 +778,8 @@ milestones, in chronological order:
 - Golden-frame integration test exercising
   `FileSource → LineIndex → Viewport → render`.
 
-[Unreleased]: https://github.com/codedeviate/tess/compare/v0.34.0...HEAD
+[Unreleased]: https://github.com/codedeviate/tess/compare/v0.35.0...HEAD
+[0.35.0]: https://github.com/codedeviate/tess/compare/v0.34.0...v0.35.0
 [0.34.0]: https://github.com/codedeviate/tess/compare/v0.33.3...v0.34.0
 [0.33.3]: https://github.com/codedeviate/tess/compare/v0.33.2...v0.33.3
 [0.33.2]: https://github.com/codedeviate/tess/compare/v0.33.1...v0.33.2
