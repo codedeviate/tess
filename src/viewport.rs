@@ -4,6 +4,7 @@ use regex::Regex;
 
 use crate::filter::{CompiledFilter, FilterMatch};
 use crate::grep::GrepPredicate;
+use crate::or::OrGroups;
 use crate::line_index::LineIndex;
 use crate::render::{count_rows, render_line, Cell, RenderOpts};
 use crate::source::Source;
@@ -213,6 +214,7 @@ pub struct Viewport {
     format_label: Option<String>,
     filter: Option<CompiledFilter>,
     grep: Option<GrepPredicate>,
+    or_groups: OrGroups,
     dim_mode: bool,
     /// In hide mode (filter active, !dim), maps visible position → logical line
     /// index. Empty otherwise.
@@ -318,6 +320,7 @@ impl Viewport {
             format_label: None,
             filter: None,
             grep: None,
+            or_groups: OrGroups::default(),
             dim_mode: false,
             visible_lines: Vec::new(),
             visible_scanned: 0,
@@ -725,6 +728,18 @@ impl Viewport {
         self.top_row = 0;
     }
 
+    pub fn set_or_groups(&mut self, or_groups: OrGroups) {
+        self.or_groups = or_groups;
+        self.visible_lines.clear();
+        self.visible_scanned = 0;
+        self.top_line = 0;
+        self.top_row = 0;
+    }
+
+    pub fn or_active(&self) -> bool {
+        self.or_groups.is_active()
+    }
+
     pub fn grep_active(&self) -> bool { self.grep.is_some() }
 
     pub fn set_dim_mode(&mut self, on: bool) {
@@ -741,7 +756,8 @@ impl Viewport {
     pub fn dim_mode(&self) -> bool { self.dim_mode }
 
     fn hide_mode(&self) -> bool {
-        (self.filter.is_some() || self.grep.is_some()) && !self.dim_mode
+        (self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active())
+            && !self.dim_mode
     }
 
     /// Walk any newly indexed logical lines and append matching ones to
@@ -805,7 +821,7 @@ impl Viewport {
             Some(g) => g.matches(line),
             None => true,
         };
-        filter_ok && grep_ok
+        filter_ok && grep_ok && self.or_groups.matches_line(line)
     }
 
     /// Records-mode predicate. Both filter and grep are evaluated against
@@ -816,7 +832,8 @@ impl Viewport {
     /// only on the header. Grep matches anywhere in the record bytes too,
     /// so `(?s)foo.*bar` keeps working across continuation lines.
     fn record_passes(&self, idx: &LineIndex, src: &dyn Source, r: usize) -> bool {
-        let bytes = if self.filter.is_some() || self.grep.is_some() {
+        let need = self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active();
+        let bytes = if need {
             Some(idx.record_bytes_stripped(r, src))
         } else {
             None
@@ -832,7 +849,12 @@ impl Viewport {
             Some(g) => g.matches(bytes.as_deref().unwrap()),
             None => true,
         };
-        filter_ok && grep_ok
+        let or_ok = if self.or_groups.is_active() {
+            self.or_groups.matches_record(bytes.as_deref().unwrap())
+        } else {
+            true
+        };
+        filter_ok && grep_ok && or_ok
     }
 
     /// Return true iff line `line_n` should be rendered dim. In records mode,
@@ -3195,5 +3217,19 @@ mod tests {
         // anchor we'd pick is line 34 (290 - 256), which is past the red.
         let state = reconstruct_render_state(&m, &idx, 290);
         assert_eq!(state.style.fg, None);
+    }
+
+    #[test]
+    fn or_groups_narrow_within_required_line_mode() {
+        let mut raw = crate::or::OrSpecRaw::new();
+        raw.add_grep(crate::or::DEFAULT_GROUP, "failed".into());
+        raw.add_grep(crate::or::DEFAULT_GROUP, "denied".into());
+        let og = crate::or::OrGroups::compile(&raw, None, crate::viewport::CaseMode::Sensitive).unwrap();
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.set_or_groups(og);
+        assert!(v.or_active());
+        assert!(v.line_passes(b"login failed"));
+        assert!(v.line_passes(b"access denied"));
+        assert!(!v.line_passes(b"login ok"));
     }
 }
