@@ -13,6 +13,10 @@ pub enum Command {
     PageUp,
     HalfPageDown,
     HalfPageUp,
+    HScrollLeft,
+    HScrollRight,
+    HScrollLeftStep,
+    HScrollRightStep,
     Quit,
     Resize(u16, u16),
     Refresh,
@@ -152,6 +156,10 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char(']'), true) => Command::TagPrompt,
         (Char('t'), true) => Command::TagPop,
         (F(1), _) => Command::OpenHelp,
+        (Left, false) if mods.contains(KeyModifiers::SHIFT) => Command::HScrollLeftStep,
+        (Right, false) if mods.contains(KeyModifiers::SHIFT) => Command::HScrollRightStep,
+        (Left, false) => Command::HScrollLeft,
+        (Right, false) => Command::HScrollRight,
         _ => Command::Noop,
     }
 }
@@ -336,5 +344,13 @@ mod tests {
     fn f1_opens_help() {
         let evt = key(KeyCode::F(1), KeyModifiers::NONE);
         assert_eq!(translate(evt), Command::OpenHelp);
+    }
+
+    #[test]
+    fn arrows_translate_to_hscroll() {
+        assert_eq!(translate(key(KeyCode::Right, KeyModifiers::NONE)), Command::HScrollRight);
+        assert_eq!(translate(key(KeyCode::Left, KeyModifiers::NONE)), Command::HScrollLeft);
+        assert_eq!(translate(key(KeyCode::Right, KeyModifiers::SHIFT)), Command::HScrollRightStep);
+        assert_eq!(translate(key(KeyCode::Left, KeyModifiers::SHIFT)), Command::HScrollLeftStep);
     }
 }

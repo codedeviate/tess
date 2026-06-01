@@ -1863,6 +1863,12 @@ pub fn run(
                     Command::MouseEvent(_) => {
                         // Mouse handling lives in the event-routing block, not here.
                     }
+                    Command::HScrollLeft
+                    | Command::HScrollRight
+                    | Command::HScrollLeftStep
+                    | Command::HScrollRightStep => {
+                        // Dispatch wired in the next task.
+                    }
                     Command::Noop => {}
                 }
             }

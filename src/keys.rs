@@ -265,6 +265,10 @@ fn command_from_kebab(name: &str) -> Option<Command> {
         "jump-previous" => Some(Command::JumpPrevious),
         "shell-escape" => Some(Command::ShellEscape),
         "cancel" => Some(Command::Cancel),
+        "hscroll-left" => Some(Command::HScrollLeft),
+        "hscroll-right" => Some(Command::HScrollRight),
+        "hscroll-left-step" => Some(Command::HScrollLeftStep),
+        "hscroll-right-step" => Some(Command::HScrollRightStep),
         _ => None,
     }
 }
@@ -301,6 +305,10 @@ fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
         Command::JumpPrevious => Some("jump-previous"),
         Command::ShellEscape => Some("shell-escape"),
         Command::Cancel => Some("cancel"),
+        Command::HScrollLeft => Some("hscroll-left"),
+        Command::HScrollRight => Some("hscroll-right"),
+        Command::HScrollLeftStep => Some("hscroll-left-step"),
+        Command::HScrollRightStep => Some("hscroll-right-step"),
         _ => None,
     }
 }
@@ -547,6 +555,21 @@ mod tests {
     }
 
     #[test]
+    fn hscroll_names_resolve_to_commands() {
+        let toml = r#"
+[bindings]
+"f6" = "hscroll-right"
+"#;
+        let m = KeyMap::load_from_str(toml).unwrap();
+        let f6 = KeyEvent::new(KeyCode::F(6), KeyModifiers::NONE);
+        assert!(matches!(m.lookup(&f6), Some(BindingTarget::Command(Command::HScrollRight))));
+
+        assert!(matches!(command_from_kebab("hscroll-left"), Some(Command::HScrollLeft)));
+        assert!(matches!(command_from_kebab("hscroll-left-step"), Some(Command::HScrollLeftStep)));
+        assert!(matches!(command_from_kebab("hscroll-right-step"), Some(Command::HScrollRightStep)));
+    }
+
+    #[test]
     fn command_kebab_round_trip() {
         // Every name in command_from_kebab must round-trip through command_to_kebab.
         let names = [
@@ -558,6 +581,7 @@ mod tests {
             "option-prefix", "goto-line", "goto-record", "goto-percent",
             "mark-set", "mark-jump", "ctrl-x-prefix", "jump-previous",
             "shell-escape", "cancel",
+            "hscroll-left", "hscroll-right", "hscroll-left-step", "hscroll-right-step",
         ];
         for name in &names {
             let cmd = command_from_kebab(name).expect(&format!("from_kebab failed for {name}"));
