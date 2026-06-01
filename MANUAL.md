@@ -178,7 +178,7 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 | `-N` (dash, then N) | Toggle line numbers |
 | `←` `→` | Scroll left / right by half the screen width (chop mode and image view only; no-op in wrap, hex, or raw) |
 | `Shift-←` `Shift-→` | Scroll left / right by 8 columns |
-| Trackpad horizontal scroll | Scroll left / right by 8 columns (requires `--mouse`; `hscroll-left` / `hscroll-right` / `hscroll-left-step` / `hscroll-right-step` command names for remapping) |
+| `Shift`+scroll / horizontal trackpad scroll | Scroll left / right by 8 columns (requires `--mouse`; `Shift`+wheel works everywhere, native horizontal swipe only where the terminal reports it) |
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
@@ -195,7 +195,13 @@ Horizontal scrolling is active in **chop mode** (`-S`) and **image view** (`--im
 
 - `←` / `→` — scroll left / right by half the screen width.
 - `Shift-←` / `Shift-→` — scroll left / right by 8 columns.
-- Trackpad horizontal scroll (`ScrollLeft` / `ScrollRight`) — 8-column step; only fired when `--mouse` is active (mouse capture is opt-in).
+- Mouse (only when `--mouse` is active) — 8-column step, two ways:
+  - **`Shift` + scroll-wheel / two-finger scroll** — the portable path: works
+    in any terminal that reports vertical scroll. Use this if a bare horizontal
+    swipe does nothing.
+  - **Native horizontal scroll** (`ScrollLeft` / `ScrollRight`) — a bare
+    horizontal trackpad swipe, for terminals that emit it. Many don't (e.g.
+    macOS Terminal.app reports no horizontal scroll); there, use `Shift`+scroll.
 
 All four bindings are remappable in `~/.config/tess/keys.toml` via the command names `hscroll-left`, `hscroll-right`, `hscroll-left-step`, `hscroll-right-step`. Scrolling fully left clamps back to column 0.
 

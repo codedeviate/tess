@@ -1540,8 +1540,23 @@ pub fn run(
                 // but no overlay is active.
                 if let crossterm::event::Event::Mouse(me) = &event {
                     if mouse_enabled {
-                        use crossterm::event::MouseEventKind;
+                        use crossterm::event::{KeyModifiers, MouseEventKind};
+                        // Shift+wheel = horizontal scroll: the widely-supported
+                        // convention for terminals that don't emit native
+                        // ScrollLeft/ScrollRight (e.g. macOS Terminal.app). Only
+                        // when there's a horizontal axis; otherwise fall through
+                        // to normal vertical scroll.
+                        let hshift = me.modifiers.contains(KeyModifiers::SHIFT)
+                            && viewport.hscroll_active();
                         match me.kind {
+                            MouseEventKind::ScrollDown if hshift => {
+                                viewport.hscroll_right_step();
+                                needs_redraw = true;
+                            }
+                            MouseEventKind::ScrollUp if hshift => {
+                                viewport.hscroll_left_step();
+                                needs_redraw = true;
+                            }
                             MouseEventKind::ScrollDown => {
                                 viewport.scroll_lines(3, src.as_ref(), &mut idx);
                                 needs_redraw = true;
