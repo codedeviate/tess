@@ -677,7 +677,8 @@ showing raw (use --content-type=NAME to override)"
             follow: args.follow,
             poll_interval: std::time::Duration::from_millis(250),
         };
-        return batch::run(src, idx, compiled_filter, compiled_grep, display_renderer, spec, sigterm);
+        // OR-groups: placeholder until Task 8 wires the real `compiled_or`.
+        return batch::run(src, idx, compiled_filter, compiled_grep, tess::or::OrGroups::default(), display_renderer, spec, sigterm);
     }
 
     // `-F` / `--quit-if-one-screen`: if the entire source fits in one

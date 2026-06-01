@@ -21,6 +21,7 @@ use crate::filter::{CompiledFilter, FilterMatch};
 use crate::format::DisplayRenderer;
 use crate::grep::GrepPredicate;
 use crate::line_index::LineIndex;
+use crate::or::OrGroups;
 use crate::source::Source;
 
 /// Where the batch run writes its output.
@@ -48,11 +49,13 @@ impl Default for BatchSpec {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     src: Box<dyn Source>,
     mut idx: LineIndex,
     filter: Option<CompiledFilter>,
     grep: Option<GrepPredicate>,
+    or_groups: OrGroups,
     display: Option<DisplayRenderer>,
     spec: BatchSpec,
     sigterm: Arc<AtomicBool>,
@@ -75,7 +78,7 @@ pub fn run(
     // streaming stdin sources whose initial bytes are present do too.
     idx.extend_to_end(src.as_ref());
     let mut next_line = 0usize;
-    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), display.as_ref(), &mut *out, next_line)?;
+    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line)?;
     out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
 
     if !spec.follow {
@@ -93,7 +96,7 @@ pub fn run(
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src.as_ref());
         if idx.line_count() != lines_before {
-            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), display.as_ref(), &mut *out, next_line)?;
+            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line)?;
             out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
         }
         // For static sources, nothing more will ever arrive — break out so
@@ -122,11 +125,13 @@ pub fn run(
 /// `next_line` is always advanced to one-past the last emitted physical
 /// line so the follow-mode caller can pick up cleanly when new bytes
 /// arrive.
+#[allow(clippy::too_many_arguments)]
 fn emit_pending(
     src: &dyn Source,
     idx: &mut LineIndex,
     filter: Option<&CompiledFilter>,
     grep: Option<&GrepPredicate>,
+    or_groups: &OrGroups,
     display: Option<&DisplayRenderer>,
     out: &mut dyn Write,
     mut next_line: usize,
@@ -144,7 +149,7 @@ fn emit_pending(
             if range.end <= next_line {
                 continue;
             }
-            let passes = record_passes_batch(idx, src, r, filter, grep);
+            let passes = record_passes_batch(idx, src, r, filter, grep, or_groups);
             if passes {
                 for line_n in range.clone() {
                     if line_n < next_line {
@@ -168,7 +173,8 @@ fn emit_pending(
                 None => true,
                 Some(g) => g.matches(&bytes),
             };
-            if filter_ok && grep_ok {
+            let or_ok = or_groups.matches_line(&bytes);
+            if filter_ok && grep_ok && or_ok {
                 emit_line(src, idx, next_line, display, out)?;
             }
             next_line += 1;
@@ -188,8 +194,9 @@ fn record_passes_batch(
     r: usize,
     filter: Option<&CompiledFilter>,
     grep: Option<&GrepPredicate>,
+    or_groups: &OrGroups,
 ) -> bool {
-    if filter.is_none() && grep.is_none() {
+    if filter.is_none() && grep.is_none() && !or_groups.is_active() {
         return true;
     }
     let bytes = idx.record_bytes_stripped(r, src);
@@ -201,7 +208,12 @@ fn record_passes_batch(
         Some(g) => g.matches(&bytes),
         None => true,
     };
-    filter_ok && grep_ok
+    let or_ok = if or_groups.is_active() {
+        or_groups.matches_record(&bytes)
+    } else {
+        true
+    };
+    filter_ok && grep_ok && or_ok
 }
 
 fn emit_line(
@@ -249,6 +261,7 @@ mod tests {
             idx,
             filter,
             grep,
+            OrGroups::default(),
             display,
             BatchSpec {
                 destination: BatchDestination::File(path.clone()),
@@ -468,5 +481,41 @@ mod tests {
         let g = GrepPredicate::compile(&["timeout".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
         let out = run_to_vec(Box::new(m), LineIndex::new(), Some(f), Some(g), None);
         assert_eq!(out, b"ERROR timeout one\n");
+    }
+
+    #[test]
+    fn or_groups_filter_in_batch_line_mode() {
+        // Source: "login failed\nlogin ok\naccess denied\n"
+        // default OR-group: "failed" OR "denied" → emit lines 1 and 3.
+        let mut raw = crate::or::OrSpecRaw::new();
+        raw.add_grep(crate::or::DEFAULT_GROUP, "failed".into());
+        raw.add_grep(crate::or::DEFAULT_GROUP, "denied".into());
+        let og = crate::or::OrGroups::compile(&raw, None, crate::viewport::CaseMode::Sensitive).unwrap();
+
+        let m = MockSource::new();
+        m.append(b"login failed\n");
+        m.append(b"login ok\n");
+        m.append(b"access denied\n");
+        m.finish();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        run(
+            Box::new(m),
+            LineIndex::new(),
+            None,
+            None,
+            og,
+            None,
+            BatchSpec {
+                destination: BatchDestination::File(path.clone()),
+                follow: false,
+                poll_interval: Duration::from_millis(50),
+            },
+            Arc::new(AtomicBool::new(false)),
+        ).unwrap();
+        let mut buf = Vec::new();
+        std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
+        assert_eq!(buf, b"login failed\naccess denied\n");
     }
 }
