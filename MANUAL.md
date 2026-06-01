@@ -195,13 +195,14 @@ Horizontal scrolling is active in **chop mode** (`-S`) and **image view** (`--im
 
 - `←` / `→` — scroll left / right by half the screen width.
 - `Shift-←` / `Shift-→` — scroll left / right by 8 columns.
-- Mouse (only when `--mouse` is active) — 8-column step, two ways:
-  - **`Shift` + scroll-wheel / two-finger scroll** — the portable path: works
-    in any terminal that reports vertical scroll. Use this if a bare horizontal
-    swipe does nothing.
-  - **Native horizontal scroll** (`ScrollLeft` / `ScrollRight`) — a bare
-    horizontal trackpad swipe, for terminals that emit it. Many don't (e.g.
-    macOS Terminal.app reports no horizontal scroll); there, use `Shift`+scroll.
+- Mouse (only when `--mouse` is active) — 8-column step, via either a native
+  horizontal swipe (`ScrollLeft` / `ScrollRight`) or `Shift` + scroll-wheel,
+  **whichever your terminal reports**. This is terminal-dependent: iTerm2,
+  kitty, WezTerm, and xterm report one or both; **Warp and macOS Terminal.app
+  report neither** — they deliver only bare vertical scroll with no horizontal
+  variant and no scroll modifiers, so there is no gesture tess can distinguish.
+  In those terminals, use the keyboard (`←`/`→`, `Shift-←`/`Shift-→`) to scroll
+  horizontally.
 
 All four bindings are remappable in `~/.config/tess/keys.toml` via the command names `hscroll-left`, `hscroll-right`, `hscroll-left-step`, `hscroll-right-step`. Scrolling fully left clamps back to column 0.
 

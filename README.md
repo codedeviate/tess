@@ -103,7 +103,7 @@ Vim-ish + `less`-ish hybrid. The full table is in [MANUAL.md](MANUAL.md); these 
 | `?` _pattern_ `Enter`         | Backward regex search                                                  |
 | `n` / `N`                     | Repeat last search forward / backward                                  |
 | `←` / `→`                     | Scroll left / right by half the screen width (chop mode and image view; no-op when wrapping) |
-| `Shift-←` / `Shift-→`        | Scroll left / right by 8 columns; under `--mouse`, `Shift`+scroll-wheel (or a horizontal trackpad swipe where the terminal reports it) does the same |
+| `Shift-←` / `Shift-→`        | Scroll left / right by 8 columns; under `--mouse`, a horizontal swipe or `Shift`+scroll does the same **if your terminal reports it** (iTerm2/kitty/WezTerm do; Warp & Terminal.app don't — use the keys there) |
 | `-N` / `-S` / `Shift-F`       | Toggle line numbers / chop / follow mode                               |
 | `Shift-P`                     | Toggle pretty-print on/off                                             |
 | `Shift-R`                     | Force reload from disk (with `--live`)                                 |
