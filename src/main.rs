@@ -721,7 +721,7 @@ showing raw (use --content-type=NAME to override)"
         let body_rows = rows.saturating_sub(1) as usize;
         let total_len = src.len();
         let bytes = src.bytes(0..total_len);
-        let trailing_nl = bytes.last().map_or(true, |&b| b == b'\n');
+        let trailing_nl = bytes.last().is_none_or(|&b| b == b'\n');
         let line_count = bytes.iter().filter(|&&b| b == b'\n').count()
             + if trailing_nl { 0 } else { 1 };
         if line_count <= body_rows {
