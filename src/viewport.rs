@@ -994,6 +994,7 @@ impl Viewport {
         let mut o = self.opts.clone();
         o.cols = self.cols.saturating_sub(gutter);
         o.mode = self.ansi_mode;
+        o.left_col = self.left_col;   // horizontal scroll offset carried into the kernel
         o
     }
 
@@ -1007,6 +1008,40 @@ impl Viewport {
         }
         let body_rows = self.body_rows() as usize;
         idx.extend_to_line(self.top_line + body_rows + 1, src);
+
+        // Clamp horizontal scroll to the widest line currently visible, so we
+        // never scroll into empty space. (Chop/text path only.)
+        if self.left_col > 0 && self.hscroll_active() {
+            let gutter_for_clamp = self.gutter_width(idx);
+            let avail = self.cols.saturating_sub(gutter_for_clamp) as usize;
+            // Build opts with left_col=0 — display_width measures full line width
+            // regardless of the current scroll offset.
+            let mut width_opts = self.opts.clone();
+            width_opts.cols = self.cols.saturating_sub(gutter_for_clamp);
+            width_opts.mode = self.ansi_mode;
+            width_opts.left_col = 0;
+            let mut widest = 0usize;
+            let total_lines_for_clamp = idx.line_count();
+            if self.hide_mode() {
+                let hide_pos = self.visible_lines.iter()
+                    .position(|&l| l >= self.top_line)
+                    .unwrap_or(self.visible_lines.len());
+                let end_vi = (hide_pos + body_rows).min(self.visible_lines.len());
+                for vi in hide_pos..end_vi {
+                    let ln = self.visible_lines[vi];
+                    let bytes = self.line_display_bytes(src, idx, ln);
+                    widest = widest.max(crate::render::display_width(&bytes, &width_opts));
+                }
+            } else {
+                let start = self.top_line.max(self.header_lines);
+                let end = (start + body_rows).min(total_lines_for_clamp);
+                for ln in start..end {
+                    let bytes = self.line_display_bytes(src, idx, ln);
+                    widest = widest.max(crate::render::display_width(&bytes, &width_opts));
+                }
+            }
+            self.left_col = self.left_col.min(widest.saturating_sub(avail));
+        }
 
         let gutter = self.gutter_width(idx);
         let r_opts = self.render_opts(gutter);
@@ -1166,6 +1201,21 @@ impl Viewport {
                     }
                 }
                 full.append(&mut content_row);
+                // Paint the `<` left-edge marker when the view is scrolled right
+                // in chop mode, so the user can see that content is off-screen left.
+                // Mirrors the `>` rscroll marker style (dim). Placed at the first
+                // content column (after the gutter, if any).
+                if self.left_col > 0 && !self.opts.wrap {
+                    let marker_col = gutter as usize;
+                    if let Some(cell) = full.get_mut(marker_col) {
+                        *cell = Cell::Char {
+                            ch: '<',
+                            width: 1,
+                            style: crate::ansi::Style { dim: true, ..Default::default() },
+                            hyperlink: None,
+                        };
+                    }
+                }
                 // Compute search highlights for this display row by running
                 // the regex against the row's rendered text. Each match's
                 // char range maps to a cell column range via `starts`.
@@ -3340,5 +3390,56 @@ mod tests {
         let status = v.format_status(&idx, &m);
         assert!(status.contains("[or]"), "expected [or] in status: {status}");
         assert!(status.contains("[hide]"), "expected [hide] in status: {status}");
+    }
+
+    #[test]
+    fn frame_text_horizontal_scroll_shifts_and_marks_left_edge() {
+        // A single long line "ABCDEFGHIJKLMNOPQRSTUVWXYZ..." wider than cols,
+        // in chop mode with a small viewport. Tests:
+        //   1) At left_col==0: first body cell is 'A', no '<' marker.
+        //   2) After hscroll_right_step(): first text-region cell is '<' (left
+        //      marker), and a subsequent cell shows a char that was off-screen
+        //      at offset 0 (proves the content shifted).
+        // HSCROLL_STEP = 8, so after one step left_col == 8. Cell 0 becomes '<'
+        // and cell 1 should be 'J' (0-indexed display column 9: A=0 … I=8, J=9).
+        let content = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n";
+        let (m, mut idx) = setup(content);
+
+        // 10 cols wide, 3 rows (body = 2). Default is wrap=true, so toggle chop.
+        let mut v = Viewport::new(10, 3, "t".into());
+        v.toggle_chop(); // chop mode = !wrap
+
+        // ---- pass 1: no horizontal scroll ----
+        let frame0 = v.frame(&m, &mut idx);
+        assert_eq!(
+            frame0.body[0][0],
+            Cell::Char { ch: 'A', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+            "at left_col=0 first cell should be 'A'"
+        );
+        // No '<' marker at all
+        assert!(
+            !frame0.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '<', .. })),
+            "no left marker expected at left_col=0"
+        );
+
+        // ---- pass 2: scroll right by one step (HSCROLL_STEP=8 columns) ----
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 8, "left_col should be 8 after one right step");
+
+        let frame1 = v.frame(&m, &mut idx);
+        // First content cell (col 0, no gutter) should be the '<' marker.
+        assert_eq!(
+            frame1.body[0][0],
+            Cell::Char { ch: '<', width: 1, style: crate::ansi::Style { dim: true, ..Default::default() }, hyperlink: None },
+            "after scrolling right, first cell should be the '<' left marker"
+        );
+        // The cell at index 1 (display col 1 of the content region) was at
+        // absolute column 9 = left_col(8) + 1. In "ABCDEFGHIJKL..." the char
+        // at display column 9 (0-indexed) is 'J'. Verify content shifted.
+        assert_eq!(
+            frame1.body[0][1],
+            Cell::Char { ch: 'J', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
+            "second cell should be 'J' (display column left_col+1 = 9)"
+        );
     }
 }
