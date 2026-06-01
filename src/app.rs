@@ -590,6 +590,7 @@ fn switch_file(
     viewport.set_file_index(new_file_index, total_files);
     viewport.set_preprocess_failure(new_failure);
     viewport.goto_top();
+    viewport.reset_hscroll(); // new file: drop any horizontal scroll offset
 
     Ok(())
 }

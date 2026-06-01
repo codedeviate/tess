@@ -203,6 +203,10 @@ pub struct Frame {
 pub struct Viewport {
     top_line: usize,
     top_row: usize,
+    /// Horizontal scroll offset (display columns). Only meaningful when not
+    /// wrapping (chop text / image). Clamped per-frame; reset on new file /
+    /// wrap-on. See `hscroll_active`.
+    left_col: usize,
     cols: u16,
     rows: u16,
     pub opts: RenderOpts,
@@ -309,6 +313,7 @@ impl Viewport {
         Self {
             top_line: 0,
             top_row: 0,
+            left_col: 0,
             cols,
             rows,
             opts,
@@ -718,6 +723,7 @@ impl Viewport {
         // Drop scroll state — line numbering may have changed under us.
         self.top_line = 0;
         self.top_row = 0;
+        self.left_col = 0;
     }
 
     pub fn set_grep(&mut self, grep: Option<GrepPredicate>) {
@@ -726,6 +732,7 @@ impl Viewport {
         self.visible_scanned = 0;
         self.top_line = 0;
         self.top_row = 0;
+        self.left_col = 0;
     }
 
     pub fn set_or_groups(&mut self, or_groups: OrGroups) {
@@ -734,6 +741,7 @@ impl Viewport {
         self.visible_scanned = 0;
         self.top_line = 0;
         self.top_row = 0;
+        self.left_col = 0;
     }
 
     pub fn or_active(&self) -> bool {
@@ -1897,7 +1905,44 @@ impl Viewport {
 
     pub fn toggle_chop(&mut self) {
         self.opts.wrap = !self.opts.wrap;
+        if self.opts.wrap {
+            self.left_col = 0;
+        }
     }
+
+    const HSCROLL_STEP: usize = 8;
+
+    /// Horizontal scroll is available only for non-wrapping content: image
+    /// mode, or chop-mode text. Wrap mode has no horizontal axis; hex (fixed
+    /// xxd layout) and raw (`AnsiMode::Raw`) are excluded.
+    pub fn hscroll_active(&self) -> bool {
+        #[cfg(feature = "image")]
+        if self.image.is_some() {
+            return true;
+        }
+        !self.opts.wrap
+            && !self.hex_mode
+            && self.ansi_mode != crate::render::AnsiMode::Raw
+    }
+
+    fn hscroll_by(&mut self, delta: isize) {
+        if !self.hscroll_active() {
+            return;
+        }
+        self.left_col = (self.left_col as isize + delta).max(0) as usize;
+        // Upper bound is enforced per-frame by the clamp in Task 3/4.
+    }
+
+    pub fn hscroll_left_half(&mut self)  { let h = (self.cols as usize / 2).max(1) as isize; self.hscroll_by(-h); }
+    pub fn hscroll_right_half(&mut self) { let h = (self.cols as usize / 2).max(1) as isize; self.hscroll_by(h); }
+    pub fn hscroll_left_step(&mut self)  { self.hscroll_by(-(Self::HSCROLL_STEP as isize)); }
+    pub fn hscroll_right_step(&mut self) { self.hscroll_by(Self::HSCROLL_STEP as isize); }
+
+    pub fn left_col(&self) -> usize { self.left_col }
+
+    /// Drop the horizontal scroll offset. Called when a new file is opened
+    /// (a fresh document has no relationship to the prior horizontal position).
+    pub fn reset_hscroll(&mut self) { self.left_col = 0; }
 
     /// Return the current set of visible (matched) line indices. Non-empty only
     /// in hide mode (filter or grep active without --dim). Stable public accessor
@@ -3178,6 +3223,50 @@ mod tests {
             "should not show indicator for single match: {}",
             frame.status
         );
+    }
+
+    #[test]
+    fn hscroll_noop_when_wrapping() {
+        let mut v = Viewport::new(80, 24, "t".into());
+        // default is wrap ON → hscroll inactive
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 0);
+    }
+
+    #[test]
+    fn hscroll_active_in_chop_and_clamps_at_zero() {
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.toggle_chop(); // turn chop ON (wrap off)
+        assert!(v.hscroll_active());
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 8);
+        v.hscroll_right_half();
+        assert_eq!(v.left_col(), 8 + 40); // cols/2 = 40
+        v.hscroll_left_half();
+        assert_eq!(v.left_col(), 8);
+        v.hscroll_left_half();
+        assert_eq!(v.left_col(), 0); // clamps at 0
+    }
+
+    #[test]
+    fn hscroll_resets_to_zero_when_wrap_turned_on() {
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.toggle_chop();             // chop on
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 8);
+        v.toggle_chop();             // wrap back on → reset
+        assert_eq!(v.left_col(), 0);
+    }
+
+    #[test]
+    fn reset_hscroll_zeroes_left_col() {
+        // The new-file path (app::switch_file) calls this after goto_top.
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.toggle_chop();
+        v.hscroll_right_step();
+        assert_eq!(v.left_col(), 8);
+        v.reset_hscroll();
+        assert_eq!(v.left_col(), 0);
     }
 
     // ----- SGR state reconstruction tests -----
