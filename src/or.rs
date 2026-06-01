@@ -147,6 +147,60 @@ impl OrGroups {
     }
 }
 
+/// Walk an already-`expand_argv`'d argv and collect OR-conditions grouped by
+/// the most recent `--or-group` marker (default group before any marker).
+/// Handles `--flag value` and `--flag=value`. Does not strip tokens — clap
+/// still parses them for `--help` and error reporting; this is the source of
+/// truth for grouping because clap's `Vec` collection drops ordering.
+pub fn extract_from_argv(argv: &[String]) -> OrSpecRaw {
+    let mut raw = OrSpecRaw::new();
+    let mut current = DEFAULT_GROUP.to_string();
+    let mut i = 0;
+    while i < argv.len() {
+        let arg = &argv[i];
+        let (flag, inline): (&str, Option<String>) = match arg.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (arg.as_str(), None),
+        };
+        // Resolve this flag's value: inline (`--flag=value`) or the next token.
+        // `--or-grep --foo` treats `--foo` as the pattern, matching clap's
+        // own two-token parse; clap owns validation, we only track ordering.
+        let value: Option<String> = if inline.is_some() {
+            inline
+        } else if matches!(flag, "--or-group" | "--or-filter" | "--or-grep") {
+            match argv.get(i + 1) {
+                Some(v) => {
+                    i += 1;
+                    Some(v.clone())
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        match flag {
+            "--or-group" => {
+                if let Some(v) = value {
+                    current = v;
+                }
+            }
+            "--or-filter" => {
+                if let Some(v) = value {
+                    raw.add_filter(&current, v);
+                }
+            }
+            "--or-grep" => {
+                if let Some(v) = value {
+                    raw.add_grep(&current, v);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    raw
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,5 +268,58 @@ mod tests {
         assert!(!raw.has_filters());
         raw.add_filter("g", "lvl=ERROR".into());
         assert!(raw.has_filters());
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extract_unlabeled_go_to_default() {
+        let raw = extract_from_argv(&argv(&[
+            "tess", "--or-grep", "failed", "--or-filter", "lvl=ERROR",
+        ]));
+        let og = OrGroups::compile(&raw, Some(&fmt()), CaseMode::Sensitive).unwrap();
+        assert!(og.matches_line(b"INFO failed"));
+        assert!(og.matches_line(b"ERROR x"));
+        assert!(!og.matches_line(b"INFO ok"));
+    }
+
+    #[test]
+    fn extract_or_group_marker_scopes_following_conditions() {
+        let raw = extract_from_argv(&argv(&[
+            "tess",
+            "--or-grep", "failed",
+            "--or-group", "svc",
+            "--or-grep", "ssh",
+        ]));
+        let og = OrGroups::compile(&raw, None, CaseMode::Sensitive).unwrap();
+        assert!(og.matches_line(b"ssh failed"));
+        assert!(!og.matches_line(b"ssh ok"));
+        assert!(!og.matches_line(b"http failed"));
+    }
+
+    #[test]
+    fn extract_handles_attached_equals_form() {
+        let raw = extract_from_argv(&argv(&[
+            "tess", "--or-group=svc", "--or-grep=ssh", "--or-filter=lvl=ERROR",
+        ]));
+        let og = OrGroups::compile(&raw, Some(&fmt()), CaseMode::Sensitive).unwrap();
+        assert!(og.matches_line(b"ssh ERROR"));
+    }
+
+    #[test]
+    fn extract_ignores_non_or_flags() {
+        let raw = extract_from_argv(&argv(&["tess", "--follow", "-N", "file.log"]));
+        assert!(raw.is_empty());
+    }
+
+    #[test]
+    fn extract_or_group_at_eof_does_not_panic() {
+        // A dangling `--or-group` (no following value) leaves the current group
+        // unchanged and must not panic. (clap rejects this in production, so the
+        // function never actually sees it, but be robust regardless.)
+        let raw = extract_from_argv(&argv(&["tess", "--or-grep", "x", "--or-group"]));
+        assert!(!raw.is_empty());
     }
 }
