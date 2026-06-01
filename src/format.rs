@@ -266,6 +266,17 @@ struct FormatEntry {
     prompt_style: Option<String>,
 }
 
+/// Named OR-sub-group inside a `[group.X.or.<name>]` table. Inside the `or`
+/// namespace the keys are bare `filter`/`grep` because the surrounding table
+/// already marks them as OR-conditions.
+#[derive(Debug, Deserialize, Default, Clone)]
+struct OrSubGroup {
+    #[serde(default)]
+    filter: Vec<String>,
+    #[serde(default)]
+    grep: Vec<String>,
+}
+
 /// Raw group entry as deserialized from TOML. Promoted to `Group` after
 /// validation.
 #[derive(Debug, Deserialize, Default)]
@@ -284,6 +295,12 @@ struct GroupEntry {
     filter: Vec<String>,
     #[serde(default)]
     grep: Vec<String>,
+    #[serde(default)]
+    or_filter: Vec<String>,
+    #[serde(default)]
+    or_grep: Vec<String>,
+    #[serde(default)]
+    or: std::collections::HashMap<String, OrSubGroup>,
 }
 
 /// A user-defined CLI shortcut. When `tess --<group_name>` appears in argv,
@@ -308,6 +325,13 @@ pub struct Group {
     pub display: Option<String>,
     pub filter: Vec<String>,
     pub grep: Vec<String>,
+    /// Default OR-group conditions (no name). Emitted as bare --or-filter /
+    /// --or-grep (default group) at expansion time.
+    pub or_filter: Vec<String>,
+    pub or_grep: Vec<String>,
+    /// Named OR-groups: (name, filter specs, grep patterns). Emitted as
+    /// `--or-group <name>` followed by that group's conditions.
+    pub or_named: Vec<(String, Vec<String>, Vec<String>)>,
     // Populated by the layered loader to track which config layer a group came
     // from (and what it overrode); reserved for group source annotation in
     // `--list-formats`. Not yet read, hence the allow.
@@ -507,6 +531,18 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
                 display: sg.entry.display,
                 filter: sg.entry.filter,
                 grep: sg.entry.grep,
+                or_filter: sg.entry.or_filter,
+                or_grep: sg.entry.or_grep,
+                or_named: {
+                    let mut v: Vec<(String, Vec<String>, Vec<String>)> = sg
+                        .entry
+                        .or
+                        .into_iter()
+                        .map(|(name, sub)| (name, sub.filter, sub.grep))
+                        .collect();
+                    v.sort_by(|a, b| a.0.cmp(&b.0)); // deterministic emission order
+                    v
+                },
                 source: sg.source,
                 overrides: sg.overrides,
             },
@@ -704,6 +740,28 @@ fn expand_group(g: &Group, out: &mut Vec<String>) {
     for g_pat in &g.grep {
         out.push("--grep".into());
         out.push(g_pat.clone());
+    }
+    // Default OR-group (unlabeled): no --or-group marker.
+    for f in &g.or_filter {
+        out.push("--or-filter".into());
+        out.push(f.clone());
+    }
+    for p in &g.or_grep {
+        out.push("--or-grep".into());
+        out.push(p.clone());
+    }
+    // Named OR-groups (already sorted by name in load_groups for determinism).
+    for (name, filters, greps) in &g.or_named {
+        out.push("--or-group".into());
+        out.push(name.clone());
+        for f in filters {
+            out.push("--or-filter".into());
+            out.push(f.clone());
+        }
+        for p in greps {
+            out.push("--or-grep".into());
+            out.push(p.clone());
+        }
     }
     if let Some(file) = &g.file {
         out.push(file.clone());
@@ -1579,6 +1637,64 @@ regex = "^LOCAL (?P<msg>.+)$"
         assert_eq!(
             format_source_label(ConfigSource::Global, Some(ConfigSource::Builtin)),
             "[global, overrides built-in]"
+        );
+    }
+
+    #[test]
+    fn load_groups_reads_or_conditions() {
+        let _g = HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_dir = tmp.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("formats.toml"),
+            r#"
+[group.intrusion]
+format = "app"
+or_filter = ["lvl=ERROR"]
+or_grep = ["panic"]
+
+[group.intrusion.or.svc]
+filter = ["status=403"]
+grep = ["ssh", "sshd"]
+"#,
+        )
+        .unwrap();
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let result = load_groups();
+        if let Some(h) = saved { std::env::set_var("HOME", h); } else { std::env::remove_var("HOME"); }
+        let groups = result.unwrap();
+        let g = &groups["intrusion"];
+        assert_eq!(g.or_filter, vec!["lvl=ERROR".to_string()]);
+        assert_eq!(g.or_grep, vec!["panic".to_string()]);
+        assert_eq!(g.or_named, vec![("svc".to_string(), vec!["status=403".to_string()], vec!["ssh".to_string(), "sshd".to_string()])]);
+    }
+
+    #[test]
+    fn expand_group_emits_or_conditions_in_marker_form() {
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert(
+            "intrusion".into(),
+            Group {
+                name: "intrusion".into(),
+                format: Some("app".into()),
+                or_grep: vec!["panic".into()],
+                or_named: vec![("svc".into(), vec!["status=403".into()], vec!["ssh".into()])],
+                ..Group::default()
+            },
+        );
+        let out = expand_argv(argv(&["tess", "--intrusion"]), &groups);
+        assert_eq!(
+            out,
+            argv(&[
+                "tess",
+                "--format", "app",
+                "--or-grep", "panic",
+                "--or-group", "svc",
+                "--or-filter", "status=403",
+                "--or-grep", "ssh",
+            ])
         );
     }
 }
