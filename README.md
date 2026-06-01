@@ -102,6 +102,8 @@ Vim-ish + `less`-ish hybrid. The full table is in [MANUAL.md](MANUAL.md); these 
 | `/` _pattern_ `Enter`         | Forward regex search; `Esc` cancels                                    |
 | `?` _pattern_ `Enter`         | Backward regex search                                                  |
 | `n` / `N`                     | Repeat last search forward / backward                                  |
+| `←` / `→`                     | Scroll left / right by half the screen width (chop mode and image view; no-op when wrapping) |
+| `Shift-←` / `Shift-→`        | Scroll left / right by 8 columns; trackpad scroll at 8-col step under `--mouse` |
 | `-N` / `-S` / `Shift-F`       | Toggle line numbers / chop / follow mode                               |
 | `Shift-P`                     | Toggle pretty-print on/off                                             |
 | `Shift-R`                     | Force reload from disk (with `--live`)                                 |
@@ -212,6 +214,8 @@ Flags:
 | `--no-image` | View raw bytes instead of rendering; useful with `--hex`. |
 
 Color output uses 24-bit truecolor SGR; pass `--no-color` for a plain character-only render. Export the art with `-o FILE` or `--stdout` — ANSI-colored by default, plain text under `--no-color`.
+
+When `--image-width N` produces a render wider than the terminal, use `←`/`→` (or `Shift-←`/`Shift-→` for fine steps) to scroll the image sideways.
 
 The `image` feature is on by default. Build without it (`--no-default-features`) for a smaller binary that treats all inputs as text.
 
