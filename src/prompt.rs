@@ -24,6 +24,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "rec-total",
     "rec-block",
     "wrap-offset",
+    "col-offset",
     "format-tag",
     "filter-tag",
     "grep-tag",
@@ -77,6 +78,7 @@ pub struct PromptContext {
     pub rec_total: usize,
     pub records_mode: bool,
     pub wrap_offset: String,
+    pub col_offset: String,
     pub format_tag: String,
     pub filter_tag: String,
     pub grep_tag: String,
@@ -112,6 +114,7 @@ impl PromptContext {
                 format!("{}-{}/{}", self.top, self.bottom, self.total)
             }),
             "wrap-offset" => Some(self.wrap_offset.clone()),
+            "col-offset" => Some(self.col_offset.clone()),
             "format-tag" => Some(self.format_tag.clone()),
             "filter-tag" => Some(self.filter_tag.clone()),
             "grep-tag" => Some(self.grep_tag.clone()),
@@ -262,5 +265,12 @@ mod tests {
         let p = ParsedPrompt::parse("<tag-tag>").unwrap();
         let ctx = PromptContext::default();
         assert_eq!(p.render(&ctx), "");
+    }
+
+    #[test]
+    fn col_offset_renders() {
+        let p = ParsedPrompt::parse("<wrap-offset><col-offset>").unwrap();
+        let ctx = PromptContext { col_offset: "  \u{00bb}12".into(), ..Default::default() };
+        assert_eq!(p.render(&ctx), "  \u{00bb}12");
     }
 }

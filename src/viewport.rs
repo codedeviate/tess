@@ -1338,6 +1338,9 @@ impl Viewport {
             } else { 1 };
             s.push_str(&format!("  +{}/{}", self.top_row, line_rows));
         }
+        if self.left_col > 0 {
+            s.push_str(&format!("  \u{00bb}{}", self.left_col));
+        }
         if let Some(f) = self.filter.as_ref() {
             s.push_str(&format!("  [{}]", f.format_name));
         }
@@ -1424,6 +1427,8 @@ impl Viewport {
             String::new()
         };
 
+        let col_offset = if self.left_col > 0 { format!("  \u{00bb}{}", self.left_col) } else { String::new() };
+
         let format_tag = self.format_label.as_ref()
             .map(|n| format!("  [{}]", n))
             .unwrap_or_default();
@@ -1478,6 +1483,7 @@ impl Viewport {
             rec_total,
             records_mode,
             wrap_offset,
+            col_offset,
             format_tag,
             filter_tag,
             grep_tag,
@@ -1608,7 +1614,11 @@ impl Viewport {
         let top = self.top_line + 1;
         let bottom = (self.top_line + body).min(total_rows.max(1));
         let dims = self.image.as_ref().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
-        format!("{}  {}  {}  rows {}-{}/{}", self.source_label, dims, self.image_format, top, bottom, total_rows)
+        let mut s = format!("{}  {}  {}  rows {}-{}/{}", self.source_label, dims, self.image_format, top, bottom, total_rows);
+        if self.left_col > 0 {
+            s.push_str(&format!("  \u{00bb}{}", self.left_col));
+        }
+        s
     }
 
     /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
@@ -3451,6 +3461,22 @@ mod tests {
         let status = v.format_status(&idx, &m);
         assert!(status.contains("[or]"), "expected [or] in status: {status}");
         assert!(status.contains("[hide]"), "expected [hide] in status: {status}");
+    }
+
+    #[test]
+    fn status_shows_col_offset_when_scrolled() {
+        // Long single line wider than the viewport; chop mode + scroll right.
+        let content = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz\n";
+        let (m, mut idx) = setup(content);
+        let mut v = Viewport::new(10, 3, "t".into());
+        v.toggle_chop();          // chop mode (wrap off) — hscroll active
+        v.hscroll_right_step();   // left_col = HSCROLL_STEP (8)
+        let f = v.frame(&m, &mut idx);
+        assert!(
+            f.status.contains('\u{00bb}'),
+            "expected » in status after hscroll_right_step, got: {}",
+            f.status
+        );
     }
 
     #[test]
