@@ -125,7 +125,7 @@ pub struct Args {
     /// exclusive with parsing- and rendering-oriented flags.
     #[arg(
         long = "hex",
-        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt", "preprocess"],
+        conflicts_with_all = ["filter", "grep", "prettify", "format", "display", "record_start", "prompt", "preprocess", "or_filter", "or_grep", "or_group"],
     )]
     pub hex: bool,
 
@@ -212,6 +212,25 @@ pub struct Args {
     /// for one invocation.
     #[arg(long = "no-preprocess", conflicts_with = "preprocess")]
     pub no_preprocess: bool,
+
+    /// OR-filter: a field condition where matching ANY condition in its
+    /// OR-group is enough (the group is satisfied). AND'd with the required
+    /// --filter/--grep. Joins the group set by the most recent --or-group, or
+    /// `default` if none. Requires --format. Repeatable.
+    #[arg(long = "or-filter", value_name = "FIELD<op>VALUE")]
+    pub or_filter: Vec<String>,
+
+    /// OR-grep: a raw-regex condition where matching ANY condition in its
+    /// OR-group is enough. Works on any input. Joins the group set by the most
+    /// recent --or-group, or `default` if none. Repeatable.
+    #[arg(long = "or-grep", value_name = "PATTERN")]
+    pub or_grep: Vec<String>,
+
+    /// Open an OR-group: subsequent --or-filter/--or-grep join NAME until the
+    /// next --or-group. Conditions before any marker form the `default` group.
+    /// Every non-empty group must have ≥1 match (groups are AND'd). Repeatable.
+    #[arg(long = "or-group", value_name = "NAME")]
+    pub or_group: Vec<String>,
 
     /// Non-interactive batch mode: apply --filter / --grep / --head / --tail / --prettify
     /// to the source and write the resulting raw bytes to FILE, then exit.
@@ -592,6 +611,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_or_flags_repeatable() {
+        let a = Args::parse_from([
+            "tess",
+            "--or-grep", "failed",
+            "--or-group", "svc",
+            "--or-filter", "lvl=ERROR",
+            "x",
+        ]);
+        assert_eq!(a.or_grep, vec!["failed".to_string()]);
+        assert_eq!(a.or_group, vec!["svc".to_string()]);
+        assert_eq!(a.or_filter, vec!["lvl=ERROR".to_string()]);
+    }
+
+    #[test]
+    fn or_flags_conflict_with_hex() {
+        let r = Args::try_parse_from(["tess", "--hex", "--or-grep", "x", "f"]);
+        assert!(r.is_err(), "clap should reject --hex with --or-grep");
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -632,6 +671,9 @@ mod tests {
             "--no-image",
             "--no-init",
             "--no-preprocess",
+            "--or-filter",
+            "--or-grep",
+            "--or-group",
             "--output",
             "--preprocess",
             "--prettify",
