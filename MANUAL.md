@@ -93,6 +93,37 @@ cmd | tess [OPTIONS]
   tess --grep error --dim access.log                # dim non-matches
   tess --format apache-combined --filter status=500 --grep timeout access.log
   ````
+- **`--or-group NAME`** — declare the start of a named OR-group. All subsequent
+  `--or-filter` and `--or-grep` arguments join this group until the next
+  `--or-group` marker. Conditions that appear before any `--or-group` marker form
+  the implicit `default` group.
+- **`--or-filter FIELD<op>VALUE`** — add a condition to the current OR-group.
+  Accepts the same operators as `--filter`. Requires `--format`. Multiple
+  `--or-filter` values within the same OR-group are OR'd; at least one must match.
+  Across OR-groups the constraint is AND: every non-empty OR-group must have ≥ 1
+  match. `--filter` / `--grep` predicates (required matches) are AND'd with all
+  OR-group constraints.
+- **`--or-grep PATTERN`** — add a raw-line regex condition to the current
+  OR-group. Works on any input — no `--format` required. Shares the same OR/AND
+  group semantics as `--or-filter`.
+
+  A record is shown when: ALL `--filter`/`--grep` conditions match AND every
+  non-empty OR-group has at least one matching condition.
+
+  ````sh
+  # ssh-service lines matching any brute-force signature:
+  tess --format ssh --filter service=ssh \
+    --or-grep 'failed password' --or-grep 'invalid user' access.log
+
+  # Two independent OR-groups (both must have a hit):
+  tess --format app --filter 'level=ERROR' \
+    --or-grep 'timeout' --or-grep 'deadline' \
+    --or-group http --or-filter 'status>=500' --or-filter 'status=429' app.log
+  ````
+
+  The status line shows `[or]` whenever any OR-group is active. The `<or-tag>`
+  placeholder is also available in `--prompt` templates.
+
 - **`--dim`** — render non-matching lines visibly faded instead of hiding them.
   Works with `--filter`, `--grep`, or both. Keeps surrounding context visible.
 - **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (so what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
@@ -1234,8 +1265,10 @@ All optional. Anything left out simply isn't passed.
 | `chop` | bool | `-S` |
 | `tab_width` | integer | `--tab-width N` |
 | `display` | string | `--display <template>` |
-| `filter` | array of strings | `--filter X` (one entry per element) |
-| `grep`   | array of strings | `--grep X` (one entry per element) |
+| `filter`    | array of strings | `--filter X` (one entry per element) |
+| `grep`      | array of strings | `--grep X` (one entry per element) |
+| `or_filter` | array of strings | `--or-filter X` — default OR-group (one entry per element) |
+| `or_grep`   | array of strings | `--or-grep X` — default OR-group (one entry per element) |
 
 A group's `display` template is rendered just like the `--display` flag, so
 it needs the group (or a CLI flag) to also set a `format`. A `--display` typed
@@ -1247,6 +1280,30 @@ format = "myapp"
 filter = ["level=ERROR"]
 display = "<time> <level> <msg>"   # rendered unless a CLI --display overrides
 ```
+
+### Named OR-groups in config
+
+Top-level `or_filter` / `or_grep` arrays belong to the implicit **default** OR-group.
+Named OR-groups are defined as `[group.NAME.or.<subname>]` sub-tables, each with its
+own `filter` and/or `grep` arrays. Every non-empty OR-group (default or named) must
+have at least one match for the record to be visible. Named groups give you independent
+OR-buckets that are AND'd together.
+
+```toml
+[group.intrusion]
+format = "apache-combined"
+filter = ["status~^4"]                          # required: only 4xx responses
+or_grep = ['/\.env', "/wp-login", "/admin"]     # default OR-group: suspicious paths
+
+[group.intrusion.or.methods]
+filter = ["method=POST", "method=PUT"]          # named OR-group "methods"
+```
+
+`apache-combined` is a built-in format, so every `status` / `method` field
+reference is valid. With this group, `tess --intrusion access.log` shows lines where:
+- `status~^4` (required AND — a 4xx response),
+- at least one suspicious path matches (default OR-group), AND
+- the method is `POST` or `PUT` (`methods` OR-group).
 
 ### Override semantics
 

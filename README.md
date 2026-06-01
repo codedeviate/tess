@@ -171,7 +171,13 @@ tess --errors app.log                       # format + filter + display + follow
 tess --errors --display '<msg>' app.log     # override the group's display
 ```
 
-Groups accept `format`, `file`, `follow`, `tail`, `head`, `dim`, `line_numbers`, `chop`, `tab_width`, `display`, `filter`, and `grep`. See the [manual](MANUAL.md#groups-command-line-shortcuts) for the full field reference.
+Groups accept `format`, `file`, `follow`, `tail`, `head`, `dim`, `line_numbers`, `chop`, `tab_width`, `display`, `filter`, `grep`, `or_filter`, and `or_grep`. Named OR-groups are defined as `[group.NAME.or.<subname>]` sub-tables — each sub-table's conditions are OR'd internally, and every non-empty OR-group must have ≥ 1 hit (groups are AND'd together). See the [manual](MANUAL.md#groups-command-line-shortcuts) for the full field reference.
+
+```sh
+# Show ssh lines matching any brute-force signature:
+tess --format ssh --filter service=ssh \
+  --or-grep 'failed password' --or-grep 'invalid user' access.log
+```
 
 ---
 
