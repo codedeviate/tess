@@ -1286,7 +1286,10 @@ impl Viewport {
         if self.grep.is_some() {
             s.push_str("  [grep]");
         }
-        if self.filter.is_some() || self.grep.is_some() {
+        if self.or_groups.is_active() {
+            s.push_str("  [or]");
+        }
+        if self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active() {
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [hide]" });
         }
         if let Some(sr) = self.search.as_ref() {
@@ -1370,7 +1373,8 @@ impl Viewport {
             .map(|f| format!("  [{}]", f.format_name))
             .unwrap_or_default();
         let grep_tag = if self.grep.is_some() { "  [grep]".to_string() } else { String::new() };
-        let hide_tag = if self.filter.is_some() || self.grep.is_some() {
+        let or_tag = if self.or_groups.is_active() { "  [or]".to_string() } else { String::new() };
+        let hide_tag = if self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active() {
             if self.dim_mode { "  [dim]".to_string() } else { "  [hide]".to_string() }
         } else {
             String::new()
@@ -1419,6 +1423,7 @@ impl Viewport {
             format_tag,
             filter_tag,
             grep_tag,
+            or_tag,
             hide_tag,
             search_tag,
             pretty_tag,
@@ -3231,5 +3236,20 @@ mod tests {
         assert!(v.line_passes(b"login failed"));
         assert!(v.line_passes(b"access denied"));
         assert!(!v.line_passes(b"login ok"));
+    }
+
+    #[test]
+    fn status_shows_or_indicator_when_active() {
+        let mut raw = crate::or::OrSpecRaw::new();
+        raw.add_grep(crate::or::DEFAULT_GROUP, "x".into());
+        let og = crate::or::OrGroups::compile(&raw, None, crate::viewport::CaseMode::Sensitive).unwrap();
+        let (m, mut idx) = setup(b"x\ny\nx\n");
+        idx.extend_to_end(&m);
+        let mut v = Viewport::new(80, 5, "f".into());
+        v.set_or_groups(og);
+        v.extend_visible_lines(&idx, &m);
+        let status = v.format_status(&idx, &m);
+        assert!(status.contains("[or]"), "expected [or] in status: {status}");
+        assert!(status.contains("[hide]"), "expected [hide] in status: {status}");
     }
 }
