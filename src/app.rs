@@ -1550,6 +1550,14 @@ pub fn run(
                                 viewport.scroll_lines(-3, src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
+                            MouseEventKind::ScrollLeft => {
+                                viewport.hscroll_left_step();
+                                needs_redraw = true;
+                            }
+                            MouseEventKind::ScrollRight => {
+                                viewport.hscroll_right_step();
+                                needs_redraw = true;
+                            }
                             _ => {}
                         }
                     }
@@ -1863,11 +1871,21 @@ pub fn run(
                     Command::MouseEvent(_) => {
                         // Mouse handling lives in the event-routing block, not here.
                     }
-                    Command::HScrollLeft
-                    | Command::HScrollRight
-                    | Command::HScrollLeftStep
-                    | Command::HScrollRightStep => {
-                        // Dispatch wired in the next task.
+                    Command::HScrollLeft => {
+                        viewport.hscroll_left_half();
+                        needs_redraw = true;
+                    }
+                    Command::HScrollRight => {
+                        viewport.hscroll_right_half();
+                        needs_redraw = true;
+                    }
+                    Command::HScrollLeftStep => {
+                        viewport.hscroll_left_step();
+                        needs_redraw = true;
+                    }
+                    Command::HScrollRightStep => {
+                        viewport.hscroll_right_step();
+                        needs_redraw = true;
                     }
                     Command::Noop => {}
                 }
