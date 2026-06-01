@@ -392,9 +392,9 @@ fn real_main() -> Result<()> {
             "--or-filter requires --format".to_string(),
         ));
     }
-    if args.dim && args.filter.is_empty() && args.grep.is_empty() {
+    if args.dim && args.filter.is_empty() && args.grep.is_empty() && or_spec.is_empty() {
         return Err(Error::Runtime(
-            "--dim has no effect without --filter or --grep".to_string(),
+            "--dim has no effect without --filter, --grep, or --or-filter/--or-grep".to_string(),
         ));
     }
     if args.live && args.files.is_empty() {
