@@ -137,6 +137,28 @@ pub fn rgb_to_256(r: u8, g: u8, b: u8) -> u8 {
     16 + 36 * q(r) + 6 * q(g) + q(b)
 }
 
+/// Inverse of the relevant range of `rgb_to_256`: the RGB triple for an xterm
+/// 256-color index in the 6×6×6 cube (16..=231) or the grayscale ramp
+/// (232..=255). Indices 0..=15 (terminal-defined) are not produced by
+/// `rgb_to_256`; we map them to black defensively.
+pub fn color_256_to_rgb(idx: u8) -> (u8, u8, u8) {
+    match idx {
+        16..=231 => {
+            let i = idx as u32 - 16;
+            let levels = [0u8, 95, 135, 175, 215, 255];
+            let r = levels[(i / 36) as usize];
+            let g = levels[((i / 6) % 6) as usize];
+            let b = levels[(i % 6) as usize];
+            (r, g, b)
+        }
+        232..=255 => {
+            let v = 8 + (idx as u32 - 232) * 10;
+            (v as u8, v as u8, v as u8)
+        }
+        _ => (0, 0, 0),
+    }
+}
+
 /// Try to decode one grapheme cluster starting at `bytes[i]`.
 /// Returns the cluster as &str and number of bytes consumed.
 /// Returns None if `bytes[i..]` does not begin with a valid UTF-8 sequence.
@@ -609,6 +631,18 @@ mod tests {
     fn rgb_to_256_pure_corners_map_to_palette_extremes() {
         assert_eq!(rgb_to_256(0, 0, 0), 16);
         assert_eq!(rgb_to_256(255, 255, 255), 231);
+    }
+
+    #[test]
+    fn color_256_to_rgb_inverts_cube_and_gray() {
+        assert_eq!(color_256_to_rgb(16), (0, 0, 0));
+        assert_eq!(color_256_to_rgb(231), (255, 255, 255));
+        let (r, g, b) = color_256_to_rgb(232);
+        assert_eq!((r, g, b), (8, 8, 8));
+        // Round-trip: any cube color re-quantizes to the same index.
+        let idx = rgb_to_256(0, 128, 255);
+        let (r, g, b) = color_256_to_rgb(idx);
+        assert_eq!(rgb_to_256(r, g, b), idx, "palette RGB re-quantizes to the same index");
     }
 
     #[test]

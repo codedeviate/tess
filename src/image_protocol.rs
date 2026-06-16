@@ -3,7 +3,9 @@
 //! Mirrors `render`/`image_render` discipline: plain inputs, byte outputs,
 //! exhaustively unit-tested.
 
+use crate::render::{rgb_to_256, color_256_to_rgb};
 use image::RgbaImage;
+use std::collections::BTreeMap;
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -47,6 +49,72 @@ pub fn encode_kitty(img: &RgbaImage) -> Vec<u8> {
     out
 }
 
+/// Encode an image as a Sixel data stream. Quantizes each pixel to the xterm
+/// 256-color palette via `rgb_to_256` (shared with `--truecolor` downsampling),
+/// then emits palette definitions and run-length-compressed sixel bands.
+pub fn encode_sixel(img: &RgbaImage) -> Vec<u8> {
+    let (w, h) = img.dimensions();
+    if w == 0 || h == 0 { return b"\x1bPq\x1b\\".to_vec(); }
+
+    let quant: Vec<u8> = img.pixels().map(|p| rgb_to_256(p.0[0], p.0[1], p.0[2])).collect();
+
+    let mut pal: BTreeMap<u8, usize> = BTreeMap::new();
+    for &idx in &quant {
+        let next = pal.len();
+        pal.entry(idx).or_insert(next);
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"\x1bPq");
+    for (&idx, &p) in &pal {
+        let (r, g, b) = color_256_to_rgb(idx);
+        let to100 = |v: u8| v as u32 * 100 / 255;
+        out.extend_from_slice(
+            format!("#{};2;{};{};{}", p, to100(r), to100(g), to100(b)).as_bytes());
+    }
+
+    let bands = (h as usize).div_ceil(6);
+    for band in 0..bands {
+        let y0 = (band * 6) as u32;
+        let mut first_color = true;
+        for (&idx, &p) in &pal {
+            let mut values: Vec<u8> = Vec::with_capacity(w as usize);
+            let mut any = false;
+            for x in 0..w {
+                let mut v = 0u8;
+                for r in 0..6u32 {
+                    let y = y0 + r;
+                    if y < h && quant[(y * w + x) as usize] == idx {
+                        v |= 1 << r;
+                    }
+                }
+                if v != 0 { any = true; }
+                values.push(v);
+            }
+            if !any { continue; }
+            if !first_color { out.push(b'$'); }
+            first_color = false;
+            out.extend_from_slice(format!("#{p}").as_bytes());
+            let mut x = 0usize;
+            while x < values.len() {
+                let v = values[x];
+                let mut run = 1usize;
+                while x + run < values.len() && values[x + run] == v { run += 1; }
+                let ch = (0x3F + v) as char;
+                if run >= 3 {
+                    out.extend_from_slice(format!("!{run}{ch}").as_bytes());
+                } else {
+                    for _ in 0..run { out.push(ch as u8); }
+                }
+                x += run;
+            }
+        }
+        if band + 1 < bands { out.push(b'-'); }
+    }
+    out.extend_from_slice(b"\x1b\\");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +150,31 @@ mod tests {
         assert!(s.matches("\x1b_G").count() >= 2, "should split into multiple APCs");
         assert!(s.contains("m=1"), "non-final chunks set m=1");
         assert!(s.contains("m=0"), "final chunk sets m=0");
+    }
+
+    #[test]
+    fn sixel_has_intro_palette_and_terminator() {
+        let img = RgbaImage::from_pixel(2, 6, Rgba([255, 0, 0, 255]));
+        let out = encode_sixel(&img);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.starts_with("\x1bPq"), "DCS sixel intro");
+        assert!(s.ends_with("\x1b\\"), "ST terminator");
+        assert!(s.contains(";2;"), "RGB palette definition present");
+    }
+
+    #[test]
+    fn sixel_full_height_uses_all_six_bits() {
+        let img = RgbaImage::from_pixel(1, 6, Rgba([255, 255, 255, 255]));
+        let out = encode_sixel(&img);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains('~'), "all six rows set → '~' sixel char (0x3F+63)");
+    }
+
+    #[test]
+    fn sixel_emits_band_separator_for_tall_images() {
+        let img = RgbaImage::from_pixel(1, 12, Rgba([10, 20, 30, 255]));
+        let out = encode_sixel(&img);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains('-'), "two bands (12px = 2×6) separated by '-'");
     }
 }
