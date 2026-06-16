@@ -340,6 +340,13 @@ pub struct Args {
     #[arg(long = "tab-width", default_value_t = 8)]
     pub tab_width: u8,
 
+    /// Tab stops as a comma-separated column list, e.g. `-x4,8,16`. A single
+    /// value is equivalent to `--tab-width`. With multiple values, tabs advance
+    /// to the next listed column; past the last stop the final interval
+    /// repeats. Overrides `--tab-width`. Mirrors `less -x`.
+    #[arg(short = 'x', long = "tabs", value_name = "LIST")]
+    pub tabs: Option<String>,
+
     /// Jump to the tag NAME at startup (requires a tags file).
     #[arg(short = 't', long = "tag", value_name = "NAME")]
     pub tag: Option<String>,
@@ -402,6 +409,14 @@ mod tests {
     fn parses_tab_width() {
         let a = Args::parse_from(["tess", "--tab-width", "4", "x"]);
         assert_eq!(a.tab_width, 4);
+    }
+
+    #[test]
+    fn parses_tabs_list() {
+        let a = Args::parse_from(["tess", "--tabs", "4,8,16", "f"]);
+        assert_eq!(a.tabs.as_deref(), Some("4,8,16"));
+        let b = Args::parse_from(["tess", "-x", "4", "f"]);
+        assert_eq!(b.tabs.as_deref(), Some("4"));
     }
 
     #[test]
@@ -690,6 +705,7 @@ mod tests {
             "--status-style",
             "--stdout",
             "--tab-width",
+            "--tabs",
             "--tag",
             "--tag-file",
             "--tail",

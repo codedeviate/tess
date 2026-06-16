@@ -285,6 +285,21 @@ fn parse_header_spec(s: &str) -> std::result::Result<(usize, usize), String> {
     }
 }
 
+fn parse_tab_stops(spec: &str) -> std::result::Result<Vec<usize>, String> {
+    let mut out = Vec::new();
+    for part in spec.split(',') {
+        let n: usize = part.trim().parse()
+            .map_err(|_| format!("--tabs: invalid number '{part}'"))?;
+        if n == 0 { return Err("--tabs: stops must be >= 1".to_string()); }
+        if out.last().is_some_and(|&prev| n <= prev) {
+            return Err("--tabs: stops must be strictly ascending".to_string());
+        }
+        out.push(n);
+    }
+    if out.is_empty() { return Err("--tabs: empty list".to_string()); }
+    Ok(out)
+}
+
 fn parse_plus_cmd(s: &str) -> std::result::Result<PlusCmd, String> {
     debug_assert!(s.starts_with('+') && s.len() > 1);
     let rest = &s[1..];
@@ -743,6 +758,14 @@ showing raw (use --content-type=NAME to override)"
     if args.line_numbers { viewport.toggle_line_numbers(); }
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
+    if let Some(spec) = args.tabs.as_deref() {
+        let stops = parse_tab_stops(spec).map_err(Error::Runtime)?;
+        if stops.len() == 1 {
+            viewport.opts.tab_width = stops[0].clamp(1, u8::MAX as usize) as u8;
+        } else {
+            viewport.opts.tab_stops = Some(stops);
+        }
+    }
     viewport.set_follow_mode(args.follow);
     viewport.set_live_mode(args.live);
     viewport.set_prettify_label(prettify_label);

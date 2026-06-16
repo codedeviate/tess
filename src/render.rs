@@ -58,6 +58,11 @@ pub struct RenderOpts {
     /// (`wrap == false`); the first `left_col` columns of each line are skipped
     /// before emitting up to `cols` cells. Ignored in wrap mode. Default 0.
     pub left_col: usize,
+    /// Explicit tab-stop columns (sorted, ascending, from `--tabs`). When
+    /// `Some`, overrides the uniform `tab_width`: tabs advance to the next
+    /// listed column; past the final stop the last interval repeats. `None`
+    /// uses uniform `tab_width` spacing.
+    pub tab_stops: Option<Vec<usize>>,
 }
 
 impl Default for RenderOpts {
@@ -66,6 +71,26 @@ impl Default for RenderOpts {
             tab_width: 8, wrap: true, cols: 80,
             mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false,
             left_col: 0,
+            tab_stops: None,
+        }
+    }
+}
+
+/// Next tab stop strictly greater than `col`, honoring explicit `tab_stops`
+/// (with last-interval repetition past the final stop) or uniform `width`.
+pub fn next_tab_stop(col: usize, width: usize, tab_stops: &Option<Vec<usize>>) -> usize {
+    let w = width.max(1);
+    match tab_stops {
+        None => ((col / w) + 1) * w,
+        Some(stops) if stops.is_empty() => ((col / w) + 1) * w,
+        Some(stops) => {
+            if let Some(&s) = stops.iter().find(|&&s| s > col) {
+                return s;
+            }
+            let last = *stops.last().unwrap();
+            let interval = if stops.len() >= 2 { last - stops[stops.len() - 2] } else { last.max(1) };
+            let interval = interval.max(1);
+            last + (((col - last) / interval) + 1) * interval
         }
     }
 }
@@ -347,14 +372,13 @@ pub fn render_line(
     while i < filtered.len() {
         let (b, style, hyperlink) = filtered[i].clone();
         if b == b'\t' {
-            let stop = opts.tab_width.max(1) as usize;
             // Tab stop calculation must account for already-skipped columns.
             // `current.len()` only tracks emitted cells, not skipped ones, so
             // we add `opts.left_col - to_skip` (columns already consumed/skipped)
             // to get the true logical column position for tab-stop math.
             let skipped_so_far = if opts.wrap { 0 } else { opts.left_col - to_skip };
             let cur_col = current.len() + skipped_so_far;
-            let next_stop = ((cur_col / stop) + 1) * stop;
+            let next_stop = next_tab_stop(cur_col, opts.tab_width as usize, &opts.tab_stops);
             // Emit spaces from logical cur_col up to next_stop.
             for _ in cur_col..next_stop {
                 overflowed |= push(
@@ -449,13 +473,12 @@ pub fn render_line(
 /// scroll. Independent of `cols`/`left_col`.
 pub fn display_width(bytes: &[u8], opts: &RenderOpts) -> usize {
     let filtered = prefilter(bytes, opts.mode, None);
-    let stop = opts.tab_width.max(1) as usize;
     let mut col = 0usize;
     let mut i = 0;
     while i < filtered.len() {
         let (b, _, _) = &filtered[i];
         if *b == b'\t' {
-            col = ((col / stop) + 1) * stop;
+            col = next_tab_stop(col, opts.tab_width as usize, &opts.tab_stops);
             i += 1;
             continue;
         }
@@ -513,8 +536,7 @@ pub fn count_rows(
     while i < filtered.len() {
         let (b, _, _) = filtered[i];
         if b == b'\t' {
-            let stop = opts.tab_width.max(1) as usize;
-            let next_stop = ((col / stop) + 1) * stop;
+            let next_stop = next_tab_stop(col, opts.tab_width as usize, &opts.tab_stops);
             let advance = next_stop - col;
             // Tabs may overflow into multiple wraps if cols < tab_width.
             for _ in 0..advance {
@@ -550,6 +572,39 @@ pub fn count_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cell_char(c: &Cell) -> char {
+        match c {
+            Cell::Char { ch, .. } => *ch,
+            _ => ' ',
+        }
+    }
+
+    #[test]
+    fn explicit_tab_stops_list() {
+        let o = RenderOpts { wrap: false, cols: 40, tab_width: 8,
+            tab_stops: Some(vec![4, 8]), ..Default::default() };
+        let rows = render_line(b"a\tb\tc", &o, None);
+        let text: String = rows[0].iter().take(9).map(cell_char).collect();
+        assert_eq!(text, "a   b   c");
+    }
+
+    #[test]
+    fn tab_stops_repeat_last_interval_past_final_stop() {
+        let o = RenderOpts { wrap: false, cols: 40, tab_width: 8,
+            tab_stops: Some(vec![4, 8]), ..Default::default() };
+        let rows = render_line(b"abcdefghi\tx", &o, None); // 'x' lands at col 12
+        let text: String = rows[0].iter().take(13).map(cell_char).collect();
+        assert_eq!(text, "abcdefghi   x");
+    }
+
+    #[test]
+    fn single_value_tab_stops_matches_uniform() {
+        let list = RenderOpts { wrap: false, cols: 40, tab_width: 8,
+            tab_stops: Some(vec![4]), ..Default::default() };
+        let uniform = RenderOpts { wrap: false, cols: 40, tab_width: 4, ..Default::default() };
+        assert_eq!(render_line(b"a\tb", &list, None), render_line(b"a\tb", &uniform, None));
+    }
 
     #[test]
     fn rgb_to_256_pure_corners_map_to_palette_extremes() {
@@ -686,7 +741,7 @@ mod tests {
     }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0 }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None }
     }
 
     fn ch(c: char) -> Cell {
