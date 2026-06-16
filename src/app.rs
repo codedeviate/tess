@@ -104,6 +104,9 @@ enum ColonCommand {
     IncSearch,
     /// `:header L [C]` — pin top L source rows and left C cols.
     Header(usize, usize),
+    /// `:yank` — copy the current top logical line to the system clipboard
+    /// (only acts when `--clipboard` was passed).
+    Yank,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -221,6 +224,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
+        "yank"       => Ok(ColonCommand::Yank),
         "header" => {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             match parts.as_slice() {
@@ -599,6 +603,31 @@ fn switch_file(
     Ok(())
 }
 
+/// Copy the current top logical line's raw bytes (trailing newline already
+/// stripped by `LineIndex::line_range`) to the system clipboard. Returns a
+/// human-facing status string for the caller to flash. When `--clipboard`
+/// wasn't passed, reports that and copies nothing.
+fn yank_current_line(
+    clipboard_enabled: bool,
+    viewport: &crate::viewport::Viewport,
+    src: &dyn crate::source::Source,
+    idx: &mut crate::line_index::LineIndex,
+) -> String {
+    if !clipboard_enabled {
+        return "[clipboard not enabled (pass --clipboard)]".to_string();
+    }
+    if idx.line_count() == 0 {
+        return "[nothing to copy]".to_string();
+    }
+    let line = viewport.top_line();
+    let range = idx.line_range(line, src);
+    let bytes = src.bytes(range).into_owned();
+    match crate::clipboard::write(&bytes) {
+        Ok(()) => format!("[copied {} bytes]", bytes.len()),
+        Err(e) => format!("[{e}]"),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_colon_command(
     cmd: ColonCommand,
@@ -853,6 +882,9 @@ fn dispatch_colon_command(
             let msg = if on { "[incsearch on]" } else { "[incsearch off]" };
             ColonOutcome::Continue(Some(msg.into()))
         }
+        ColonCommand::Yank => {
+            ColonOutcome::Continue(Some(yank_current_line(args.clipboard, viewport, src.as_ref(), idx)))
+        }
         ColonCommand::Case(mode) => {
             use crate::viewport::CaseMode;
             let next = mode.unwrap_or_else(|| match viewport.case_mode() {
@@ -932,6 +964,7 @@ pub fn run(
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
     let mouse_enabled = args.mouse;
+    let clipboard_enabled = args.clipboard;
     let hscroll_shift = args.shift.unwrap_or(0);
     let wheel_lines = args.wheel_lines.unwrap_or(3).max(1);
 
@@ -1953,6 +1986,11 @@ pub fn run(
                     }
                     Command::HScrollRightStep => {
                         viewport.hscroll_right_step();
+                        needs_redraw = true;
+                    }
+                    Command::YankLine => {
+                        let msg = yank_current_line(clipboard_enabled, &viewport, src.as_ref(), &mut idx);
+                        transient_status = Some(msg);
                         needs_redraw = true;
                     }
                     Command::Noop => {}

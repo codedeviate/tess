@@ -75,6 +75,10 @@ pub enum Command {
     ShellEscape,
     /// Enter the :colon-command prompt.
     ColonPrompt,
+    /// Copy the current top logical line's raw bytes to the system clipboard
+    /// (only acts when `--clipboard` was passed). Same action as `:yank`.
+    /// Unbound by default; remap via `clipboard-yank-line` in keys.toml.
+    YankLine,
     /// Enter the tag-name prompt (`Ctrl-]`).
     TagPrompt,
     /// Pop the tag stack and jump back (`Ctrl-T`).

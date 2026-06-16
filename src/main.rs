@@ -421,7 +421,9 @@ fn real_main() -> Result<()> {
     // Batch (`--output` / `--stdout`) is incompatible with `--live`: live mode
     // is "watch a file rewrite, render the new view" — there's no view to
     // render in batch.
-    let batch_destination: Option<BatchDestination> = if args.stdout {
+    let batch_destination: Option<BatchDestination> = if args.to_clipboard {
+        Some(BatchDestination::Clipboard)
+    } else if args.stdout {
         Some(BatchDestination::Stdout)
     } else if let Some(path) = args.output.as_deref() {
         if path == "-" { Some(BatchDestination::Stdout) }
@@ -432,6 +434,11 @@ fn real_main() -> Result<()> {
     if batch_destination.is_some() && args.live {
         return Err(Error::Runtime(
             "--output / --stdout is not compatible with --live".to_string(),
+        ));
+    }
+    if args.to_clipboard && args.follow {
+        return Err(Error::Runtime(
+            "--to-clipboard is not compatible with --follow".to_string(),
         ));
     }
 
@@ -500,11 +507,30 @@ documents can't be parsed)".to_string(),
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
     // whether `--tail` is meaningful for this source (streaming stdin can't
     // do random-access tail).
+    // `--from-clipboard` reads the clipboard into an in-memory source — no
+    // file args (clap enforces `conflicts_with = "files"`) and no piped stdin.
+    // Following has no producer to follow, so reject -f / --live here.
+    if args.from_clipboard {
+        if args.follow {
+            return Err(Error::Runtime(
+                "--from-clipboard is not compatible with --follow".to_string(),
+            ));
+        }
+        if args.live {
+            return Err(Error::Runtime(
+                "--from-clipboard is not compatible with --live".to_string(),
+            ));
+        }
+    }
+
     let file_set = tess::file_set::FileSet::new(args.files.clone());
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
-    let (src, label): (Box<dyn Source>, String) = match args.files.first() {
+    let (src, label): (Box<dyn Source>, String) = if args.from_clipboard {
+        let bytes = tess::clipboard::read().map_err(Error::Runtime)?;
+        (Box::new(tess::source::MemorySource::new(bytes)), "(clipboard)".to_string())
+    } else { match args.files.first() {
         Some(path) => {
             let (s, l, pf) = tess::open::open_source_for_path(path, &args, preprocessor.as_ref())?;
             preprocess_failure = pf;
@@ -525,7 +551,7 @@ documents can't be parsed)".to_string(),
         None => {
             return Err(Error::NoInput);
         }
-    };
+    }};
 
     // If the user wants prettification, resolve the mode against the inner
     // source's first bytes + the path (if any) and wrap the source. Failure
@@ -708,10 +734,18 @@ showing raw (use --content-type=NAME to override)"
                 };
                 let width = args.image_width.map(|w| w.clamp(1, u16::MAX as usize) as u16).unwrap_or(80);
                 let grid = tess::image_render::render_image(&rgba, width, style, !args.no_color);
+                if matches!(destination, BatchDestination::Clipboard) {
+                    let mut buf: Vec<u8> = Vec::new();
+                    tess::image_export::write_grid(&mut buf, &grid, !args.no_color)
+                        .map_err(|e| Error::Runtime(e.to_string()))?;
+                    tess::clipboard::write(&buf).map_err(Error::Runtime)?;
+                    return Ok(());
+                }
                 let mut w: Box<dyn std::io::Write> = match &destination {
                     BatchDestination::Stdout => Box::new(std::io::stdout().lock()),
                     BatchDestination::File(p) => Box::new(std::fs::File::create(p)
                         .map_err(|e| Error::Runtime(format!("{}: {e}", p.display())))?),
+                    BatchDestination::Clipboard => unreachable!("clipboard handled above"),
                 };
                 tess::image_export::write_grid(&mut w, &grid, !args.no_color)
                     .map_err(|e| Error::Runtime(e.to_string()))?;

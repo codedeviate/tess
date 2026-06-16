@@ -20,6 +20,7 @@ pub mod grep;
 pub mod hex;
 pub mod prettify;
 pub mod batch;
+pub mod clipboard;
 pub mod shell;
 pub mod preprocess;
 pub mod keys;

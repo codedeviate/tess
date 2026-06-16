@@ -36,6 +36,12 @@ pub struct Args {
     #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
 
+    /// Enable interactive clipboard yank: `:yank` copies the current line to the
+    /// system clipboard. Bind a key via `clipboard-yank-line` in keys.toml
+    /// (unbound by default, so it never clobbers existing keys).
+    #[arg(long = "clipboard")]
+    pub clipboard: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
@@ -100,6 +106,11 @@ pub struct Args {
     /// ~/.config/tess/formats.toml). Required by `--filter`.
     #[arg(long = "format", value_name = "NAME")]
     pub format: Option<String>,
+
+    /// Use the system clipboard contents as input (like `pbpaste | tess`).
+    /// Mutually exclusive with file arguments and piped stdin.
+    #[arg(long = "from-clipboard", conflicts_with = "files")]
+    pub from_clipboard: bool,
 
     /// Filter visible lines by regex against the raw line. Repeatable;
     /// multiple `--grep` arguments AND. Works on any input — no `--format`
@@ -385,6 +396,11 @@ pub struct Args {
     /// Mutually exclusive with --head. Streaming stdin is not supported.
     #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
+
+    /// Batch sink: apply filters/head/tail/prettify and copy the result to the
+    /// system clipboard, then exit. Mutually exclusive with -o/--stdout.
+    #[arg(long = "to-clipboard", conflicts_with_all = ["output", "stdout"])]
+    pub to_clipboard: bool,
 
     /// Truecolor (24-bit RGB) handling. `auto` (default) checks `$COLORTERM`
     /// and downsamples when truecolor isn't advertised; `never` always
@@ -714,6 +730,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_clipboard_flags() {
+        assert!(Args::parse_from(["tess", "--clipboard", "f"]).clipboard);
+        assert!(Args::parse_from(["tess", "--from-clipboard"]).from_clipboard);
+        assert!(Args::parse_from(["tess", "--to-clipboard", "f"]).to_clipboard);
+    }
+    #[test]
+    fn clipboard_sink_conflicts() {
+        assert!(Args::try_parse_from(["tess", "--to-clipboard", "--stdout", "f"]).is_err());
+        assert!(Args::try_parse_from(["tess", "--to-clipboard", "-o", "x", "f"]).is_err());
+    }
+    #[test]
+    fn from_clipboard_conflicts_with_files() {
+        assert!(Args::try_parse_from(["tess", "--from-clipboard", "f"]).is_err());
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -726,6 +758,7 @@ mod tests {
         let expected = [
             "--blocks",
             "--chop-long-lines",
+            "--clipboard",
             "--content-type",
             "--dim",
             "--display",
@@ -736,6 +769,7 @@ mod tests {
             "--follow-name",
             "--follow-suspend-on-motion",
             "--format",
+            "--from-clipboard",
             "--grep",
             "--head",
             "--header",
@@ -781,6 +815,7 @@ mod tests {
             "--tag",
             "--tag-file",
             "--tail",
+            "--to-clipboard",
             "--truecolor",
             "--wheel-lines",
             "--window",
