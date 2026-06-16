@@ -1288,6 +1288,19 @@ impl Viewport {
             for (i, mut content_row) in rows.into_iter().enumerate() {
                 if i < skip { continue; }
                 if body.len() >= body_rows { break; }
+                // Track whether this line carries a search match for `-J`,
+                // matching against the CONTENT only (before the status cell +
+                // gutter are prepended) so gutter digits / padding can't
+                // falsely flag a `*`. Independent of `hilite_search` (`-G`):
+                // the status column reflects matches even when visual
+                // highlighting is suppressed.
+                if scol > 0 && !line_matched {
+                    if let Some(s) = self.search.as_ref() {
+                        if !find_row_highlights(&content_row, &s.regex).is_empty() {
+                            line_matched = true;
+                        }
+                    }
+                }
                 let mut full: Vec<Cell> = Vec::with_capacity(self.cols as usize);
                 if scol > 0 {
                     if status_first_row_idx.is_none() {
@@ -1317,16 +1330,6 @@ impl Viewport {
                             style: crate::ansi::Style { dim: true, ..Default::default() },
                             hyperlink: None,
                         };
-                    }
-                }
-                // Track whether this line carries a search match for `-J`.
-                // Independent of `hilite_search` (`-G`): the status column
-                // reflects matches even when visual highlighting is suppressed.
-                if scol > 0 && !line_matched {
-                    if let Some(s) = self.search.as_ref() {
-                        if !find_row_highlights(&full, &s.regex).is_empty() {
-                            line_matched = true;
-                        }
                     }
                 }
                 // Compute search highlights for this display row by running
@@ -2198,6 +2201,43 @@ mod tests {
 
         let frame = v.frame(&m, &mut idx);
         assert_eq!(first_cell_char(&frame.body[1]), 'z', "mark beats search-match");
+    }
+
+    #[test]
+    fn status_column_matches_content_not_gutter_digits() {
+        // Regression: with line numbers (`-N`) on, searching for a digit that
+        // appears in a visible LINE NUMBER must not falsely flag `*` in the
+        // status column. The `*` must reflect matches in the CONTENT only,
+        // never the gutter digits / status cell / padding.
+        // 12 lines, all letters, no digits in content. Line number 5 contains
+        // the digit '5' in its gutter; searching "5" must NOT mark that line.
+        let (m, mut idx) = setup(b"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\n");
+        let mut v = Viewport::new(40, 14, "f".into()); // body = 13
+        v.opts.wrap = false;
+        v.show_line_numbers = true;
+        v.set_status_column(true);
+        v.set_search("5".into(), SearchDirection::Forward).unwrap();
+
+        let frame = v.frame(&m, &mut idx);
+        // body[4] is line 5 (1-based) — its gutter shows "5" but content "ee"
+        // has no '5'. Status column must be blank, not '*'. (Only the 12 real
+        // content rows; row 12 is post-EOF filler with an Empty status cell.)
+        for i in 0..12 {
+            assert_eq!(
+                first_cell_char(&frame.body[i]), ' ',
+                "body row {i}: no content match for '5' but status column flagged it"
+            );
+        }
+
+        // Positive case: a search matching actual CONTENT still flags `*`.
+        let (m2, mut idx2) = setup(b"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\n");
+        let mut v2 = Viewport::new(40, 14, "f".into());
+        v2.opts.wrap = false;
+        v2.show_line_numbers = true;
+        v2.set_status_column(true);
+        v2.set_search("ee".into(), SearchDirection::Forward).unwrap();
+        let frame2 = v2.frame(&m2, &mut idx2);
+        assert_eq!(first_cell_char(&frame2.body[4]), '*', "line 5 content 'ee' matches search");
     }
 
     #[test]
