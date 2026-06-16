@@ -105,12 +105,10 @@ mod tests {
     }
 }
 
-// wired up in the --image-protocol auto path (later task)
 /// Probe the terminal for graphics support. Writes the query sequences to
 /// `/dev/tty`, reads the response with a short deadline, and parses it. Falls
 /// back to environment heuristics when the round-trip yields nothing. Pure
 /// ASCII (no support) is represented by an all-false `TermGraphics`.
-#[allow(dead_code)]
 pub fn detect() -> TermGraphics {
     if let Some(g) = query_tty(Duration::from_millis(120)) {
         if g.kitty || g.sixel {
@@ -120,8 +118,6 @@ pub fn detect() -> TermGraphics {
     env_fallback()
 }
 
-// wired up in the --image-protocol auto path (later task)
-#[allow(dead_code)]
 fn query_tty(timeout: Duration) -> Option<TermGraphics> {
     use std::fs::OpenOptions;
     let mut tty = OpenOptions::new().read(true).write(true).open("/dev/tty").ok()?;
@@ -158,8 +154,6 @@ fn query_tty(timeout: Duration) -> Option<TermGraphics> {
     Some(parse_responses(&buf))
 }
 
-// wired up in the --image-protocol auto path (later task)
-#[allow(dead_code)]
 fn merge_env(mut g: TermGraphics) -> TermGraphics {
     let env = env_fallback();
     g.kitty |= env.kitty;
