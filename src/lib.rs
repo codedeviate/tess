@@ -35,3 +35,5 @@ pub mod config_path;
 pub mod image_render;
 #[cfg(feature = "image")]
 pub mod image_export;
+#[cfg(feature = "image")]
+pub mod image_protocol;
