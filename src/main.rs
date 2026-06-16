@@ -806,6 +806,7 @@ showing raw (use --content-type=NAME to override)"
     };
     viewport.set_quit_at_eof(qae);
     viewport.set_squeeze_blanks(args.squeeze_blanks);
+    viewport.set_status_column(args.status_column);
     if let Some(spec) = args.header.as_deref() {
         let (lines, cols) = parse_header_spec(spec).map_err(Error::Runtime)?;
         viewport.set_header(lines, cols);

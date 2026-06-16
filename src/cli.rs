@@ -343,6 +343,12 @@ pub struct Args {
     #[arg(short = 's', long = "squeeze-blank-lines")]
     pub squeeze_blanks: bool,
 
+    /// Show a 1-column status gutter at the far left: a mark letter on marked
+    /// lines, else `*` on lines containing a current-search match. Stays fixed
+    /// under horizontal scroll. No-op in --hex/-r/image modes. Mirrors `less -J`.
+    #[arg(short = 'J', long = "status-column")]
+    pub status_column: bool,
+
     /// Style for the status row. Comma-separated tokens: `bold`, `dim`,
     /// `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a
     /// named color (`black`..`white`, optional `bright-` prefix), `#RRGGBB`,
@@ -597,6 +603,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_status_column() {
+        let a = Args::parse_from(["tess", "-J", "f"]);
+        assert!(a.status_column);
+        let b = Args::parse_from(["tess", "--status-column", "f"]);
+        assert!(b.status_column);
+        let c = Args::parse_from(["tess", "f"]);
+        assert!(!c.status_column, "status_column defaults off");
+    }
+
+    #[test]
     fn parses_stdout_flag() {
         let a = Args::parse_from(["tess", "--stdout", "f"]);
         assert!(a.stdout);
@@ -757,6 +773,7 @@ mod tests {
             "--rscroll",
             "--shift",
             "--squeeze-blank-lines",
+            "--status-column",
             "--status-style",
             "--stdout",
             "--tab-width",

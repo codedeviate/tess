@@ -976,6 +976,17 @@ pub fn run(
                 needs_redraw = false;
                 continue;
             }
+            // `-J` status column: feed the current file's marks (line → letter)
+            // into the viewport so it can render mark glyphs in the far-left
+            // gutter. Empty when the feature is off.
+            if viewport.status_column() {
+                let status_marks: HashMap<usize, char> = marks
+                    .iter()
+                    .filter(|(_, (fi, _))| *fi == current_file_index)
+                    .map(|(ch, (_, line))| (*line, *ch))
+                    .collect();
+                viewport.set_status_marks(status_marks);
+            }
             let mut frame = viewport.frame(src.as_ref(), &mut idx);
             // Override the status row when we're in an interactive prompt OR
             // when a transient status message is pending.
