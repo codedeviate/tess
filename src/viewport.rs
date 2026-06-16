@@ -624,7 +624,11 @@ impl Viewport {
         match &self.image {
             Some(img) => {
                 let (w, h) = img.dimensions();
-                crate::image_render::output_rows(w, h, self.image_cols(), self.image_style)
+                if self.image_protocol != ImageProtocol::Ascii {
+                    protocol_occupied_rows(w, h, self.cols, self.cell_px, self.image_width)
+                } else {
+                    crate::image_render::output_rows(w, h, self.image_cols(), self.image_style)
+                }
             }
             None => 0,
         }
@@ -2611,16 +2615,14 @@ mod tests {
             vp.scroll_lines(1, &m, &mut idx);
         }
         let _ = vp.frame(&m, &mut idx);
+        // After scrolling past the end, top_line clamps to (protocol_total - body_rows).
         let total = crate::viewport::protocol_occupied_rows(20, 2000, 40, (8, 16), None);
         let body = vp.body_rows() as usize;
-        // After scrolling far past the end and rendering, the top must be clamped
-        // so the visible band never runs past the bottom of the image.
-        assert!(
-            vp.top_line() + body <= total,
-            "top_line {} + body {} ran past protocol total_rows {}",
-            vp.top_line(), body, total
+        assert_eq!(
+            vp.top_line(),
+            total.saturating_sub(body),
+            "scroll reaches exactly the protocol image bottom"
         );
-        assert!(vp.top_line() < total, "top_line did not run past the image");
     }
 
     #[cfg(feature = "image")]
