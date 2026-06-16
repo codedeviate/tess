@@ -164,6 +164,11 @@ pub struct Args {
     #[arg(short = 'I', long = "IGNORE-CASE")]
     pub IGNORE_CASE: bool,
 
+    /// Image rendering protocol: `auto` (detect terminal graphics support and
+    /// fall back to ASCII), `kitty`, `sixel`, or `ascii`. Default `auto`.
+    #[arg(long = "image-protocol", value_name = "MODE", default_value = "auto")]
+    pub image_protocol: String,
+
     /// Target width in columns for image rendering. Defaults to the terminal
     /// width interactively, or 80 when exporting to a file/stdout.
     #[arg(long = "image-width", value_name = "N")]
@@ -666,6 +671,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_image_protocol() {
+        assert_eq!(Args::parse_from(["tess", "f"]).image_protocol, "auto");
+        assert_eq!(Args::parse_from(["tess", "--image-protocol", "kitty", "f"]).image_protocol, "kitty");
+    }
+
+    #[test]
     fn parses_image_width() {
         let a = Args::parse_from(["tess", "--image-width", "120", "cat.png"]);
         assert_eq!(a.image_width, Some(120));
@@ -777,6 +788,7 @@ mod tests {
             "--hex-group",
             "--ignore-case",
             "--IGNORE-CASE",
+            "--image-protocol",
             "--image-width",
             "--incsearch",
             "--LINE-NUMBERS",
