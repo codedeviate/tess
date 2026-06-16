@@ -65,7 +65,7 @@ pub fn encode_sixel(img: &RgbaImage) -> Vec<u8> {
     }
 
     let mut out: Vec<u8> = Vec::new();
-    out.extend_from_slice(b"\x1bPq");
+    out.extend_from_slice(b"\x1bPq"); // DCS sixel intro: ESC P <params> q
     for (&idx, &p) in &pal {
         let (r, g, b) = color_256_to_rgb(idx);
         let to100 = |v: u8| v as u32 * 100 / 255;
@@ -92,6 +92,7 @@ pub fn encode_sixel(img: &RgbaImage) -> Vec<u8> {
                 values.push(v);
             }
             if !any { continue; }
+            // carriage-return to band start so the next color overlays the same 6 rows
             if !first_color { out.push(b'$'); }
             first_color = false;
             out.extend_from_slice(format!("#{p}").as_bytes());
@@ -100,6 +101,7 @@ pub fn encode_sixel(img: &RgbaImage) -> Vec<u8> {
                 let v = values[x];
                 let mut run = 1usize;
                 while x + run < values.len() && values[x + run] == v { run += 1; }
+                // sixel byte = 0x3F + 6-bit column mask, keeping it printable ASCII
                 let ch = (0x3F + v) as char;
                 if run >= 3 {
                     out.extend_from_slice(format!("!{run}{ch}").as_bytes());
@@ -109,9 +111,10 @@ pub fn encode_sixel(img: &RgbaImage) -> Vec<u8> {
                 x += run;
             }
         }
+        // graphics newline: advance to the next 6-row band
         if band + 1 < bands { out.push(b'-'); }
     }
-    out.extend_from_slice(b"\x1b\\");
+    out.extend_from_slice(b"\x1b\\"); // ST: end the DCS string
     out
 }
 
@@ -176,5 +179,29 @@ mod tests {
         let out = encode_sixel(&img);
         let s = String::from_utf8_lossy(&out);
         assert!(s.contains('-'), "two bands (12px = 2×6) separated by '-'");
+    }
+
+    #[test]
+    fn sixel_emits_rle_for_long_runs() {
+        // A solid 5px-wide, 6px-tall image → one color, a run of 5 identical sixel
+        // chars → RLE `!5<char>` (run >= 3 triggers compression).
+        let img = RgbaImage::from_pixel(5, 6, Rgba([255, 255, 255, 255]));
+        let out = encode_sixel(&img);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("!5"), "a 5-wide solid run should emit RLE !5, got: {s:?}");
+    }
+
+    #[test]
+    fn sixel_overlays_multiple_colors_in_a_band_with_dollar() {
+        // Two distinct colors in the same 6px-tall band (side by side) must be
+        // emitted as two color passes separated by `$` (carriage-return to band start).
+        let mut img = RgbaImage::new(2, 6);
+        for y in 0..6 { img.put_pixel(0, y, Rgba([255, 0, 0, 255])); }   // col 0 red
+        for y in 0..6 { img.put_pixel(1, y, Rgba([0, 0, 255, 255])); }   // col 1 blue
+        let out = encode_sixel(&img);
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains('$'), "two colors in one band must be overlaid with `$`, got: {s:?}");
+        // Two distinct palette entries defined.
+        assert!(s.matches(";2;").count() >= 2, "two palette colors defined");
     }
 }
