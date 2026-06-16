@@ -28,6 +28,9 @@ use crate::source::Source;
 pub enum BatchDestination {
     Stdout,
     File(PathBuf),
+    /// Buffer the whole result in memory and flush it to the system clipboard
+    /// once at the end. One-shot: `--follow` is rejected upstream.
+    Clipboard,
 }
 
 pub struct BatchSpec {
@@ -60,6 +63,20 @@ pub fn run(
     spec: BatchSpec,
     sigterm: Arc<AtomicBool>,
 ) -> Result<()> {
+    // Clipboard is a one-shot sink (follow is rejected upstream): buffer the
+    // whole filtered result in memory via the same first-pass line-walk that
+    // `emit_pending` performs for every destination, then flush it to the OS
+    // clipboard in a single call. Handling it as a separate early path keeps
+    // `out` a `Box<dyn Write>` for the file/stdout (and follow) paths without
+    // the borrow trap of boxing `&mut buf`.
+    if matches!(spec.destination, BatchDestination::Clipboard) {
+        idx.extend_to_end(src.as_ref());
+        let mut buf: Vec<u8> = Vec::new();
+        emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut buf, 0)?;
+        crate::clipboard::write(&buf).map_err(Error::Runtime)?;
+        return Ok(());
+    }
+
     let mut out: Box<dyn Write> = match &spec.destination {
         BatchDestination::Stdout => Box::new(io::stdout().lock()),
         BatchDestination::File(path) => {
@@ -71,6 +88,7 @@ pub fn run(
                 .map_err(|e| Error::Runtime(format!("open {}: {e}", path.display())))?;
             Box::new(f)
         }
+        BatchDestination::Clipboard => unreachable!("clipboard handled above"),
     };
 
     // First pass: extend index to the current end of the source and write all

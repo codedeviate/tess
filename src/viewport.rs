@@ -305,6 +305,18 @@ pub struct Viewport {
     /// Line number that `render_state` matches the start of. Sentinel
     /// `usize::MAX` means "invalid, must reconstruct".
     render_state_for: usize,
+    /// `--incsearch` / `:incsearch`: when on, each keystroke in the `/`/`?`
+    /// search prompt previews the first match (jump + highlight) from the
+    /// position the prompt opened at. Esc restores; Enter commits. Default off.
+    incsearch: bool,
+    /// `-J` / `--status-column`: when on, a 1-column gutter is drawn at the far
+    /// left (left of the line-number gutter) showing a mark letter, else `*`
+    /// on lines with a current-search match. Default off. No-op in hex/raw/image.
+    status_column: bool,
+    /// Per-frame input: current file's marks keyed by line → mark letter.
+    /// Set by the app loop before composing each frame when `status_column`
+    /// is on. Drives the mark glyph in the status column.
+    status_marks: std::collections::HashMap<usize, char>,
 }
 
 impl Viewport {
@@ -359,6 +371,46 @@ impl Viewport {
             page_size: None,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
+            incsearch: false,
+            status_column: false,
+            status_marks: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn status_column(&self) -> bool { self.status_column }
+
+    pub fn set_status_column(&mut self, on: bool) { self.status_column = on; }
+
+    /// Provide the current file's marks (line → mark letter) for the next
+    /// frame. Cheap no-op cost when status_column is off (the frame never
+    /// reads it then), but the app gates the call anyway.
+    pub fn set_status_marks(&mut self, marks: std::collections::HashMap<usize, char>) {
+        self.status_marks = marks;
+    }
+
+    /// Width of the far-left status column (1 if `-J` active, else 0). Forced
+    /// to 0 in raw passthrough since `-J` is a no-op there (hex/image use
+    /// separate frame paths and never reach the text composition).
+    fn status_col_width(&self) -> u16 {
+        if self.status_column && self.ansi_mode != crate::render::AnsiMode::Raw { 1 } else { 0 }
+    }
+
+    /// A single status-column cell carrying `glyph`. Styled plainly to match
+    /// the line-number gutter label cells.
+    fn status_cell(glyph: char) -> Cell {
+        Cell::Char { ch: glyph, width: 1, style: crate::ansi::Style::default(), hyperlink: None }
+    }
+
+    /// Glyph for the status column on source line `line_n`'s first display row:
+    /// a mark letter (precedence) if the line is marked, else `*` when the line
+    /// contains a current-search match, else a blank.
+    fn status_glyph(&self, line_n: usize, has_match: bool) -> char {
+        if let Some(&ch) = self.status_marks.get(&line_n) {
+            ch
+        } else if has_match {
+            '*'
+        } else {
+            ' '
         }
     }
 
@@ -367,6 +419,31 @@ impl Viewport {
     pub fn hilite_search(&self) -> bool { self.hilite_search }
 
     pub fn set_hilite_search(&mut self, on: bool) { self.hilite_search = on; }
+
+    pub fn incsearch(&self) -> bool { self.incsearch }
+
+    pub fn set_incsearch(&mut self, on: bool) { self.incsearch = on; }
+
+    pub fn top_row(&self) -> usize { self.top_row }
+
+    /// Set the scroll position directly (logical line + wrap-row within it).
+    pub fn set_top(&mut self, line: usize, row: usize) {
+        self.top_line = line;
+        self.top_row = row;
+    }
+
+    /// Preview an incremental-search pattern from `origin` (a (top_line, top_row)
+    /// captured when the prompt opened), scrolling to the first match. Empty or
+    /// invalid patterns are a silent no-op. Used by `--incsearch`.
+    pub fn incsearch_preview(&mut self, src: &dyn Source, idx: &mut LineIndex,
+                             pattern: &str, direction: SearchDirection,
+                             origin: (usize, usize)) {
+        if pattern.is_empty() { return; }
+        self.set_top(origin.0, origin.1);
+        if self.set_search(pattern.to_string(), direction).is_ok() {
+            self.search_repeat(src, idx, false);
+        }
+    }
 
     pub fn set_quit_at_eof(&mut self, mode: QuitAtEof) {
         self.quit_at_eof = mode;
@@ -992,7 +1069,9 @@ impl Viewport {
 
     fn render_opts(&self, gutter: u16) -> RenderOpts {
         let mut o = self.opts.clone();
-        o.cols = self.cols.saturating_sub(gutter);
+        // The status column (`-J`) reserves a fixed far-left cell outside the
+        // scrolled content, so its width comes off the content budget too.
+        o.cols = self.cols.saturating_sub(self.status_col_width() + gutter);
         o.mode = self.ansi_mode;
         o.left_col = self.left_col;   // horizontal scroll offset carried into the kernel
         o
@@ -1012,7 +1091,7 @@ impl Viewport {
         // Clamp horizontal scroll to the widest line currently visible, so we
         // never scroll into empty space. (Chop/text path only.)
         if self.left_col > 0 && self.hscroll_active() {
-            let gutter_for_clamp = self.gutter_width(idx);
+            let gutter_for_clamp = self.status_col_width() + self.gutter_width(idx);
             let avail = self.cols.saturating_sub(gutter_for_clamp) as usize;
             // Build opts with left_col=0 — display_width measures full line width
             // regardless of the current scroll offset.
@@ -1044,6 +1123,7 @@ impl Viewport {
         }
 
         let gutter = self.gutter_width(idx);
+        let scol = self.status_col_width();
         let r_opts = self.render_opts(gutter);
 
         // Reconstruct per-line SGR state for the start of the visible window so
@@ -1096,6 +1176,12 @@ impl Viewport {
                     v
                 });
                 let mut full: Vec<Cell> = Vec::with_capacity(self.cols as usize);
+                if scol > 0 {
+                    let matched = self.search.as_ref()
+                        .is_some_and(|s| !find_row_highlights(&content_row, &s.regex).is_empty());
+                    let glyph = self.status_glyph(hl, matched);
+                    full.push(Self::status_cell(glyph));
+                }
                 if gutter > 0 {
                     let label = format!("{:>width$} ", hl + 1, width = (gutter as usize - 1));
                     for c in label.chars() {
@@ -1136,6 +1222,9 @@ impl Viewport {
         while body.len() < body_rows {
             if line_n >= total_lines {
                 let mut row = Vec::with_capacity(self.cols as usize);
+                if scol > 0 {
+                    for _ in 0..scol { row.push(Cell::Empty); }
+                }
                 if gutter > 0 {
                     for _ in 0..gutter { row.push(Cell::Empty); }
                 }
@@ -1190,10 +1279,37 @@ impl Viewport {
             };
 
             let mut first_emitted_for_this_line = true;
+            // `-J` status column: remember the body index of this line's first
+            // emitted display row, and whether ANY of its rows hold a search
+            // match. We patch the glyph in after rendering the whole line so a
+            // match on a wrapped continuation row still flags the first row.
+            let mut status_first_row_idx: Option<usize> = None;
+            let mut line_matched = false;
             for (i, mut content_row) in rows.into_iter().enumerate() {
                 if i < skip { continue; }
                 if body.len() >= body_rows { break; }
+                // Track whether this line carries a search match for `-J`,
+                // matching against the CONTENT only (before the status cell +
+                // gutter are prepended) so gutter digits / padding can't
+                // falsely flag a `*`. Independent of `hilite_search` (`-G`):
+                // the status column reflects matches even when visual
+                // highlighting is suppressed.
+                if scol > 0 && !line_matched {
+                    if let Some(s) = self.search.as_ref() {
+                        if !find_row_highlights(&content_row, &s.regex).is_empty() {
+                            line_matched = true;
+                        }
+                    }
+                }
                 let mut full: Vec<Cell> = Vec::with_capacity(self.cols as usize);
+                if scol > 0 {
+                    if status_first_row_idx.is_none() {
+                        status_first_row_idx = Some(body.len());
+                    }
+                    // Placeholder blank; patched to the real glyph after the
+                    // line's rows are all rendered (so wrapped-row matches count).
+                    full.push(Self::status_cell(' '));
+                }
                 if gutter > 0 {
                     let label = if i == 0 { format!("{:>width$} ", line_n + 1, width = (gutter as usize - 1)) } else { " ".repeat(gutter as usize) };
                     for c in label.chars() {
@@ -1204,9 +1320,9 @@ impl Viewport {
                 // Paint the `<` left-edge marker when the view is scrolled right
                 // in chop mode, so the user can see that content is off-screen left.
                 // Mirrors the `>` rscroll marker style (dim). Placed at the first
-                // content column (after the gutter, if any).
+                // content column (after the status column + gutter, if any).
                 if self.left_col > 0 && !self.opts.wrap {
-                    let marker_col = gutter as usize;
+                    let marker_col = (scol + gutter) as usize;
                     if let Some(cell) = full.get_mut(marker_col) {
                         *cell = Cell::Char {
                             ch: '<',
@@ -1240,6 +1356,17 @@ impl Viewport {
                     }
                 } else {
                     raw_rows.push(None);
+                }
+            }
+            // `-J`: now that the whole line is rendered, set the first row's
+            // status glyph (mark letter beats search-`*`). Continuation rows
+            // keep their blank placeholder.
+            if let Some(fi) = status_first_row_idx {
+                let glyph = self.status_glyph(line_n, line_matched);
+                if glyph != ' ' {
+                    if let Some(cell) = body[fi].first_mut() {
+                        *cell = Self::status_cell(glyph);
+                    }
                 }
             }
             skip = 0;
@@ -1511,7 +1638,7 @@ impl Viewport {
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
 
-        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0 };
+        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None };
 
         for row_idx in 0..body_rows {
             let hex_row = self.top_line + row_idx;
@@ -2001,6 +2128,11 @@ impl Viewport {
     pub fn hscroll_left_step(&mut self)  { self.hscroll_by(-(Self::HSCROLL_STEP as isize)); }
     pub fn hscroll_right_step(&mut self) { self.hscroll_by(Self::HSCROLL_STEP as isize); }
 
+    /// Scroll left by an explicit column count (used by `--shift N`).
+    pub fn hscroll_left_cols(&mut self, n: u16)  { self.hscroll_by(-(n as isize)); }
+    /// Scroll right by an explicit column count (used by `--shift N`).
+    pub fn hscroll_right_cols(&mut self, n: u16) { self.hscroll_by(n as isize); }
+
     pub fn left_col(&self) -> usize { self.left_col }
 
     /// Drop the horizontal scroll offset. Called when a new file is opened
@@ -2024,6 +2156,107 @@ mod tests {
         m.finish();
         let idx = LineIndex::new();
         (m, idx)
+    }
+
+    /// Read the `ch` of the first cell of a body row (the status column when
+    /// `-J` is on). Panics if the cell isn't a `Cell::Char`.
+    fn first_cell_char(row: &[Cell]) -> char {
+        match row.first() {
+            Some(Cell::Char { ch, .. }) => *ch,
+            other => panic!("expected Char in first cell, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn status_column_shows_mark_then_search_glyphs() {
+        // 3 lines, chop mode (no wrap). Mark line 1 ('a'), search matches
+        // "bb" on line 2. Line 0 → blank, line 1 → 'a' (mark), line 2 → '*'.
+        let (m, mut idx) = setup(b"aa\nbb\ncc\n");
+        let mut v = Viewport::new(20, 5, "f".into()); // body = 4
+        v.opts.wrap = false;
+        v.set_status_column(true);
+        let mut marks = std::collections::HashMap::new();
+        marks.insert(1usize, 'a');
+        v.set_status_marks(marks);
+        v.set_search("cc".into(), SearchDirection::Forward).unwrap();
+
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(first_cell_char(&frame.body[0]), ' ', "line 0: no mark, no match");
+        assert_eq!(first_cell_char(&frame.body[1]), 'a', "line 1: mark letter");
+        assert_eq!(first_cell_char(&frame.body[2]), '*', "line 2: search match");
+    }
+
+    #[test]
+    fn status_column_mark_beats_search_match() {
+        // Line 1 is BOTH marked ('z') AND matched by the search — the mark
+        // letter takes precedence over the search `*`.
+        let (m, mut idx) = setup(b"aa\nbb\ncc\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.opts.wrap = false;
+        v.set_status_column(true);
+        let mut marks = std::collections::HashMap::new();
+        marks.insert(1usize, 'z');
+        v.set_status_marks(marks);
+        v.set_search("bb".into(), SearchDirection::Forward).unwrap();
+
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(first_cell_char(&frame.body[1]), 'z', "mark beats search-match");
+    }
+
+    #[test]
+    fn status_column_matches_content_not_gutter_digits() {
+        // Regression: with line numbers (`-N`) on, searching for a digit that
+        // appears in a visible LINE NUMBER must not falsely flag `*` in the
+        // status column. The `*` must reflect matches in the CONTENT only,
+        // never the gutter digits / status cell / padding.
+        // 12 lines, all letters, no digits in content. Line number 5 contains
+        // the digit '5' in its gutter; searching "5" must NOT mark that line.
+        let (m, mut idx) = setup(b"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\n");
+        let mut v = Viewport::new(40, 14, "f".into()); // body = 13
+        v.opts.wrap = false;
+        v.show_line_numbers = true;
+        v.set_status_column(true);
+        v.set_search("5".into(), SearchDirection::Forward).unwrap();
+
+        let frame = v.frame(&m, &mut idx);
+        // body[4] is line 5 (1-based) — its gutter shows "5" but content "ee"
+        // has no '5'. Status column must be blank, not '*'. (Only the 12 real
+        // content rows; row 12 is post-EOF filler with an Empty status cell.)
+        for i in 0..12 {
+            assert_eq!(
+                first_cell_char(&frame.body[i]), ' ',
+                "body row {i}: no content match for '5' but status column flagged it"
+            );
+        }
+
+        // Positive case: a search matching actual CONTENT still flags `*`.
+        let (m2, mut idx2) = setup(b"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\n");
+        let mut v2 = Viewport::new(40, 14, "f".into());
+        v2.opts.wrap = false;
+        v2.show_line_numbers = true;
+        v2.set_status_column(true);
+        v2.set_search("ee".into(), SearchDirection::Forward).unwrap();
+        let frame2 = v2.frame(&m2, &mut idx2);
+        assert_eq!(first_cell_char(&frame2.body[4]), '*', "line 5 content 'ee' matches search");
+    }
+
+    #[test]
+    fn status_column_off_leaves_first_cell_as_content() {
+        // With the feature off, no extra column is prepended — the first cell
+        // of each body row is the line's content (no line numbers here).
+        let (m, mut idx) = setup(b"aa\nbb\ncc\n");
+        let mut v = Viewport::new(20, 5, "f".into());
+        v.opts.wrap = false;
+        // status_column defaults off; set a mark + search anyway to prove gating.
+        let mut marks = std::collections::HashMap::new();
+        marks.insert(1usize, 'a');
+        v.set_status_marks(marks);
+        v.set_search("bb".into(), SearchDirection::Forward).unwrap();
+
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(first_cell_char(&frame.body[0]), 'a', "line 0 content unchanged");
+        assert_eq!(first_cell_char(&frame.body[1]), 'b', "line 1 content unchanged");
+        assert_eq!(first_cell_char(&frame.body[2]), 'c', "line 2 content unchanged");
     }
 
     #[test]
@@ -2963,6 +3196,66 @@ mod tests {
     }
 
     #[test]
+    fn incsearch_preview_anchors_from_origin_not_previous_match() {
+        // The valuable invariant: every preview restarts its scan from
+        // `origin`, never from where the previous preview landed. We prove
+        // this by previewing a far-below match, then previewing a second
+        // pattern that has matches BOTH above and below the first match.
+        // Anchoring from origin must pick the earlier (above) match; a scan
+        // that continued forward from the previous match would pick the
+        // later (below) one instead.
+        let src = crate::source::MockSource::new();
+        src.append(b"zero\n");    // line 0
+        src.append(b"one\n");     // line 1
+        src.append(b"origin\n");  // line 2 — the search origin (non-(0,0))
+        src.append(b"three\n");   // line 3
+        src.append(b"mark\n");    // line 4 — second pattern, ABOVE first match
+        src.append(b"five\n");    // line 5
+        src.append(b"six\n");     // line 6
+        src.append(b"seven\n");   // line 7
+        src.append(b"target\n");  // line 8 — first pattern's only match (below)
+        src.append(b"mark\n");    // line 9 — second pattern, BELOW first match
+        src.finish();
+        let mut idx = crate::line_index::LineIndex::new();
+
+        let origin = (2usize, 0usize);
+        let mut vp = Viewport::new(20, 4, "test".into()); // body = 3
+        vp.set_top(origin.0, origin.1);
+        assert_eq!(vp.top_line(), 2);
+
+        // Step 1: preview a match well below origin — jumps onto it.
+        vp.incsearch_preview(&src, &mut idx, "target", SearchDirection::Forward, origin);
+        assert_eq!(vp.top_line(), 8, "should land on the far-below match");
+        assert_eq!(vp.top_row(), 0);
+
+        // Step 2: from the SAME origin, preview a pattern whose matches are at
+        // line 4 (above the first match) and line 9 (below it). Because the
+        // preview re-anchors at origin (line 2) before scanning forward, it
+        // must land on line 4 — not line 9, which is what a scan continuing
+        // forward from the previous match (line 8) would have found first.
+        vp.incsearch_preview(&src, &mut idx, "mark", SearchDirection::Forward, origin);
+        assert_eq!(
+            vp.top_line(), 4,
+            "preview must reset to origin before scanning, landing on the match \
+             after origin rather than continuing forward from the previous match"
+        );
+        assert_eq!(vp.top_row(), 0);
+    }
+
+    #[test]
+    fn incsearch_preview_empty_or_invalid_is_noop() {
+        let (src, mut idx) = setup(b"alpha\nbeta\n[unbalanced\n");
+        let mut vp = Viewport::new(20, 4, "test".into());
+        vp.set_top(1, 0);
+        // Empty pattern: no-op, position unchanged.
+        vp.incsearch_preview(&src, &mut idx, "", SearchDirection::Forward, (0, 0));
+        assert_eq!(vp.top_line(), 1);
+        // Invalid regex: silent, position reset to origin but no jump/panic.
+        vp.incsearch_preview(&src, &mut idx, "(", SearchDirection::Forward, (0, 0));
+        assert_eq!(vp.top_line(), 0);
+    }
+
+    #[test]
     fn filter_and_grep_combine_with_and() {
         use crate::grep::GrepPredicate;
         let fmt = crate::format::LogFormat::compile(
@@ -3366,6 +3659,21 @@ mod tests {
         v.hscroll_left_half();
         assert_eq!(v.left_col(), 8);
         v.hscroll_left_half();
+        assert_eq!(v.left_col(), 0); // clamps at 0
+    }
+
+    #[test]
+    fn hscroll_by_explicit_cols_moves_left_col() {
+        // `--shift N` path: scroll right/left by an explicit column count.
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.toggle_chop(); // chop on so hscroll is active
+        v.hscroll_right_cols(12);
+        assert_eq!(v.left_col(), 12);
+        v.hscroll_right_cols(12);
+        assert_eq!(v.left_col(), 24);
+        v.hscroll_left_cols(12);
+        assert_eq!(v.left_col(), 12);
+        v.hscroll_left_cols(99);
         assert_eq!(v.left_col(), 0); // clamps at 0
     }
 

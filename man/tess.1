@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.36.0" 
+.TH tess 1  "tess 0.37.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-width\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-\-record\-start\fR] [\fB\-\-rscroll\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-truecolor\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-rscroll\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -14,6 +14,9 @@ Render images with Unicode half\-blocks (▀, fg=top pixel, bg=bottom pixel) for
 .TP
 \fB\-S\fR, \fB\-\-chop\-long\-lines\fR
 Chop long lines instead of wrapping
+.TP
+\fB\-\-clipboard\fR
+Enable interactive clipboard yank: `:yank` copies the current line to the system clipboard. Bind a key via `clipboard\-yank\-line` in keys.toml (unbound by default, so it never clobbers existing keys)
 .TP
 \fB\-\-content\-type\fR \fI<TYPE>\fR
 Force the content type for `\-\-prettify` (otherwise auto\-detected from the filename extension and the first bytes). Values: `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`. Setting this implies `\-\-prettify` (unless the value is `raw`/`auto`)
@@ -45,6 +48,9 @@ In follow mode, any user motion (scroll, page, goto\-line) suspends following. R
 \fB\-\-format\fR \fI<NAME>\fR
 Apply a named log format (built\-in or user\-defined in ~/.config/tess/formats.toml). Required by `\-\-filter`
 .TP
+\fB\-\-from\-clipboard\fR
+Use the system clipboard contents as input (like `pbpaste | tess`). Mutually exclusive with file arguments and piped stdin
+.TP
 \fB\-\-grep\fR \fI<PATTERN>\fR
 Filter visible lines by regex against the raw line. Repeatable; multiple `\-\-grep` arguments AND. Works on any input — no `\-\-format` required. Composes with `\-\-filter` (both must match) and with `\-\-dim` (non\-matches stay visible but faded). Example: `\-\-grep error \-\-grep \*(Aq^\\[\*(Aq`
 .TP
@@ -68,6 +74,9 @@ Force case\-insensitive search regardless of pattern case. Mirrors `less \-I`. M
 .TP
 \fB\-\-image\-width\fR \fI<N>\fR
 Target width in columns for image rendering. Defaults to the terminal width interactively, or 80 when exporting to a file/stdout
+.TP
+\fB\-\-incsearch\fR
+Incremental search: in the `/`/`?` prompt, jump to and highlight the first match as you type (from where the prompt opened). Esc restores the original position; Enter commits. Default off. Mirrors `less \-\-incsearch`. Runtime toggle: `:incsearch`
 .TP
 \fB\-N\fR, \fB\-\-LINE\-NUMBERS\fR
 Show line numbers
@@ -138,14 +147,23 @@ Accepted for `less` compatibility. tess always exits on Ctrl\-C (Ctrl\-C → Com
 \fB\-r\fR, \fB\-\-raw\-control\-chars\fR
 Pass every byte to the terminal raw, including cursor moves and non\-SGR escape sequences. Risky: scroll math may break on long lines. Less\-style \-r. Mutually exclusive with \-\-no\-color
 .TP
+\fB\-R\fR, \fB\-\-RAW\-CONTROL\-CHARS\fR
+Accept `less \-R`: interpret SGR/OSC color escapes, strip other control sequences — which is tess\*(Aqs default. Provided for drop\-in `less \-R` compatibility. Distinct from `\-r` (full raw) and `\-\-no\-color`
+.TP
 \fB\-\-record\-start\fR \fI<REGEX>\fR
 Treat lines matching REGEX as record boundaries. Lines that don\*(Aqt match are joined to the preceding record. Affects search, filter, grep, and the status line — all operate on whole records when set. Overrides the active \-\-format\*(Aqs record_start if both are present. Without \-\-format, this is the only way to enable records mode for plain text. Example: \-\-record\-start \*(Aq^\\[\*(Aq
 .TP
 \fB\-\-rscroll\fR \fI<CHAR>\fR [default: >]
 Character to show at the right edge of a chopped line (`\-S` chop mode) indicating "more content right". Default `>`. Pass an empty string to disable. Mirrors `less \-\-rscroll=c`
 .TP
+\fB\-#\fR, \fB\-\-shift\fR \fI<N>\fR
+Column count for the ←/→ horizontal\-scroll commands (default: half screen). `0` keeps the half\-screen default. Mirrors `less \-#`/`\-\-shift`
+.TP
 \fB\-s\fR, \fB\-\-squeeze\-blank\-lines\fR
 Collapse runs of two or more consecutive blank lines into a single blank line at display time. Real line numbers, search, and tag jumps are unaffected (they reference the original count). Mirrors `less \-s`
+.TP
+\fB\-J\fR, \fB\-\-status\-column\fR
+Show a 1\-column status gutter at the far left: a mark letter on marked lines, else `*` on lines containing a current\-search match. Stays fixed under horizontal scroll. No\-op in \-\-hex/\-r/image modes. Mirrors `less \-J`
 .TP
 \fB\-\-status\-style\fR \fI<SPEC>\fR [default: reverse]
 Style for the status row. Comma\-separated tokens: `bold`, `dim`, `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a named color (`black`..`white`, optional `bright\-` prefix), `#RRGGBB`, or an indexed value (0–255). Empty string disables theming. Default: `reverse`
@@ -156,6 +174,9 @@ Synonym for `\-\-output \-`: write the batch\-mode output to stdout
 \fB\-\-tab\-width\fR \fI<TAB_WIDTH>\fR [default: 8]
 Tab stop width (default 8)
 .TP
+\fB\-x\fR, \fB\-\-tabs\fR \fI<LIST>\fR
+Tab stops as a comma\-separated column list, e.g. `\-x4,8,16`. A single value is equivalent to `\-\-tab\-width`. With multiple values, tabs advance to the next listed column; past the last stop the final interval repeats. Overrides `\-\-tab\-width`. Mirrors `less \-x`
+.TP
 \fB\-t\fR, \fB\-\-tag\fR \fI<NAME>\fR
 Jump to the tag NAME at startup (requires a tags file)
 .TP
@@ -165,8 +186,14 @@ Path to the tags file. Default: walk up from CWD looking for `tags`
 \fB\-\-tail\fR \fI<N>\fR
 Show only the last N lines of the source. For files this skips most of the index work — useful for huge logs. Combine with `\-f` for `tail \-f`. Mutually exclusive with \-\-head. Streaming stdin is not supported
 .TP
+\fB\-\-to\-clipboard\fR
+Batch sink: apply filters/head/tail/prettify and copy the result to the system clipboard, then exit. Mutually exclusive with \-o/\-\-stdout
+.TP
 \fB\-\-truecolor\fR \fI<MODE>\fR [default: auto]
 Truecolor (24\-bit RGB) handling. `auto` (default) checks `$COLORTERM` and downsamples when truecolor isn\*(Aqt advertised; `never` always downsamples to the 256\-color palette; `always` passes RGB through regardless of terminal capability
+.TP
+\fB\-\-wheel\-lines\fR \fI<N>\fR
+Body lines scrolled per mouse\-wheel notch under `\-\-mouse` (default 3)
 .TP
 \fB\-z\fR, \fB\-\-window\fR \fI<N>\fR
 PageDown / PageUp step size in lines. Default: full screen height (body rows). Half\-page commands always advance by half the screen regardless. Mirrors `less \-zn` / `\-\-window=n`
@@ -183,4 +210,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.36.0
+v0.37.0

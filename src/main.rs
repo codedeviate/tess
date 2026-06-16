@@ -285,6 +285,21 @@ fn parse_header_spec(s: &str) -> std::result::Result<(usize, usize), String> {
     }
 }
 
+fn parse_tab_stops(spec: &str) -> std::result::Result<Vec<usize>, String> {
+    let mut out = Vec::new();
+    for part in spec.split(',') {
+        let n: usize = part.trim().parse()
+            .map_err(|_| format!("--tabs: invalid number `{part}`"))?;
+        if n == 0 { return Err("--tabs: stops must be >= 1".to_string()); }
+        if out.last().is_some_and(|&prev| n <= prev) {
+            return Err("--tabs: stops must be strictly ascending".to_string());
+        }
+        out.push(n);
+    }
+    if out.is_empty() { return Err("--tabs: empty list".to_string()); }
+    Ok(out)
+}
+
 fn parse_plus_cmd(s: &str) -> std::result::Result<PlusCmd, String> {
     debug_assert!(s.starts_with('+') && s.len() > 1);
     let rest = &s[1..];
@@ -406,7 +421,9 @@ fn real_main() -> Result<()> {
     // Batch (`--output` / `--stdout`) is incompatible with `--live`: live mode
     // is "watch a file rewrite, render the new view" — there's no view to
     // render in batch.
-    let batch_destination: Option<BatchDestination> = if args.stdout {
+    let batch_destination: Option<BatchDestination> = if args.to_clipboard {
+        Some(BatchDestination::Clipboard)
+    } else if args.stdout {
         Some(BatchDestination::Stdout)
     } else if let Some(path) = args.output.as_deref() {
         if path == "-" { Some(BatchDestination::Stdout) }
@@ -417,6 +434,11 @@ fn real_main() -> Result<()> {
     if batch_destination.is_some() && args.live {
         return Err(Error::Runtime(
             "--output / --stdout is not compatible with --live".to_string(),
+        ));
+    }
+    if args.to_clipboard && args.follow {
+        return Err(Error::Runtime(
+            "--to-clipboard is not compatible with --follow".to_string(),
         ));
     }
 
@@ -485,11 +507,30 @@ documents can't be parsed)".to_string(),
     // do we need to redirect fd 0 to /dev/tty for keyboard input. Also track
     // whether `--tail` is meaningful for this source (streaming stdin can't
     // do random-access tail).
+    // `--from-clipboard` reads the clipboard into an in-memory source — no
+    // file args (clap enforces `conflicts_with = "files"`) and no piped stdin.
+    // Following has no producer to follow, so reject -f / --live here.
+    if args.from_clipboard {
+        if args.follow {
+            return Err(Error::Runtime(
+                "--from-clipboard is not compatible with --follow".to_string(),
+            ));
+        }
+        if args.live {
+            return Err(Error::Runtime(
+                "--from-clipboard is not compatible with --live".to_string(),
+            ));
+        }
+    }
+
     let file_set = tess::file_set::FileSet::new(args.files.clone());
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
-    let (src, label): (Box<dyn Source>, String) = match args.files.first() {
+    let (src, label): (Box<dyn Source>, String) = if args.from_clipboard {
+        let bytes = tess::clipboard::read().map_err(Error::Runtime)?;
+        (Box::new(tess::source::MemorySource::new(bytes)), "(clipboard)".to_string())
+    } else { match args.files.first() {
         Some(path) => {
             let (s, l, pf) = tess::open::open_source_for_path(path, &args, preprocessor.as_ref())?;
             preprocess_failure = pf;
@@ -510,7 +551,7 @@ documents can't be parsed)".to_string(),
         None => {
             return Err(Error::NoInput);
         }
-    };
+    }};
 
     // If the user wants prettification, resolve the mode against the inner
     // source's first bytes + the path (if any) and wrap the source. Failure
@@ -693,10 +734,18 @@ showing raw (use --content-type=NAME to override)"
                 };
                 let width = args.image_width.map(|w| w.clamp(1, u16::MAX as usize) as u16).unwrap_or(80);
                 let grid = tess::image_render::render_image(&rgba, width, style, !args.no_color);
+                if matches!(destination, BatchDestination::Clipboard) {
+                    let mut buf: Vec<u8> = Vec::new();
+                    tess::image_export::write_grid(&mut buf, &grid, !args.no_color)
+                        .map_err(|e| Error::Runtime(e.to_string()))?;
+                    tess::clipboard::write(&buf).map_err(Error::Runtime)?;
+                    return Ok(());
+                }
                 let mut w: Box<dyn std::io::Write> = match &destination {
                     BatchDestination::Stdout => Box::new(std::io::stdout().lock()),
                     BatchDestination::File(p) => Box::new(std::fs::File::create(p)
                         .map_err(|e| Error::Runtime(format!("{}: {e}", p.display())))?),
+                    BatchDestination::Clipboard => unreachable!("clipboard handled above"),
                 };
                 tess::image_export::write_grid(&mut w, &grid, !args.no_color)
                     .map_err(|e| Error::Runtime(e.to_string()))?;
@@ -743,6 +792,14 @@ showing raw (use --content-type=NAME to override)"
     if args.line_numbers { viewport.toggle_line_numbers(); }
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
+    if let Some(spec) = args.tabs.as_deref() {
+        let stops = parse_tab_stops(spec).map_err(Error::Runtime)?;
+        if stops.len() == 1 {
+            viewport.opts.tab_width = stops[0].clamp(1, u8::MAX as usize) as u8;
+        } else {
+            viewport.opts.tab_stops = Some(stops);
+        }
+    }
     viewport.set_follow_mode(args.follow);
     viewport.set_live_mode(args.live);
     viewport.set_prettify_label(prettify_label);
@@ -773,6 +830,7 @@ showing raw (use --content-type=NAME to override)"
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_case_mode(case_mode);
     viewport.set_hilite_search(!args.no_hilite_search);
+    viewport.set_incsearch(args.incsearch);
     let qae = if args.QUIT_AT_EOF {
         tess::viewport::QuitAtEof::First
     } else if args.quit_at_eof {
@@ -782,6 +840,7 @@ showing raw (use --content-type=NAME to override)"
     };
     viewport.set_quit_at_eof(qae);
     viewport.set_squeeze_blanks(args.squeeze_blanks);
+    viewport.set_status_column(args.status_column);
     if let Some(spec) = args.header.as_deref() {
         let (lines, cols) = parse_header_spec(spec).map_err(Error::Runtime)?;
         viewport.set_header(lines, cols);
@@ -959,6 +1018,21 @@ mod tests {
     fn parse_plus_unknown_errors() {
         assert!(parse_plus_cmd("+xyzzy").is_err());
         assert!(parse_plus_cmd("+abc").is_err());
+    }
+
+    #[test]
+    fn parse_tab_stops_accepts_ascending_list() {
+        assert_eq!(parse_tab_stops("4,8,16").unwrap(), vec![4, 8, 16]);
+        assert_eq!(parse_tab_stops("4").unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn parse_tab_stops_rejects_bad_input() {
+        assert!(parse_tab_stops("").is_err());            // empty
+        assert!(parse_tab_stops("0").is_err());           // zero
+        assert!(parse_tab_stops("4,x").is_err());         // non-numeric
+        assert!(parse_tab_stops("8,4").is_err());         // not ascending
+        assert!(parse_tab_stops("4,4").is_err());         // not strictly ascending
     }
 
     #[test]

@@ -36,6 +36,12 @@ pub struct Args {
     #[arg(short = 'S', long = "chop-long-lines")]
     pub chop: bool,
 
+    /// Enable interactive clipboard yank: `:yank` copies the current line to the
+    /// system clipboard. Bind a key via `clipboard-yank-line` in keys.toml
+    /// (unbound by default, so it never clobbers existing keys).
+    #[arg(long = "clipboard")]
+    pub clipboard: bool,
+
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
     /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
@@ -101,6 +107,11 @@ pub struct Args {
     #[arg(long = "format", value_name = "NAME")]
     pub format: Option<String>,
 
+    /// Use the system clipboard contents as input (like `pbpaste | tess`).
+    /// Mutually exclusive with file arguments and piped stdin.
+    #[arg(long = "from-clipboard", conflicts_with = "files")]
+    pub from_clipboard: bool,
+
     /// Filter visible lines by regex against the raw line. Repeatable;
     /// multiple `--grep` arguments AND. Works on any input — no `--format`
     /// required. Composes with `--filter` (both must match) and with
@@ -157,6 +168,13 @@ pub struct Args {
     /// width interactively, or 80 when exporting to a file/stdout.
     #[arg(long = "image-width", value_name = "N")]
     pub image_width: Option<usize>,
+
+    /// Incremental search: in the `/`/`?` prompt, jump to and highlight the
+    /// first match as you type (from where the prompt opened). Esc restores the
+    /// original position; Enter commits. Default off. Mirrors `less --incsearch`.
+    /// Runtime toggle: `:incsearch`.
+    #[arg(long = "incsearch")]
+    pub incsearch: bool,
 
     /// Show line numbers.
     #[arg(short = 'N', long = "LINE-NUMBERS")]
@@ -302,6 +320,13 @@ pub struct Args {
     #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
     pub raw_control_chars: bool,
 
+    /// Accept `less -R`: interpret SGR/OSC color escapes, strip other control
+    /// sequences — which is tess's default. Provided for drop-in `less -R`
+    /// compatibility. Distinct from `-r` (full raw) and `--no-color`.
+    #[arg(short = 'R', long = "RAW-CONTROL-CHARS",
+        conflicts_with_all = ["raw_control_chars", "no_color"])]
+    pub RAW_CONTROL_CHARS: bool,
+
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
     /// grep, and the status line — all operate on whole records when set.
@@ -317,12 +342,23 @@ pub struct Args {
     #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
     pub rscroll: String,
 
+    /// Column count for the ←/→ horizontal-scroll commands (default: half
+    /// screen). `0` keeps the half-screen default. Mirrors `less -#`/`--shift`.
+    #[arg(short = '#', long = "shift", value_name = "N")]
+    pub shift: Option<u16>,
+
     /// Collapse runs of two or more consecutive blank lines into a
     /// single blank line at display time. Real line numbers, search,
     /// and tag jumps are unaffected (they reference the original
     /// count). Mirrors `less -s`.
     #[arg(short = 's', long = "squeeze-blank-lines")]
     pub squeeze_blanks: bool,
+
+    /// Show a 1-column status gutter at the far left: a mark letter on marked
+    /// lines, else `*` on lines containing a current-search match. Stays fixed
+    /// under horizontal scroll. No-op in --hex/-r/image modes. Mirrors `less -J`.
+    #[arg(short = 'J', long = "status-column")]
+    pub status_column: bool,
 
     /// Style for the status row. Comma-separated tokens: `bold`, `dim`,
     /// `italic`, `underline`, `reverse`, `fg=COLOR`, `bg=COLOR`. COLOR is a
@@ -340,6 +376,13 @@ pub struct Args {
     #[arg(long = "tab-width", default_value_t = 8)]
     pub tab_width: u8,
 
+    /// Tab stops as a comma-separated column list, e.g. `-x4,8,16`. A single
+    /// value is equivalent to `--tab-width`. With multiple values, tabs advance
+    /// to the next listed column; past the last stop the final interval
+    /// repeats. Overrides `--tab-width`. Mirrors `less -x`.
+    #[arg(short = 'x', long = "tabs", value_name = "LIST")]
+    pub tabs: Option<String>,
+
     /// Jump to the tag NAME at startup (requires a tags file).
     #[arg(short = 't', long = "tag", value_name = "NAME")]
     pub tag: Option<String>,
@@ -354,12 +397,21 @@ pub struct Args {
     #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
 
+    /// Batch sink: apply filters/head/tail/prettify and copy the result to the
+    /// system clipboard, then exit. Mutually exclusive with -o/--stdout.
+    #[arg(long = "to-clipboard", conflicts_with_all = ["output", "stdout"])]
+    pub to_clipboard: bool,
+
     /// Truecolor (24-bit RGB) handling. `auto` (default) checks `$COLORTERM`
     /// and downsamples when truecolor isn't advertised; `never` always
     /// downsamples to the 256-color palette; `always` passes RGB through
     /// regardless of terminal capability.
     #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
     pub truecolor: String,
+
+    /// Body lines scrolled per mouse-wheel notch under `--mouse` (default 3).
+    #[arg(long = "wheel-lines", value_name = "N")]
+    pub wheel_lines: Option<u16>,
 
     /// PageDown / PageUp step size in lines. Default: full screen
     /// height (body rows). Half-page commands always advance by half
@@ -391,6 +443,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_raw_control_chars_alias() {
+        let a = Args::parse_from(["tess", "-R", "f"]);
+        assert!(a.RAW_CONTROL_CHARS);
+    }
+    #[test]
+    fn raw_control_chars_conflicts_with_raw_and_no_color() {
+        assert!(Args::try_parse_from(["tess", "-R", "-r", "f"]).is_err());
+        assert!(Args::try_parse_from(["tess", "-R", "--no-color", "f"]).is_err());
+    }
+    #[test]
+    fn parses_shift_and_wheel_lines() {
+        let a = Args::parse_from(["tess", "--shift", "12", "--wheel-lines", "5", "f"]);
+        assert_eq!(a.shift, Some(12));
+        assert_eq!(a.wheel_lines, Some(5));
+    }
+
+    #[test]
     fn parses_short_flags_and_file() {
         let a = Args::parse_from(["tess", "-N", "-S", "foo.txt"]);
         assert!(a.line_numbers);
@@ -402,6 +471,14 @@ mod tests {
     fn parses_tab_width() {
         let a = Args::parse_from(["tess", "--tab-width", "4", "x"]);
         assert_eq!(a.tab_width, 4);
+    }
+
+    #[test]
+    fn parses_tabs_list() {
+        let a = Args::parse_from(["tess", "--tabs", "4,8,16", "f"]);
+        assert_eq!(a.tabs.as_deref(), Some("4,8,16"));
+        let b = Args::parse_from(["tess", "-x", "4", "f"]);
+        assert_eq!(b.tabs.as_deref(), Some("4"));
     }
 
     #[test]
@@ -542,6 +619,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_status_column() {
+        let a = Args::parse_from(["tess", "-J", "f"]);
+        assert!(a.status_column);
+        let b = Args::parse_from(["tess", "--status-column", "f"]);
+        assert!(b.status_column);
+        let c = Args::parse_from(["tess", "f"]);
+        assert!(!c.status_column, "status_column defaults off");
+    }
+
+    #[test]
     fn parses_stdout_flag() {
         let a = Args::parse_from(["tess", "--stdout", "f"]);
         assert!(a.stdout);
@@ -582,6 +669,18 @@ mod tests {
     fn parses_image_width() {
         let a = Args::parse_from(["tess", "--image-width", "120", "cat.png"]);
         assert_eq!(a.image_width, Some(120));
+    }
+
+    #[test]
+    fn parses_incsearch() {
+        let a = Args::parse_from(["tess", "--incsearch", "f"]);
+        assert!(a.incsearch);
+    }
+
+    #[test]
+    fn incsearch_defaults_off() {
+        let a = Args::parse_from(["tess", "f"]);
+        assert!(!a.incsearch);
     }
 
     #[test]
@@ -631,6 +730,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_clipboard_flags() {
+        assert!(Args::parse_from(["tess", "--clipboard", "f"]).clipboard);
+        assert!(Args::parse_from(["tess", "--from-clipboard"]).from_clipboard);
+        assert!(Args::parse_from(["tess", "--to-clipboard", "f"]).to_clipboard);
+    }
+    #[test]
+    fn clipboard_sink_conflicts() {
+        assert!(Args::try_parse_from(["tess", "--to-clipboard", "--stdout", "f"]).is_err());
+        assert!(Args::try_parse_from(["tess", "--to-clipboard", "-o", "x", "f"]).is_err());
+    }
+    #[test]
+    fn from_clipboard_conflicts_with_files() {
+        assert!(Args::try_parse_from(["tess", "--from-clipboard", "f"]).is_err());
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -643,6 +758,7 @@ mod tests {
         let expected = [
             "--blocks",
             "--chop-long-lines",
+            "--clipboard",
             "--content-type",
             "--dim",
             "--display",
@@ -653,6 +769,7 @@ mod tests {
             "--follow-name",
             "--follow-suspend-on-motion",
             "--format",
+            "--from-clipboard",
             "--grep",
             "--head",
             "--header",
@@ -661,6 +778,7 @@ mod tests {
             "--ignore-case",
             "--IGNORE-CASE",
             "--image-width",
+            "--incsearch",
             "--LINE-NUMBERS",
             "--list-formats",
             "--live",
@@ -684,16 +802,22 @@ mod tests {
             "--quit-if-one-screen",
             "--quit-on-intr",
             "--raw-control-chars",
+            "--RAW-CONTROL-CHARS",
             "--record-start",
             "--rscroll",
+            "--shift",
             "--squeeze-blank-lines",
+            "--status-column",
             "--status-style",
             "--stdout",
             "--tab-width",
+            "--tabs",
             "--tag",
             "--tag-file",
             "--tail",
+            "--to-clipboard",
             "--truecolor",
+            "--wheel-lines",
             "--window",
             "--wordwrap",
         ];

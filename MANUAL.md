@@ -42,8 +42,10 @@ cmd | tess [OPTIONS]
 ### Display
 
 - **`-N`, `--LINE-NUMBERS`** — show line numbers in a left-side gutter.
+- **`-J`, `--status-column`** — add a one-column gutter at the far left edge. On a marked line it shows the mark's letter; otherwise, on a line containing a current-search match, it shows `*` (a mark beats `*`). The gutter is fixed under horizontal scroll and is drawn only on the first wrap-row of a wrapped line. No-op in `--hex`, `-r`, and image modes. Match detection runs on the line *content* only (never the gutter) and works even when `-G` suppresses the visual reverse-video highlight. Mirrors `less -J`.
 - **`-S`, `--chop-long-lines`** — truncate long lines at the right edge instead of wrapping. Toggle interactively with `Shift-S`.
 - **`--tab-width N`** — tab-stop width (default `8`).
+- **`-x LIST`, `--tabs LIST`** — set explicit, possibly variable, tab stops. `LIST` is a comma-separated list of column positions. A single value (`-x4`) behaves exactly like `--tab-width` (every-N stops). Multiple values pin those stops and repeat the **last interval** past the final entry — e.g. `-x4,8,16` stops at columns 4, 8, 16, 24, 32, … (the trailing interval of 8 repeats). Overrides `--tab-width`. Mirrors `less -x`.
 - **`--hex`** — render the source as an `xxd`-style hex dump. Mutually exclusive with `--filter`, `--grep`, `--prettify`, `--format`, `--display`, `--record-start`, and `--prompt`.
 - **`--no-image`** — disable image auto-detection; treat image files as raw bytes. Combine with `--hex` for a byte-level view of image data.
 - **`--blocks`** — render detected images in Unicode half-block (`▀`) mode instead of the default character ramp. Each cell encodes two pixel rows.
@@ -146,12 +148,47 @@ CSV cells are aligned into a fixed-width table; cells longer than 60 characters 
 - Incompatible with **`--live`** (which is a "watch a file rewrite, render the new view" feature — there's no view in batch).
 - **`--dim`**, **`-N`** (line numbers), and **`-S`** (chop) are viewport-only concerns and are silently ignored in batch mode. The output is always the raw bytes of matching lines, exactly as they appear in the source (or in the prettified stream when `--prettify` is on), so the file stays grep-/awk-/diff-able.
 
+### Clipboard
+
+tess can read from and write to the system clipboard, and yank lines
+interactively. This is a tess-native feature (not a `less` flag). It
+shells out to the OS clipboard tools — `pbcopy` / `pbpaste` on macOS;
+on Linux it tries `wl-copy` / `wl-paste` (Wayland) first, then `xclip`,
+then `xsel`. If the chosen tool is missing or fails, the error is
+surfaced on the status line.
+
+- **`--from-clipboard`** — use the system clipboard contents as the
+  input source instead of a file or stdin. Conflicts with file
+  arguments, and is rejected together with `--follow` / `--live` (the
+  clipboard isn't a growing/rewritten source).
+- **`--to-clipboard`** — a batch sink, analogous to `-o`/`--stdout`:
+  apply any `--filter` / `--grep` / `--head` / `--tail` / `--prettify`,
+  copy the resulting lines to the clipboard, and exit without entering
+  the pager. Conflicts with `-o` / `--stdout`, and is rejected with
+  `--follow`.
+- **`--clipboard`** — enable interactive yank. With it on, the `:yank`
+  colon command copies the current line to the clipboard. There is also
+  a remappable `clipboard-yank-line` keybinding for this, left **unbound
+  by default** so it doesn't clobber `y` (scroll-up) — bind it yourself
+  in `~/.config/tess/keys.toml` if you want a single-key yank.
+
+```sh
+echo "hello" | pbcopy && tess --from-clipboard          # view clipboard
+tess --format apache-combined --filter status=500 \
+  --to-clipboard access.log                             # filtered → clipboard
+tess --clipboard app.log                                # then :yank a line
+```
+
 ### Other
 
 - **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
 - **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
 - **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
 - **`--mouse`** — enable mouse capture: click rows in the file picker / help overlay, scrollwheel scrolls the body. Trade-off: most terminals disable their native text-selection while mouse capture is on. Off by default.
+- **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch under `--mouse`. Default `3`.
+- **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
+- **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
+- **`--incsearch`** — enable incremental search (off by default). See [Search](#search). Toggle at runtime with `:incsearch`. Mirrors `less --incsearch`.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
 - **`-V`, `--version`** — print version.
 
@@ -206,6 +243,8 @@ Horizontal scrolling is active in **chop mode** (`-S`) and **image view** (`--im
 
 All four bindings are remappable in `~/.config/tess/keys.toml` via the command names `hscroll-left`, `hscroll-right`, `hscroll-left-step`, `hscroll-right-step`. Scrolling fully left clamps back to column 0.
 
+The `←` / `→` step defaults to half the screen width, but `-#` / `--shift N` overrides it with a fixed column count (`0` keeps the half-screen default). The `Shift-←` / `Shift-→` 8-column step is unaffected.
+
 The **line-number gutter** (`-N`) stays fixed while text scrolls. For chopped text, a `<` marker appears at the left edge when content extends further left (analogous to the existing `>` / `--rscroll` right-edge marker). Images shift cleanly with no edge markers. When scrolled past column 0, the status line shows a `»{col}` offset readout; `<col-offset>` is available as a `--prompt` template placeholder.
 
 Frozen left content-columns (`--header ,C`) remain a future addition.
@@ -217,6 +256,16 @@ Pressing `/` opens a search prompt at the bottom of the screen. Type a regex (th
 When a filter is active, search interacts with it predictably: in hide mode, only currently-visible (matching) lines are searched. In dim mode, lines stay dimmed but the matched phrase within each line is still highlighted so it pops out of the surrounding context.
 
 The status line picks up `[/<pattern>]` (or `[?<pattern>]`) while a search is set.
+
+#### Incremental search (`--incsearch`)
+
+With `--incsearch`, the search prompt previews as you type: after each
+keystroke the view jumps to and highlights the first match found from
+where the prompt opened. `Enter` commits to the previewed match; `Esc`
+restores the original position (the preview is abandoned). Off by
+default; mirrors `less --incsearch`. Toggle it at runtime with
+`:incsearch` (no arg flips it; the change takes effect on the next
+search prompt).
 
 ### Case sensitivity
 
@@ -428,7 +477,10 @@ Action:
 
 - Existing command name in kebab-case: `scroll-down`, `page-up`,
   `goto-line`, `toggle-line-numbers`, `mark-set`, `search-forward`,
-  `shell-escape`, etc. Unknown command names error at startup.
+  `shell-escape`, `hscroll-left`, `hscroll-right`, etc. Unknown command
+  names error at startup. `clipboard-yank-line` (copy the current line to
+  the clipboard, requires `--clipboard`) is a valid command but left
+  unbound by default so it doesn't clobber `y` (scroll-up).
 - `!`-prefixed string: an inline shell command, run via the same
   infrastructure as `!cmd`.
 
@@ -650,6 +702,8 @@ The first file opens immediately. Use `:`-prefixed commands to navigate:
 | `:help` (or `:h`) | Open the help overlay listing every keybinding, grouped by category. `F1` also opens it. Type to filter; arrows/scrollwheel (with `--mouse`) to scroll; Esc to close (clears filter first if non-empty). |
 | `:tag NAME` | Jump to the named ctags/etags tag. See [Tag jumping](#tag-jumping). |
 | `:tnext` / `:tprev` | Cycle through multiple matches for the current tag. |
+| `:incsearch` | Toggle incremental search on/off. Takes effect on the next search prompt. See [Search](#search). |
+| `:yank` | Copy the current line to the system clipboard (requires `--clipboard`). See [Clipboard](#clipboard). |
 
 Press `:` to enter the colon prompt; type the command and press Enter,
 or press Esc to cancel. Bare Enter on an empty prompt dismisses without

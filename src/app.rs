@@ -99,8 +99,14 @@ enum ColonCommand {
     /// `:hlsearch` (true) / `:nohlsearch` (false) — toggle search-match
     /// highlighting at runtime.
     HlSearch(bool),
+    /// `:incsearch` — toggle incremental search (preview-as-you-type in the
+    /// `/`/`?` prompt) at runtime. Bare command; flips the current state.
+    IncSearch,
     /// `:header L [C]` — pin top L source rows and left C cols.
     Header(usize, usize),
+    /// `:yank` — copy the current top logical line to the system clipboard
+    /// (only acts when `--clipboard` was passed).
+    Yank,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -217,6 +223,8 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
+        "incsearch"  => Ok(ColonCommand::IncSearch),
+        "yank"       => Ok(ColonCommand::Yank),
         "header" => {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             match parts.as_slice() {
@@ -595,6 +603,42 @@ fn switch_file(
     Ok(())
 }
 
+/// Copy the current top logical line's raw bytes (trailing newline already
+/// stripped by `LineIndex::line_range`) to the system clipboard. Returns a
+/// human-facing status string for the caller to flash. When `--clipboard`
+/// wasn't passed, reports that and copies nothing.
+fn yank_current_line(
+    clipboard_enabled: bool,
+    viewport: &crate::viewport::Viewport,
+    src: &dyn crate::source::Source,
+    idx: &mut crate::line_index::LineIndex,
+) -> String {
+    if !clipboard_enabled {
+        return "[clipboard not enabled (pass --clipboard)]".to_string();
+    }
+    if idx.line_count() == 0 {
+        return "[nothing to copy]".to_string();
+    }
+    let line = viewport.top_line();
+    let bytes = current_line_bytes(idx, src, line);
+    match crate::clipboard::write(&bytes) {
+        Ok(()) => format!("[copied {} bytes]", bytes.len()),
+        Err(e) => format!("[{e}]"),
+    }
+}
+
+/// Raw bytes of the logical line at `line` (trailing newline already stripped
+/// by `LineIndex::line_range`). Pulled out of `yank_current_line` so it can be
+/// unit-tested without touching the OS clipboard.
+fn current_line_bytes(
+    idx: &crate::line_index::LineIndex,
+    src: &dyn crate::source::Source,
+    line: usize,
+) -> Vec<u8> {
+    let range = idx.line_range(line, src);
+    src.bytes(range).into_owned()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn dispatch_colon_command(
     cmd: ColonCommand,
@@ -843,6 +887,15 @@ fn dispatch_colon_command(
             let msg = if on { "[hlsearch on]" } else { "[hlsearch off]" };
             ColonOutcome::Continue(Some(msg.into()))
         }
+        ColonCommand::IncSearch => {
+            let on = !viewport.incsearch();
+            viewport.set_incsearch(on);
+            let msg = if on { "[incsearch on]" } else { "[incsearch off]" };
+            ColonOutcome::Continue(Some(msg.into()))
+        }
+        ColonCommand::Yank => {
+            ColonOutcome::Continue(Some(yank_current_line(args.clipboard, viewport, src.as_ref(), idx)))
+        }
         ColonCommand::Case(mode) => {
             use crate::viewport::CaseMode;
             let next = mode.unwrap_or_else(|| match viewport.case_mode() {
@@ -913,12 +966,18 @@ pub fn run(
     let mut numeric_prefix: Option<usize> = None;
     let mut marks: HashMap<char, (usize, usize)> = HashMap::new();
     let mut previous_position: Option<(usize, usize)> = None;
+    // Scroll position captured when an incremental-search prompt opens, so a
+    // mid-type preview searches from there and Esc can restore it.
+    let mut incsearch_origin: (usize, usize) = (0, 0);
     let mut current_file_index: usize = file_set.current_index();
     let mut transient_status: Option<String> = None;
     let mut tag_stack = TagStack::default();
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
     let mouse_enabled = args.mouse;
+    let clipboard_enabled = args.clipboard;
+    let hscroll_shift = args.shift.unwrap_or(0);
+    let wheel_lines = args.wheel_lines.unwrap_or(3).max(1);
 
     if let Some(tag_name) = args.tag.as_deref() {
         let _ = refresh_tag_file(&mut tag_file);
@@ -960,6 +1019,17 @@ pub fn run(
                     .map_err(|e| crate::error::Error::Runtime(format!("stdout: {}", e)))?;
                 needs_redraw = false;
                 continue;
+            }
+            // `-J` status column: feed the current file's marks (line → letter)
+            // into the viewport so it can render mark glyphs in the far-left
+            // gutter. Empty when the feature is off.
+            if viewport.status_column() {
+                let status_marks: HashMap<usize, char> = marks
+                    .iter()
+                    .filter(|(_, (fi, _))| *fi == current_file_index)
+                    .map(|(ch, (_, line))| (*line, *ch))
+                    .collect();
+                viewport.set_status_marks(status_marks);
             }
             let mut frame = viewport.frame(src.as_ref(), &mut idx);
             // Override the status row when we're in an interactive prompt OR
@@ -1011,8 +1081,17 @@ pub fn run(
                     InputMode::SearchPrompt { direction, buffer, error } => {
                         if let Event::Key(KeyEvent { code, .. }) = event {
                             match code {
-                                KeyCode::Esc => { mode = InputMode::Normal; needs_redraw = true; }
+                                KeyCode::Esc => {
+                                    if viewport.incsearch() {
+                                        viewport.set_top(incsearch_origin.0, incsearch_origin.1);
+                                    }
+                                    mode = InputMode::Normal;
+                                    needs_redraw = true;
+                                }
                                 KeyCode::Enter => {
+                                    if viewport.incsearch() {
+                                        viewport.set_top(incsearch_origin.0, incsearch_origin.1);
+                                    }
                                     if buffer.is_empty() {
                                         // Empty buffer: repeat the last search in the
                                         // newly-typed direction (less compat). If no
@@ -1042,11 +1121,19 @@ pub fn run(
                                 KeyCode::Backspace => {
                                     buffer.pop();
                                     *error = None;
+                                    if viewport.incsearch() {
+                                        viewport.incsearch_preview(
+                                            src.as_ref(), &mut idx, buffer, *direction, incsearch_origin);
+                                    }
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) => {
                                     buffer.push(c);
                                     *error = None;
+                                    if viewport.incsearch() {
+                                        viewport.incsearch_preview(
+                                            src.as_ref(), &mut idx, buffer, *direction, incsearch_origin);
+                                    }
                                     needs_redraw = true;
                                 }
                                 _ => {}
@@ -1558,11 +1645,11 @@ pub fn run(
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollDown => {
-                                viewport.scroll_lines(3, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(wheel_lines as i64, src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollUp => {
-                                viewport.scroll_lines(-3, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(-(wheel_lines as i64), src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollLeft => {
@@ -1760,6 +1847,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::SearchForward => {
+                        incsearch_origin = (viewport.top_line(), viewport.top_row());
                         mode = InputMode::SearchPrompt {
                             direction: SearchDirection::Forward,
                             buffer: String::new(),
@@ -1768,6 +1856,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::SearchBackward => {
+                        incsearch_origin = (viewport.top_line(), viewport.top_row());
                         mode = InputMode::SearchPrompt {
                             direction: SearchDirection::Backward,
                             buffer: String::new(),
@@ -1887,11 +1976,19 @@ pub fn run(
                         // Mouse handling lives in the event-routing block, not here.
                     }
                     Command::HScrollLeft => {
-                        viewport.hscroll_left_half();
+                        if hscroll_shift != 0 {
+                            viewport.hscroll_left_cols(hscroll_shift);
+                        } else {
+                            viewport.hscroll_left_half();
+                        }
                         needs_redraw = true;
                     }
                     Command::HScrollRight => {
-                        viewport.hscroll_right_half();
+                        if hscroll_shift != 0 {
+                            viewport.hscroll_right_cols(hscroll_shift);
+                        } else {
+                            viewport.hscroll_right_half();
+                        }
                         needs_redraw = true;
                     }
                     Command::HScrollLeftStep => {
@@ -1900,6 +1997,11 @@ pub fn run(
                     }
                     Command::HScrollRightStep => {
                         viewport.hscroll_right_step();
+                        needs_redraw = true;
+                    }
+                    Command::YankLine => {
+                        let msg = yank_current_line(clipboard_enabled, &viewport, src.as_ref(), &mut idx);
+                        transient_status = Some(msg);
                         needs_redraw = true;
                     }
                     Command::Noop => {}
@@ -2408,6 +2510,22 @@ mod tests {
     }
 
     #[test]
+    fn current_line_bytes_strips_trailing_newline() {
+        use crate::line_index::LineIndex;
+        use crate::source::MockSource;
+        let m = MockSource::new();
+        // Three lines; the last has no trailing newline.
+        m.append(b"alpha\nbravo\ncharlie");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        assert_eq!(idx.line_count(), 3);
+        assert_eq!(current_line_bytes(&idx, &m, 0), b"alpha");
+        assert_eq!(current_line_bytes(&idx, &m, 1), b"bravo");
+        // Last line, no trailing newline, returned verbatim.
+        assert_eq!(current_line_bytes(&idx, &m, 2), b"charlie");
+    }
+
+    #[test]
     fn write_frame_brackets_with_sync_update_and_no_full_clear() {
         // Locks in the flicker fix: every frame is wrapped in DEC mode 2026
         // begin/end escapes, and the previous global `Clear(All)` is gone
@@ -2744,6 +2862,11 @@ mod tests {
     fn parse_colon_hlsearch_on_off() {
         assert_eq!(parse_colon_command("hlsearch").unwrap(), ColonCommand::HlSearch(true));
         assert_eq!(parse_colon_command("nohlsearch").unwrap(), ColonCommand::HlSearch(false));
+    }
+
+    #[test]
+    fn parse_colon_incsearch_toggle() {
+        assert_eq!(parse_colon_command("incsearch").unwrap(), ColonCommand::IncSearch);
     }
 
     #[test]
