@@ -50,6 +50,7 @@ cmd | tess [OPTIONS]
 - **`--no-image`** — disable image auto-detection; treat image files as raw bytes. Combine with `--hex` for a byte-level view of image data.
 - **`--blocks`** — render detected images in Unicode half-block (`▀`) mode instead of the default character ramp. Each cell encodes two pixel rows.
 - **`--image-width N`** — scale the rendered image to N columns (default: terminal width).
+- **`--image-protocol auto|kitty|sixel|ascii`** — pick the image rendering path (default `auto`). `auto` detects terminal graphics support (Kitty graphics / Sixel) and falls back to ASCII; explicit modes skip detection. See the **Images** section for full behavior.
 
 ### Source
 
@@ -1010,8 +1011,13 @@ tess logo.gif           # GIFs render their first frame
 ### Flags
 
 - **`--no-image`** — skip rendering and show the raw bytes instead (combine with `--hex` for a byte-level view).
-- **`--blocks`** — Unicode half-block (`▀`) mode. Each terminal cell encodes two pixel rows (top as fg, bottom as bg), doubling vertical resolution.
-- **`--image-width N`** — render at N columns. Defaults to the current terminal width.
+- **`--blocks`** — Unicode half-block (`▀`) mode. Each terminal cell encodes two pixel rows (top as fg, bottom as bg), doubling vertical resolution. Ignored when a non-ASCII `--image-protocol` is active.
+- **`--image-width N`** — render at N columns (protocol modes treat it as a fit-width override). Defaults to the current terminal width.
+- **`--image-protocol auto|kitty|sixel|ascii`** — choose how images are drawn. Default `auto`:
+  - `auto` queries the terminal for graphics support (a Kitty graphics query, plus a DA1 query for Sixel) and falls back to the colored-ASCII / half-block path when neither is available. Explicit `kitty` / `sixel` / `ascii` skip detection. When both protocols are detected, Kitty is preferred over Sixel.
+  - In `kitty` / `sixel` mode the image fits the terminal width and you scroll down through a tall image with the usual vertical-scroll keys; `←`/`→` horizontal scroll is a no-op in protocol mode (it still works in `ascii` mode wider than the terminal). The status line shows `[kitty]` / `[sixel]` while in image mode.
+  - Terminal support: the Kitty graphics protocol works on Kitty, iTerm2, WezTerm, and Ghostty; Sixel works on foot, xterm (built with `--enable-sixel`), mlterm, and WezTerm.
+  - Combined with `-o FILE` / `--stdout`, an explicit `kitty` or `sixel` writes the raw encoded escape-sequence bytes to the file or pipe (e.g. `tess --image-protocol sixel --stdout photo.png > out.sixel`); `auto` / `ascii` export colored ASCII art as described below.
 
 ### Color and export
 

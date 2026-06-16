@@ -212,6 +212,9 @@ Flags:
 | `--blocks` | Unicode half-block (`▀`) mode — twice the vertical resolution per terminal row. |
 | `--image-width N` | Scale to N columns (default: terminal width). |
 | `--no-image` | View raw bytes instead of rendering; useful with `--hex`. |
+| `--image-protocol auto\|kitty\|sixel\|ascii` | Render at true pixel fidelity via the Kitty graphics protocol or Sixel (default `auto`). |
+
+For true-pixel rendering, `--image-protocol` draws the image with the Kitty graphics protocol (Kitty / iTerm2 / WezTerm / Ghostty) or Sixel (foot / xterm / mlterm / WezTerm). `auto` detects terminal support and falls back to ASCII art (Kitty preferred over Sixel); explicit `kitty` / `sixel` / `ascii` skip detection. In protocol mode the image fits the terminal width and scrolls vertically; `←`/`→` are no-ops. With an explicit `kitty`/`sixel` plus `-o`/`--stdout`, tess writes the raw escape bytes (e.g. save a `.sixel`). The status line shows `[kitty]` / `[sixel]`.
 
 Color output uses 24-bit truecolor SGR; pass `--no-color` for a plain character-only render. Export the art with `-o FILE` or `--stdout` — ANSI-colored by default, plain text under `--no-color`.
 
@@ -246,6 +249,7 @@ The full set, alphabetical by long name — the same order `tess --help` lists t
 | `--hex-group N` | Hex bytes per group in `--hex` mode (`2`/`4`/`8`/`16`/`32`; default `4`). |
 | `-i, --ignore-case` | Smart-case search (insensitive unless the pattern has an uppercase char). |
 | `-I, --IGNORE-CASE` | Force case-insensitive search regardless of pattern. |
+| `--image-protocol MODE` | Image rendering path: `auto`/`kitty`/`sixel`/`ascii` (default `auto`, detects terminal graphics). |
 | `--image-width N` | Target width in columns for image rendering. |
 | `-N, --LINE-NUMBERS` | Show line numbers. |
 | `--list-formats` | Print available log formats and their fields, then exit. |
