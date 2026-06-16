@@ -2598,8 +2598,12 @@ mod tests {
         let body_rows = 3usize;
         let cols = 10u16;
         let blob = b"\x1bPqDATA\x1b\\".to_vec();
+        // Seed a body cell with a distinctive printable char; the image-blob
+        // path must skip the per-row cell loop, so this char must NOT appear.
+        let mut body = vec![vec![crate::render::Cell::Empty; cols as usize]; body_rows];
+        body[0][0] = crate::render::Cell::Char { ch: 'Z', width: 1, style: crate::ansi::Style::default(), hyperlink: None };
         let frame = Frame {
-            body: vec![vec![crate::render::Cell::Empty; cols as usize]; body_rows],
+            body,
             row_styles: vec![RowStyle::Normal; body_rows],
             highlights: vec![Vec::new(); body_rows],
             status: "img".to_string(),
@@ -2612,6 +2616,7 @@ mod tests {
         let needle = b"\x1bPqDATA\x1b\\";
         assert!(out.windows(needle.len()).any(|w| w == needle), "image blob emitted verbatim");
         assert!(String::from_utf8_lossy(&out).contains("img"), "status still drawn");
+        assert!(!String::from_utf8_lossy(&out).contains('Z'), "cell loop skipped: body cell not rendered");
     }
 
     #[test]
