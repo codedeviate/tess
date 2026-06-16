@@ -37,3 +37,5 @@ pub mod image_render;
 pub mod image_export;
 #[cfg(feature = "image")]
 pub mod image_protocol;
+#[cfg(feature = "image")]
+pub mod term_query;
