@@ -920,7 +920,7 @@ pub fn run(
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
     let mouse_enabled = args.mouse;
     let hscroll_shift = args.shift.unwrap_or(0);
-    let wheel_lines = args.wheel_lines.unwrap_or(1).max(1);
+    let wheel_lines = args.wheel_lines.unwrap_or(3).max(1);
 
     if let Some(tag_name) = args.tag.as_deref() {
         let _ = refresh_tag_file(&mut tag_file);
@@ -1560,11 +1560,11 @@ pub fn run(
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollDown => {
-                                viewport.scroll_lines(3 * wheel_lines as i64, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(wheel_lines as i64, src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollUp => {
-                                viewport.scroll_lines(-3 * wheel_lines as i64, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(-(wheel_lines as i64), src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollLeft => {

@@ -380,7 +380,7 @@ pub struct Args {
     #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
     pub truecolor: String,
 
-    /// Body lines scrolled per mouse-wheel notch under `--mouse` (default 1).
+    /// Body lines scrolled per mouse-wheel notch under `--mouse` (default 3).
     #[arg(long = "wheel-lines", value_name = "N")]
     pub wheel_lines: Option<u16>,
 
