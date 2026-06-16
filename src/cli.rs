@@ -158,6 +158,13 @@ pub struct Args {
     #[arg(long = "image-width", value_name = "N")]
     pub image_width: Option<usize>,
 
+    /// Incremental search: in the `/`/`?` prompt, jump to and highlight the
+    /// first match as you type (from where the prompt opened). Esc restores the
+    /// original position; Enter commits. Default off. Mirrors `less --incsearch`.
+    /// Runtime toggle: `:incsearch`.
+    #[arg(long = "incsearch")]
+    pub incsearch: bool,
+
     /// Show line numbers.
     #[arg(short = 'N', long = "LINE-NUMBERS")]
     pub line_numbers: bool,
@@ -633,6 +640,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_incsearch() {
+        let a = Args::parse_from(["tess", "--incsearch", "f"]);
+        assert!(a.incsearch);
+    }
+
+    #[test]
+    fn incsearch_defaults_off() {
+        let a = Args::parse_from(["tess", "f"]);
+        assert!(!a.incsearch);
+    }
+
+    #[test]
     fn image_flags_default_off() {
         let a = Args::parse_from(["tess", "f"]);
         assert!(!a.no_image);
@@ -709,6 +728,7 @@ mod tests {
             "--ignore-case",
             "--IGNORE-CASE",
             "--image-width",
+            "--incsearch",
             "--LINE-NUMBERS",
             "--list-formats",
             "--live",

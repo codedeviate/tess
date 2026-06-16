@@ -305,6 +305,10 @@ pub struct Viewport {
     /// Line number that `render_state` matches the start of. Sentinel
     /// `usize::MAX` means "invalid, must reconstruct".
     render_state_for: usize,
+    /// `--incsearch` / `:incsearch`: when on, each keystroke in the `/`/`?`
+    /// search prompt previews the first match (jump + highlight) from the
+    /// position the prompt opened at. Esc restores; Enter commits. Default off.
+    incsearch: bool,
 }
 
 impl Viewport {
@@ -359,6 +363,7 @@ impl Viewport {
             page_size: None,
             render_state: crate::render::RenderState::default(),
             render_state_for: usize::MAX,
+            incsearch: false,
         }
     }
 
@@ -367,6 +372,31 @@ impl Viewport {
     pub fn hilite_search(&self) -> bool { self.hilite_search }
 
     pub fn set_hilite_search(&mut self, on: bool) { self.hilite_search = on; }
+
+    pub fn incsearch(&self) -> bool { self.incsearch }
+
+    pub fn set_incsearch(&mut self, on: bool) { self.incsearch = on; }
+
+    pub fn top_row(&self) -> usize { self.top_row }
+
+    /// Set the scroll position directly (logical line + wrap-row within it).
+    pub fn set_top(&mut self, line: usize, row: usize) {
+        self.top_line = line;
+        self.top_row = row;
+    }
+
+    /// Preview an incremental-search pattern from `origin` (a (top_line, top_row)
+    /// captured when the prompt opened), scrolling to the first match. Empty or
+    /// invalid patterns are a silent no-op. Used by `--incsearch`.
+    pub fn incsearch_preview(&mut self, src: &dyn Source, idx: &mut LineIndex,
+                             pattern: &str, direction: SearchDirection,
+                             origin: (usize, usize)) {
+        if pattern.is_empty() { return; }
+        self.set_top(origin.0, origin.1);
+        if self.set_search(pattern.to_string(), direction).is_ok() {
+            self.search_repeat(src, idx, false);
+        }
+    }
 
     pub fn set_quit_at_eof(&mut self, mode: QuitAtEof) {
         self.quit_at_eof = mode;
@@ -2965,6 +2995,42 @@ mod tests {
         assert!(body_text[0].contains("keep this error"));
         assert!(body_text[1].contains("another error line"));
         assert!(frame.status.contains("[grep]"));
+    }
+
+    #[test]
+    fn incsearch_preview_jumps_and_can_restore() {
+        let src = crate::source::MockSource::new();
+        src.append(b"alpha\n");   // line 0
+        src.append(b"beta\n");    // line 1
+        src.append(b"gamma\n");   // line 2
+        src.append(b"target\n");  // line 3 — unique match below the top
+        src.append(b"delta\n");   // line 4
+        src.finish();
+        let mut idx = crate::line_index::LineIndex::new();
+
+        let mut vp = Viewport::new(20, 4, "test".into()); // body = 3
+        assert_eq!(vp.top_line(), 0);
+
+        vp.incsearch_preview(&src, &mut idx, "target", SearchDirection::Forward, (0, 0));
+        assert_eq!(vp.top_line(), 3);
+        assert_eq!(vp.top_row(), 0);
+
+        vp.set_top(0, 0);
+        assert_eq!(vp.top_line(), 0);
+        assert_eq!(vp.top_row(), 0);
+    }
+
+    #[test]
+    fn incsearch_preview_empty_or_invalid_is_noop() {
+        let (src, mut idx) = setup(b"alpha\nbeta\n[unbalanced\n");
+        let mut vp = Viewport::new(20, 4, "test".into());
+        vp.set_top(1, 0);
+        // Empty pattern: no-op, position unchanged.
+        vp.incsearch_preview(&src, &mut idx, "", SearchDirection::Forward, (0, 0));
+        assert_eq!(vp.top_line(), 1);
+        // Invalid regex: silent, position reset to origin but no jump/panic.
+        vp.incsearch_preview(&src, &mut idx, "(", SearchDirection::Forward, (0, 0));
+        assert_eq!(vp.top_line(), 0);
     }
 
     #[test]

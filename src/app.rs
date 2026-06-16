@@ -99,6 +99,9 @@ enum ColonCommand {
     /// `:hlsearch` (true) / `:nohlsearch` (false) — toggle search-match
     /// highlighting at runtime.
     HlSearch(bool),
+    /// `:incsearch` — toggle incremental search (preview-as-you-type in the
+    /// `/`/`?` prompt) at runtime. Bare command; flips the current state.
+    IncSearch,
     /// `:header L [C]` — pin top L source rows and left C cols.
     Header(usize, usize),
 }
@@ -217,6 +220,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
+        "incsearch"  => Ok(ColonCommand::IncSearch),
         "header" => {
             let parts: Vec<&str> = rest.split_whitespace().collect();
             match parts.as_slice() {
@@ -843,6 +847,12 @@ fn dispatch_colon_command(
             let msg = if on { "[hlsearch on]" } else { "[hlsearch off]" };
             ColonOutcome::Continue(Some(msg.into()))
         }
+        ColonCommand::IncSearch => {
+            let on = !viewport.incsearch();
+            viewport.set_incsearch(on);
+            let msg = if on { "[incsearch on]" } else { "[incsearch off]" };
+            ColonOutcome::Continue(Some(msg.into()))
+        }
         ColonCommand::Case(mode) => {
             use crate::viewport::CaseMode;
             let next = mode.unwrap_or_else(|| match viewport.case_mode() {
@@ -913,6 +923,9 @@ pub fn run(
     let mut numeric_prefix: Option<usize> = None;
     let mut marks: HashMap<char, (usize, usize)> = HashMap::new();
     let mut previous_position: Option<(usize, usize)> = None;
+    // Scroll position captured when an incremental-search prompt opens, so a
+    // mid-type preview searches from there and Esc can restore it.
+    let mut incsearch_origin: (usize, usize) = (0, 0);
     let mut current_file_index: usize = file_set.current_index();
     let mut transient_status: Option<String> = None;
     let mut tag_stack = TagStack::default();
@@ -1013,7 +1026,13 @@ pub fn run(
                     InputMode::SearchPrompt { direction, buffer, error } => {
                         if let Event::Key(KeyEvent { code, .. }) = event {
                             match code {
-                                KeyCode::Esc => { mode = InputMode::Normal; needs_redraw = true; }
+                                KeyCode::Esc => {
+                                    if viewport.incsearch() {
+                                        viewport.set_top(incsearch_origin.0, incsearch_origin.1);
+                                    }
+                                    mode = InputMode::Normal;
+                                    needs_redraw = true;
+                                }
                                 KeyCode::Enter => {
                                     if buffer.is_empty() {
                                         // Empty buffer: repeat the last search in the
@@ -1044,11 +1063,19 @@ pub fn run(
                                 KeyCode::Backspace => {
                                     buffer.pop();
                                     *error = None;
+                                    if viewport.incsearch() {
+                                        viewport.incsearch_preview(
+                                            src.as_ref(), &mut idx, buffer, *direction, incsearch_origin);
+                                    }
                                     needs_redraw = true;
                                 }
                                 KeyCode::Char(c) => {
                                     buffer.push(c);
                                     *error = None;
+                                    if viewport.incsearch() {
+                                        viewport.incsearch_preview(
+                                            src.as_ref(), &mut idx, buffer, *direction, incsearch_origin);
+                                    }
                                     needs_redraw = true;
                                 }
                                 _ => {}
@@ -1762,6 +1789,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::SearchForward => {
+                        incsearch_origin = (viewport.top_line(), viewport.top_row());
                         mode = InputMode::SearchPrompt {
                             direction: SearchDirection::Forward,
                             buffer: String::new(),
@@ -1770,6 +1798,7 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::SearchBackward => {
+                        incsearch_origin = (viewport.top_line(), viewport.top_row());
                         mode = InputMode::SearchPrompt {
                             direction: SearchDirection::Backward,
                             buffer: String::new(),
@@ -2754,6 +2783,11 @@ mod tests {
     fn parse_colon_hlsearch_on_off() {
         assert_eq!(parse_colon_command("hlsearch").unwrap(), ColonCommand::HlSearch(true));
         assert_eq!(parse_colon_command("nohlsearch").unwrap(), ColonCommand::HlSearch(false));
+    }
+
+    #[test]
+    fn parse_colon_incsearch_toggle() {
+        assert_eq!(parse_colon_command("incsearch").unwrap(), ColonCommand::IncSearch);
     }
 
     #[test]
