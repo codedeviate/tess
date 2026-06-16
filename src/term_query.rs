@@ -2,6 +2,9 @@
 //! PARSERS here are pure and unit-tested; the I/O round-trip in `detect` is
 //! verified manually (no PTY tests, per project policy).
 
+use std::io::{Read, Write};
+use std::time::Duration;
+
 /// What the terminal supports, plus its cell pixel size when reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TermGraphics {
@@ -86,10 +89,21 @@ mod tests {
         assert!(g.kitty && g.sixel);
         assert_eq!(g.cell_px, Some((8, 16)));
     }
-}
 
-use std::io::{Read, Write};
-use std::time::Duration;
+    #[test]
+    fn truncated_da1_without_c_is_safe() {
+        // `\x1b[?` with no terminating `c`: must not panic, no sixel detected.
+        let g = parse_responses(b"\x1b[?62;4");
+        assert!(!g.sixel);
+    }
+
+    #[test]
+    fn non_numeric_cell_size_is_ignored() {
+        // Malformed cell-size body: parse fails gracefully, cell_px stays None.
+        let g = parse_responses(b"\x1b[6;xx;yyt");
+        assert_eq!(g.cell_px, None);
+    }
+}
 
 // wired up in the --image-protocol auto path (later task)
 /// Probe the terminal for graphics support. Writes the query sequences to
@@ -118,6 +132,11 @@ fn query_tty(timeout: Duration) -> Option<TermGraphics> {
     tty.flush().ok()?;
 
     let (tx, rx) = std::sync::mpsc::channel();
+    // Detached reader: we read on a thread and abandon it on timeout. A
+    // conformant terminal answers DA1 (`c`) within ms so the thread exits
+    // promptly; a terminal that answers only partially leaves the thread
+    // blocked on read until process exit. Acceptable for a one-shot startup
+    // probe.
     std::thread::spawn(move || {
         let mut buf = Vec::new();
         let mut byte = [0u8; 1];
