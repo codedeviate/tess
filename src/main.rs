@@ -359,6 +359,11 @@ fn real_main() -> Result<()> {
     let ansi_mode = resolve_ansi_mode(&args);
     // Validate --truecolor early; the resolved bool is consumed inside app::run.
     resolve_truecolor(&args).map_err(Error::Runtime)?;
+    // Validate --image-protocol early so a typo is rejected regardless of input
+    // type (mirrors --truecolor). Pass is_tty=false so this validation never
+    // queries the terminal — `auto` detection stays lazy until an image opens.
+    #[cfg(feature = "image")]
+    resolve_image_protocol(&args.image_protocol, false)?;
 
     // `--follow-name` is accepted for compatibility but already matches our
     // default behavior (rotation/truncation handled by re-opening the path).
@@ -1047,6 +1052,10 @@ mod tests {
         assert_eq!(resolve_image_protocol("auto", false).unwrap().0, ImageProtocol::Ascii);
         // unknown value errors.
         assert!(resolve_image_protocol("bogus", true).is_err());
+        // The eager-validation call uses is_tty=false; valid values must resolve
+        // without error (and without touching the terminal).
+        assert!(resolve_image_protocol("auto", false).is_ok());
+        assert!(resolve_image_protocol("kitty", false).is_ok());
     }
 
     #[test]
