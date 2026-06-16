@@ -91,41 +91,6 @@ of `Cell` is a lot of bytes. If memory becomes a concern, consider a
 denser representation (e.g., parallel `Vec<char>` and `Vec<u8>` for
 widths). Not before measurement.
 
-### Sixel / Kitty image protocols — **L**
-
-> **Next up — prioritized for the upcoming development cycle.** This is the
-> next planned feature after the `0.37.0` batch. Gets its own brainstorm →
-> spec → plan cycle when work starts.
-
-Render inline images at true fidelity via the Sixel or Kitty terminal
-graphics protocols, instead of (or alongside) the existing colored-ASCII /
-half-block rendering.
-
-What already exists to build on:
-
-- Image **decoding** is done — `image_render` decodes PNG/GIF/JPEG/BMP/WebP/
-  TIFF/TGA/ICO/PNM to RGBA (behind the default-on `image` Cargo feature), and
-  `image_export` already serializes a rendered grid. The decoded RGBA buffer is
-  the natural input to a protocol encoder, so no *new* decoding dependency is
-  needed — contrary to the earlier note here.
-
-What the work actually entails:
-
-- **Protocol encoders** turning an RGBA buffer into the wire format: a Sixel
-  byte stream, and the Kitty graphics protocol (APC `_G` sequences, chunked
-  base64 payload). These are self-contained and unit-testable like the rest of
-  the render kernel.
-- **Terminal capability detection** to pick a protocol — likely an
-  `--image-protocol auto|sixel|kitty|ascii` flag with `auto` querying terminal
-  support (e.g. Kitty/iTerm2/WezTerm advertise the graphics protocol; Sixel via
-  a DA1 query), falling back to the current ASCII/half-block path. Mirrors the
-  terminal-dependent approach already used for horizontal mouse scroll.
-- **A `Cell` image-reference variant or a dedicated frame path** so the viewport
-  can place an image region and reason about the rows/cols it occupies for
-  scroll math — the existing `frame_image` path is the seam to extend.
-- Integration with horizontal scroll, `--image-width`, `-o`/`--stdout` export,
-  and `--no-image`.
-
 ---
 
 ## Not yet supported

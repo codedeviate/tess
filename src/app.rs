@@ -2300,6 +2300,29 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, trueco
     out.queue(SetAttribute(Attribute::Reset))?;
     out.queue(ResetColor)?;
 
+    if let Some(blob) = &frame.image_blob {
+        // Clear the body region once so a prior frame's cells don't bleed
+        // around/under the image, then emit the graphics escape verbatim.
+        for r in 0..frame.body.len() as u16 {
+            out.queue(MoveTo(0, r))?;
+            out.queue(Clear(ClearType::UntilNewLine))?;
+        }
+        out.queue(MoveTo(0, 0))?;
+        out.write_all(blob)?;
+        // Status row, mirroring the normal path's status handling.
+        out.queue(MoveTo(0, rows.saturating_sub(1)))?;
+        out.queue(Clear(ClearType::UntilNewLine))?;
+        emit_style_diff(out, &crate::ansi::Style::default(), &frame.status_style, truecolor)?;
+        let mut status = frame.status.clone();
+        if status.len() > cols as usize { status.truncate(cols as usize); }
+        else { let pad = cols as usize - status.len(); status.push_str(&" ".repeat(pad)); }
+        out.queue(Print(status))?;
+        out.queue(ResetColor)?;
+        out.queue(SetAttribute(Attribute::Reset))?;
+        out.write_all(SYNC_UPDATE_END)?;
+        return out.flush();
+    }
+
     for (i, row) in frame.body.iter().enumerate() {
         out.queue(MoveTo(0, i as u16))?;
         // Wipe whatever was on this row in the previous frame. Cursor is
@@ -2545,6 +2568,7 @@ mod tests {
             status: "status".into(),
             status_style: crate::ansi::Style { reverse: true, ..Default::default() },
             raw_rows: vec![None, None],
+            image_blob: None,
         };
 
         let mut buf: Vec<u8> = Vec::new();
@@ -2569,6 +2593,33 @@ mod tests {
     }
 
     #[test]
+    fn write_frame_emits_image_blob_verbatim_and_skips_cell_rows() {
+        use crate::viewport::{Frame, RowStyle};
+        let body_rows = 3usize;
+        let cols = 10u16;
+        let blob = b"\x1bPqDATA\x1b\\".to_vec();
+        // Seed a body cell with a distinctive printable char; the image-blob
+        // path must skip the per-row cell loop, so this char must NOT appear.
+        let mut body = vec![vec![crate::render::Cell::Empty; cols as usize]; body_rows];
+        body[0][0] = crate::render::Cell::Char { ch: 'Z', width: 1, style: crate::ansi::Style::default(), hyperlink: None };
+        let frame = Frame {
+            body,
+            row_styles: vec![RowStyle::Normal; body_rows],
+            highlights: vec![Vec::new(); body_rows],
+            status: "img".to_string(),
+            status_style: crate::ansi::Style::default(),
+            raw_rows: vec![None; body_rows],
+            image_blob: Some(blob.clone()),
+        };
+        let mut out: Vec<u8> = Vec::new();
+        write_frame(&mut out, &frame, cols, (body_rows + 1) as u16, true).unwrap();
+        let needle = b"\x1bPqDATA\x1b\\";
+        assert!(out.windows(needle.len()).any(|w| w == needle), "image blob emitted verbatim");
+        assert!(String::from_utf8_lossy(&out).contains("img"), "status still drawn");
+        assert!(!String::from_utf8_lossy(&out).contains('Z'), "cell loop skipped: body cell not rendered");
+    }
+
+    #[test]
     fn raw_rows_passthrough_emits_original_bytes_and_skips_continuation() {
         use crate::ansi::Style;
         use crate::render::Cell;
@@ -2587,6 +2638,7 @@ mod tests {
             // Row 0 emits raw bytes (with an embedded ESC); row 1 is a
             // continuation and emits nothing.
             raw_rows: vec![Some(b"\x1b[31mABC\x1b[0m".to_vec()), Some(Vec::new())],
+            image_blob: None,
         };
 
         let mut buf: Vec<u8> = Vec::new();

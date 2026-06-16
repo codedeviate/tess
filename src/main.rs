@@ -359,6 +359,11 @@ fn real_main() -> Result<()> {
     let ansi_mode = resolve_ansi_mode(&args);
     // Validate --truecolor early; the resolved bool is consumed inside app::run.
     resolve_truecolor(&args).map_err(Error::Runtime)?;
+    // Validate --image-protocol early so a typo is rejected regardless of input
+    // type (mirrors --truecolor). Pass is_tty=false so this validation never
+    // queries the terminal — `auto` detection stays lazy until an image opens.
+    #[cfg(feature = "image")]
+    resolve_image_protocol(&args.image_protocol, false)?;
 
     // `--follow-name` is accepted for compatibility but already matches our
     // default behavior (rotation/truncation handled by re-opening the path).
@@ -734,10 +739,23 @@ showing raw (use --content-type=NAME to override)"
                 };
                 let width = args.image_width.map(|w| w.clamp(1, u16::MAX as usize) as u16).unwrap_or(80);
                 let grid = tess::image_render::render_image(&rgba, width, style, !args.no_color);
+                use std::io::Write as _;
+                // Explicit terminal-graphics protocols export the encoded escape
+                // blob verbatim instead of the ASCII grid. `auto`/`ascii` fall
+                // through to write_grid (no terminal to detect against in batch).
+                let proto_bytes: Option<Vec<u8>> = match args.image_protocol.as_str() {
+                    "kitty" => Some(tess::image_protocol::encode_kitty(&rgba)),
+                    "sixel" => Some(tess::image_protocol::encode_sixel(&rgba)),
+                    _ => None,
+                };
                 if matches!(destination, BatchDestination::Clipboard) {
                     let mut buf: Vec<u8> = Vec::new();
-                    tess::image_export::write_grid(&mut buf, &grid, !args.no_color)
-                        .map_err(|e| Error::Runtime(e.to_string()))?;
+                    if let Some(bytes) = &proto_bytes {
+                        buf.extend_from_slice(bytes);
+                    } else {
+                        tess::image_export::write_grid(&mut buf, &grid, !args.no_color)
+                            .map_err(|e| Error::Runtime(e.to_string()))?;
+                    }
                     tess::clipboard::write(&buf).map_err(Error::Runtime)?;
                     return Ok(());
                 }
@@ -747,8 +765,12 @@ showing raw (use --content-type=NAME to override)"
                         .map_err(|e| Error::Runtime(format!("{}: {e}", p.display())))?),
                     BatchDestination::Clipboard => unreachable!("clipboard handled above"),
                 };
-                tess::image_export::write_grid(&mut w, &grid, !args.no_color)
-                    .map_err(|e| Error::Runtime(e.to_string()))?;
+                if let Some(bytes) = &proto_bytes {
+                    w.write_all(bytes).map_err(|e| Error::Runtime(e.to_string()))?;
+                } else {
+                    tess::image_export::write_grid(&mut w, &grid, !args.no_color)
+                        .map_err(|e| Error::Runtime(e.to_string()))?;
+                }
                 return Ok(());
             }
         }
@@ -971,6 +993,9 @@ showing raw (use --content-type=NAME to override)"
                     };
                     viewport.set_image(rgba, fmt, style, args.image_width);
                     viewport.set_image_no_color(args.no_color);
+                    let is_tty = std::io::stdout().is_terminal();
+                    let (proto, cell_px) = resolve_image_protocol(&args.image_protocol, is_tty)?;
+                    viewport.set_image_protocol(proto, cell_px);
                 }
                 Err(e) => {
                     eprintln!("tess: image decode failed ({e}); showing raw");
@@ -983,6 +1008,30 @@ showing raw (use --content-type=NAME to override)"
     Ok(())
 }
 
+#[cfg(feature = "image")]
+fn resolve_image_protocol(flag: &str, is_tty: bool)
+    -> std::result::Result<(tess::viewport::ImageProtocol, Option<(u16, u16)>), Error> {
+    use tess::viewport::ImageProtocol;
+    match flag {
+        "ascii" => Ok((ImageProtocol::Ascii, None)),
+        "kitty" => Ok((ImageProtocol::Kitty, None)),
+        "sixel" => Ok((ImageProtocol::Sixel, None)),
+        "auto" => {
+            if !is_tty {
+                return Ok((ImageProtocol::Ascii, None));
+            }
+            let g = tess::term_query::detect();
+            // Preference: Kitty > Sixel > ASCII.
+            let proto = if g.kitty { ImageProtocol::Kitty }
+                else if g.sixel { ImageProtocol::Sixel }
+                else { ImageProtocol::Ascii };
+            Ok((proto, g.cell_px))
+        }
+        other => Err(Error::Runtime(format!(
+            "--image-protocol: unknown value '{other}' (expected auto, kitty, sixel, or ascii)"))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -990,6 +1039,23 @@ mod tests {
     #[test]
     fn parse_plus_g_is_goto_bottom() {
         assert_eq!(parse_plus_cmd("+G"), Ok(PlusCmd::GotoBottom));
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn resolve_image_protocol_explicit_and_errors() {
+        use tess::viewport::ImageProtocol;
+        assert_eq!(resolve_image_protocol("ascii", true).unwrap().0, ImageProtocol::Ascii);
+        assert_eq!(resolve_image_protocol("kitty", true).unwrap().0, ImageProtocol::Kitty);
+        assert_eq!(resolve_image_protocol("sixel", false).unwrap().0, ImageProtocol::Sixel);
+        // auto with no tty → ASCII (never queries the terminal).
+        assert_eq!(resolve_image_protocol("auto", false).unwrap().0, ImageProtocol::Ascii);
+        // unknown value errors.
+        assert!(resolve_image_protocol("bogus", true).is_err());
+        // The eager-validation call uses is_tty=false; valid values must resolve
+        // without error (and without touching the terminal).
+        assert!(resolve_image_protocol("auto", false).is_ok());
+        assert!(resolve_image_protocol("kitty", false).is_ok());
     }
 
     #[test]

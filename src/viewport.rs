@@ -198,6 +198,23 @@ pub struct Frame {
     /// `None` means "render cells normally". Only populated when the
     /// viewport's ansi_mode is Raw.
     pub raw_rows: Vec<Option<Vec<u8>>>,
+    /// When `Some`, the whole body is a single terminal-graphics escape blob
+    /// (Sixel/Kitty). `write_frame` clears the body once, positions the cursor
+    /// at (0,0), and writes these bytes verbatim instead of the per-row cell
+    /// loop. `None` for all text/hex/ASCII-image frames.
+    pub image_blob: Option<Vec<u8>>,
+}
+
+/// How images are rendered to the terminal. `Ascii` is the default (colored
+/// ASCII / half-block art via `image_render`); `Kitty` / `Sixel` emit native
+/// terminal-graphics escape blobs via `image_protocol`.
+#[cfg(feature = "image")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageProtocol {
+    #[default]
+    Ascii,
+    Kitty,
+    Sixel,
 }
 
 pub struct Viewport {
@@ -234,6 +251,16 @@ pub struct Viewport {
     hex_mode: bool,
     #[cfg(feature = "image")]
     image: Option<image::RgbaImage>,
+    #[cfg(feature = "image")]
+    image_protocol: ImageProtocol,
+    /// Pixel dimensions of one terminal cell (w, h), used by protocol rendering
+    /// to scale the image to fit terminal width and map text rows to pixels.
+    #[cfg(feature = "image")]
+    cell_px: (u16, u16),
+    /// Width-scaled image cache. The `u16` is the scaled WIDTH the cache was
+    /// built for; reused across vertical scrolls until the target width changes.
+    #[cfg(feature = "image")]
+    image_scaled: Option<(u16, image::RgbaImage)>,
     image_mode: bool,
     image_no_color: bool,
     #[cfg_attr(not(feature = "image"), allow(dead_code))]
@@ -346,6 +373,12 @@ impl Viewport {
             hex_mode: false,
             #[cfg(feature = "image")]
             image: None,
+            #[cfg(feature = "image")]
+            image_protocol: ImageProtocol::Ascii,
+            #[cfg(feature = "image")]
+            cell_px: (8, 16),
+            #[cfg(feature = "image")]
+            image_scaled: None,
             image_mode: false,
             image_no_color: false,
             image_format: String::new(),
@@ -562,9 +595,22 @@ impl Viewport {
         self.image_mode = true;
         self.top_line = 0;
         self.top_row = 0;
+        self.image_scaled = None;
     }
 
     pub fn set_image_no_color(&mut self, on: bool) { self.image_no_color = on; }
+
+    #[cfg(feature = "image")]
+    pub fn set_image_protocol(&mut self, proto: ImageProtocol, cell_px: Option<(u16, u16)>) {
+        self.image_protocol = proto;
+        if let Some(c) = cell_px {
+            if c.0 > 0 && c.1 > 0 { self.cell_px = c; }
+        }
+        self.image_scaled = None;
+    }
+
+    #[cfg(feature = "image")]
+    pub fn image_protocol(&self) -> ImageProtocol { self.image_protocol }
 
     pub fn image_mode(&self) -> bool { self.image_mode }
 
@@ -578,7 +624,11 @@ impl Viewport {
         match &self.image {
             Some(img) => {
                 let (w, h) = img.dimensions();
-                crate::image_render::output_rows(w, h, self.image_cols(), self.image_style)
+                if self.image_protocol != ImageProtocol::Ascii {
+                    protocol_occupied_rows(w, h, self.cols, self.cell_px, self.image_width)
+                } else {
+                    crate::image_render::output_rows(w, h, self.image_cols(), self.image_style)
+                }
             }
             None => 0,
         }
@@ -1384,7 +1434,7 @@ impl Viewport {
         self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
-        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows, image_blob: None }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
@@ -1660,7 +1710,7 @@ impl Viewport {
 
         let status = self.format_status_hex(src);
         let raw_rows = vec![None; body.len()];
-        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows, image_blob: None }
     }
 
     fn format_status_hex(&self, src: &dyn Source) -> String {
@@ -1691,6 +1741,9 @@ impl Viewport {
     #[cfg(feature = "image")]
     fn frame_image(&mut self) -> Frame {
         use crate::render::Cell;
+        if self.image_protocol != ImageProtocol::Ascii {
+            return self.frame_image_protocol();
+        }
         let body_rows = self.body_rows() as usize;
         let cols = self.cols as usize;
         let img = match &self.image {
@@ -1704,6 +1757,7 @@ impl Viewport {
                     status: self.image_format.clone(),
                     status_style: self.status_style,
                     raw_rows: vec![None; body_rows],
+                    image_blob: None,
                 };
             }
         };
@@ -1732,6 +1786,7 @@ impl Viewport {
             status,
             status_style: self.status_style,
             raw_rows: vec![None; body_rows],
+            image_blob: None,
         }
     }
 
@@ -1746,6 +1801,68 @@ impl Viewport {
             s.push_str(&format!("  \u{00bb}{}", self.left_col));
         }
         s
+    }
+
+    #[cfg(feature = "image")]
+    fn frame_image_protocol(&mut self) -> Frame {
+        use crate::render::Cell;
+        let body_rows = self.body_rows() as usize;
+        let cols = self.cols as usize;
+        let status_style = self.status_style;
+        let blank = |status: String, blob: Option<Vec<u8>>| Frame {
+            body: vec![vec![Cell::Empty; cols]; body_rows],
+            row_styles: vec![RowStyle::Normal; body_rows],
+            highlights: vec![Vec::new(); body_rows],
+            status,
+            status_style,
+            raw_rows: vec![None; body_rows],
+            image_blob: blob,
+        };
+        let (iw, ih) = match &self.image {
+            Some(i) => i.dimensions(),
+            None => return blank(self.image_format.clone(), None),
+        };
+        let ch = self.cell_px.1.max(1) as u32;
+        let (scaled_w, scaled_h) = protocol_scaled_dims(iw, ih, self.cols, self.cell_px, self.image_width);
+
+        // Build / reuse the width-scaled image.
+        let need = self.image_scaled.as_ref().map(|(c, _)| *c != scaled_w as u16).unwrap_or(true);
+        if need {
+            let src = self.image.as_ref().unwrap();
+            let scaled = image::imageops::resize(src, scaled_w, scaled_h, image::imageops::FilterType::Triangle);
+            self.image_scaled = Some((scaled_w as u16, scaled));
+        }
+
+        let total_rows = protocol_occupied_rows(iw, ih, self.cols, self.cell_px, self.image_width);
+        let max_top = total_rows.saturating_sub(body_rows);
+        if self.top_line > max_top { self.top_line = max_top; }
+        self.left_col = 0; // horizontal scroll is a no-op in protocol mode
+
+        let y0 = (self.top_line as u32 * ch).min(scaled_h);
+        let band_h = ((body_rows as u32) * ch).min(scaled_h - y0).max(1);
+        let scaled = &self.image_scaled.as_ref().unwrap().1;
+        let band = image::imageops::crop_imm(scaled, 0, y0, scaled_w, band_h).to_image();
+        let blob = match self.image_protocol {
+            ImageProtocol::Kitty => crate::image_protocol::encode_kitty(&band),
+            ImageProtocol::Sixel => crate::image_protocol::encode_sixel(&band),
+            ImageProtocol::Ascii => unreachable!("frame_image_protocol only entered for non-Ascii"),
+        };
+        let status = self.format_status_image_protocol(total_rows);
+        blank(status, Some(blob))
+    }
+
+    #[cfg(feature = "image")]
+    fn format_status_image_protocol(&self, total_rows: usize) -> String {
+        let body = self.body_rows() as usize;
+        let top = self.top_line + 1;
+        let bottom = (self.top_line + body).min(total_rows.max(1));
+        let proto = match self.image_protocol {
+            ImageProtocol::Kitty => "kitty",
+            ImageProtocol::Sixel => "sixel",
+            ImageProtocol::Ascii => "ascii",
+        };
+        let dims = self.image.as_ref().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
+        format!("{}  {}  {}  [{}]  rows {}-{}/{}", self.source_label, dims, self.image_format, proto, top, bottom, total_rows)
     }
 
     /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
@@ -2145,6 +2262,29 @@ impl Viewport {
     pub fn visible_lines(&self) -> &[usize] { &self.visible_lines }
 }
 
+/// Fit-width scaled pixel dimensions of an image: width = target_cols cells
+/// wide (in pixels), height preserving aspect. `width_cols` overrides the
+/// terminal `cols` when `Some` (from `--image-width`). Pure; the single source
+/// of the protocol fit-width scaling formula.
+#[cfg(feature = "image")]
+pub fn protocol_scaled_dims(img_w: u32, img_h: u32, cols: u16,
+                            cell_px: (u16, u16), width_cols: Option<usize>) -> (u32, u32) {
+    let target_cols = width_cols.unwrap_or(cols as usize).max(1) as u32;
+    let scaled_w = (target_cols * cell_px.0.max(1) as u32).max(1);
+    let img_w = img_w.max(1);
+    let scaled_h = (img_h as u64 * scaled_w as u64 / img_w as u64).max(1) as u32;
+    (scaled_w, scaled_h)
+}
+
+/// Text rows a fit-width protocol image occupies. `width_cols` overrides the
+/// terminal `cols` when `Some` (from `--image-width`). Pure; used for scroll math.
+#[cfg(feature = "image")]
+pub fn protocol_occupied_rows(img_w: u32, img_h: u32, cols: u16,
+                              cell_px: (u16, u16), width_cols: Option<usize>) -> usize {
+    let (_, scaled_h) = protocol_scaled_dims(img_w, img_h, cols, cell_px, width_cols);
+    (scaled_h as usize).div_ceil(cell_px.1.max(1) as usize).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2432,6 +2572,57 @@ mod tests {
         v.goto_bottom(&m, &mut idx);
         // Last page should show lines 7..=10 → top_line = 6.
         assert_eq!(v.top_line, 6);
+    }
+
+    #[test]
+    #[cfg(feature = "image")]
+    fn protocol_image_occupied_rows_fit_width() {
+        // 100x200 image, cols=50, cell_px=(8,16): scaled_w=400, scaled_h=800, rows=50.
+        assert_eq!(crate::viewport::protocol_occupied_rows(100, 200, 50, (8, 16), None), 50);
+        // --image-width 25 cols: scaled_w=200, scaled_h=400, rows=25.
+        assert_eq!(crate::viewport::protocol_occupied_rows(100, 200, 50, (8, 16), Some(25)), 25);
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn frame_image_protocol_sets_image_blob() {
+        use image::{Rgba, RgbaImage};
+        let mut vp = Viewport::new(40, 10, "cat.png".into());
+        let mut idx = LineIndex::new();
+        let m = MockSource::new();
+        vp.set_image(RgbaImage::from_pixel(20, 40, Rgba([10, 20, 30, 255])), "png", crate::image_render::AsciiStyle::Ramp, None);
+        vp.set_image_protocol(crate::viewport::ImageProtocol::Kitty, Some((8, 16)));
+        let frame = vp.frame(&m, &mut idx);
+        assert!(frame.image_blob.is_some(), "Kitty protocol frame carries an image blob");
+        // ASCII protocol → no blob
+        vp.set_image_protocol(crate::viewport::ImageProtocol::Ascii, None);
+        let frame2 = vp.frame(&m, &mut idx);
+        assert!(frame2.image_blob.is_none(), "ASCII protocol frame has no blob");
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn protocol_image_clamps_vertical_scroll() {
+        use image::{Rgba, RgbaImage};
+        let mut vp = Viewport::new(40, 10, "cat.png".into()); // body = 9
+        let mut idx = LineIndex::new();
+        let m = MockSource::new();
+        // Tall image so it occupies many rows.
+        vp.set_image(RgbaImage::from_pixel(20, 2000, Rgba([10, 20, 30, 255])), "png", crate::image_render::AsciiStyle::Ramp, None);
+        vp.set_image_protocol(crate::viewport::ImageProtocol::Kitty, Some((8, 16)));
+        // Scroll way past the end; frame() applies the clamp.
+        for _ in 0..10_000 {
+            vp.scroll_lines(1, &m, &mut idx);
+        }
+        let _ = vp.frame(&m, &mut idx);
+        // After scrolling past the end, top_line clamps to (protocol_total - body_rows).
+        let total = crate::viewport::protocol_occupied_rows(20, 2000, 40, (8, 16), None);
+        let body = vp.body_rows() as usize;
+        assert_eq!(
+            vp.top_line(),
+            total.saturating_sub(body),
+            "scroll reaches exactly the protocol image bottom"
+        );
     }
 
     #[cfg(feature = "image")]

@@ -10,6 +10,36 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-06-16
+
+### Added
+
+- **Inline image rendering via the Kitty graphics protocol and Sixel** — render
+  detected images at true pixel fidelity instead of colored ASCII art. A new
+  `--image-protocol auto|kitty|sixel|ascii` flag selects the path (default
+  `auto`):
+  - `auto` queries the terminal for graphics support (a Kitty graphics query
+    plus a DA1 query for Sixel) and falls back to the existing colored-ASCII /
+    Unicode half-block rendering when neither is available. Explicit `kitty` /
+    `sixel` / `ascii` skip detection entirely. When both protocols are detected,
+    Kitty wins over Sixel.
+  - Images fit to the terminal width with **vertical scroll** — scroll down
+    through a tall image. `←`/`→` horizontal scroll is a no-op in protocol mode.
+    `--image-width N` overrides the fit width.
+  - Encoders are hand-rolled with **no new dependencies**; Sixel reuses tess's
+    existing 256-color downsampling for its palette, and Kitty emits chunked
+    base64 `_G` APC sequences.
+  - Terminal support: Kitty protocol on Kitty / iTerm2 / WezTerm / Ghostty;
+    Sixel on foot / xterm(+sixel) / mlterm / WezTerm.
+  - With an explicit `--image-protocol kitty` or `sixel` combined with `-o FILE`
+    / `--stdout`, tess writes the raw encoded escape-sequence bytes to the file
+    or pipe (e.g. save a `.sixel`); `auto` / `ascii` continue to export colored
+    ASCII as before.
+  - `--blocks` (an ASCII style) is ignored when a non-ASCII protocol is active;
+    `--no-image` still forces the raw-bytes view. The status line shows
+    `[kitty]` / `[sixel]` in image mode.
+  - Behind the default-on `image` Cargo feature.
+
 ## [0.37.0] — 2026-06-16
 
 ### Added

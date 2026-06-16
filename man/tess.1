@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.37.0" 
+.TH tess 1  "tess 0.38.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-rscroll\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-protocol\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-rscroll\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -71,6 +71,9 @@ Smart\-case search. `/`, `?`, `\-\-grep`, and `\-\-filter`\*(Aqs `~` / `!~` oper
 .TP
 \fB\-I\fR, \fB\-\-IGNORE\-CASE\fR
 Force case\-insensitive search regardless of pattern case. Mirrors `less \-I`. Mutually exclusive with `\-i`
+.TP
+\fB\-\-image\-protocol\fR \fI<MODE>\fR [default: auto]
+Image rendering protocol: `auto` (detect terminal graphics support and fall back to ASCII), `kitty`, `sixel`, or `ascii`
 .TP
 \fB\-\-image\-width\fR \fI<N>\fR
 Target width in columns for image rendering. Defaults to the terminal width interactively, or 80 when exporting to a file/stdout
@@ -210,4 +213,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.37.0
+v0.38.0
