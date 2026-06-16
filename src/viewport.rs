@@ -2998,25 +2998,49 @@ mod tests {
     }
 
     #[test]
-    fn incsearch_preview_jumps_and_can_restore() {
+    fn incsearch_preview_anchors_from_origin_not_previous_match() {
+        // The valuable invariant: every preview restarts its scan from
+        // `origin`, never from where the previous preview landed. We prove
+        // this by previewing a far-below match, then previewing a second
+        // pattern that has matches BOTH above and below the first match.
+        // Anchoring from origin must pick the earlier (above) match; a scan
+        // that continued forward from the previous match would pick the
+        // later (below) one instead.
         let src = crate::source::MockSource::new();
-        src.append(b"alpha\n");   // line 0
-        src.append(b"beta\n");    // line 1
-        src.append(b"gamma\n");   // line 2
-        src.append(b"target\n");  // line 3 — unique match below the top
-        src.append(b"delta\n");   // line 4
+        src.append(b"zero\n");    // line 0
+        src.append(b"one\n");     // line 1
+        src.append(b"origin\n");  // line 2 — the search origin (non-(0,0))
+        src.append(b"three\n");   // line 3
+        src.append(b"mark\n");    // line 4 — second pattern, ABOVE first match
+        src.append(b"five\n");    // line 5
+        src.append(b"six\n");     // line 6
+        src.append(b"seven\n");   // line 7
+        src.append(b"target\n");  // line 8 — first pattern's only match (below)
+        src.append(b"mark\n");    // line 9 — second pattern, BELOW first match
         src.finish();
         let mut idx = crate::line_index::LineIndex::new();
 
+        let origin = (2usize, 0usize);
         let mut vp = Viewport::new(20, 4, "test".into()); // body = 3
-        assert_eq!(vp.top_line(), 0);
+        vp.set_top(origin.0, origin.1);
+        assert_eq!(vp.top_line(), 2);
 
-        vp.incsearch_preview(&src, &mut idx, "target", SearchDirection::Forward, (0, 0));
-        assert_eq!(vp.top_line(), 3);
+        // Step 1: preview a match well below origin — jumps onto it.
+        vp.incsearch_preview(&src, &mut idx, "target", SearchDirection::Forward, origin);
+        assert_eq!(vp.top_line(), 8, "should land on the far-below match");
         assert_eq!(vp.top_row(), 0);
 
-        vp.set_top(0, 0);
-        assert_eq!(vp.top_line(), 0);
+        // Step 2: from the SAME origin, preview a pattern whose matches are at
+        // line 4 (above the first match) and line 9 (below it). Because the
+        // preview re-anchors at origin (line 2) before scanning forward, it
+        // must land on line 4 — not line 9, which is what a scan continuing
+        // forward from the previous match (line 8) would have found first.
+        vp.incsearch_preview(&src, &mut idx, "mark", SearchDirection::Forward, origin);
+        assert_eq!(
+            vp.top_line(), 4,
+            "preview must reset to origin before scanning, landing on the match \
+             after origin rather than continuing forward from the previous match"
+        );
         assert_eq!(vp.top_row(), 0);
     }
 

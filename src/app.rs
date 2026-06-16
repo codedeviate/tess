@@ -1034,6 +1034,9 @@ pub fn run(
                                     needs_redraw = true;
                                 }
                                 KeyCode::Enter => {
+                                    if viewport.incsearch() {
+                                        viewport.set_top(incsearch_origin.0, incsearch_origin.1);
+                                    }
                                     if buffer.is_empty() {
                                         // Empty buffer: repeat the last search in the
                                         // newly-typed direction (less compat). If no
