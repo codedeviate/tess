@@ -620,12 +620,23 @@ fn yank_current_line(
         return "[nothing to copy]".to_string();
     }
     let line = viewport.top_line();
-    let range = idx.line_range(line, src);
-    let bytes = src.bytes(range).into_owned();
+    let bytes = current_line_bytes(idx, src, line);
     match crate::clipboard::write(&bytes) {
         Ok(()) => format!("[copied {} bytes]", bytes.len()),
         Err(e) => format!("[{e}]"),
     }
+}
+
+/// Raw bytes of the logical line at `line` (trailing newline already stripped
+/// by `LineIndex::line_range`). Pulled out of `yank_current_line` so it can be
+/// unit-tested without touching the OS clipboard.
+fn current_line_bytes(
+    idx: &crate::line_index::LineIndex,
+    src: &dyn crate::source::Source,
+    line: usize,
+) -> Vec<u8> {
+    let range = idx.line_range(line, src);
+    src.bytes(range).into_owned()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2496,6 +2507,22 @@ mod tests {
     fn parse_colon_n() {
         assert_eq!(parse_colon_command("n").unwrap(), ColonCommand::Next);
         assert_eq!(parse_colon_command("next").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn current_line_bytes_strips_trailing_newline() {
+        use crate::line_index::LineIndex;
+        use crate::source::MockSource;
+        let m = MockSource::new();
+        // Three lines; the last has no trailing newline.
+        m.append(b"alpha\nbravo\ncharlie");
+        let mut idx = LineIndex::new();
+        idx.extend_to_end(&m);
+        assert_eq!(idx.line_count(), 3);
+        assert_eq!(current_line_bytes(&idx, &m, 0), b"alpha");
+        assert_eq!(current_line_bytes(&idx, &m, 1), b"bravo");
+        // Last line, no trailing newline, returned verbatim.
+        assert_eq!(current_line_bytes(&idx, &m, 2), b"charlie");
     }
 
     #[test]

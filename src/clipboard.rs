@@ -11,9 +11,9 @@ pub enum Tool { PbCopyPaste, WlClipboard, Xclip, Xsel }
 
 /// Probe for the first available clipboard tool, in preference order.
 pub fn detect() -> Option<Tool> {
-    // Probe by attempting to spawn the *read* binary with a harmless arg and
-    // seeing if the OS can find it. We use a cheap `--help`/`-version`-free
-    // existence check via spawning and immediately killing where needed.
+    // Probe with `command -v` (POSIX, present on macOS + Linux) rather than
+    // running the tool itself — avoids side effects and works when no
+    // clipboard server is reachable. Re-probed per call; fine at interactive cadence.
     const CANDIDATES: &[(&str, Tool)] = &[
         ("pbpaste", Tool::PbCopyPaste),
         ("wl-paste", Tool::WlClipboard),
@@ -59,8 +59,18 @@ fn write_cmd(tool: Tool) -> Command {
 /// Read clipboard contents. Err string is human-facing (for the status line).
 pub fn read() -> Result<Vec<u8>, String> {
     let tool = detect().ok_or("no clipboard tool found (need pbpaste/wl-paste/xclip/xsel)")?;
-    let out = read_cmd(tool).stderr(Stdio::null()).output()
+    let out = read_cmd(tool).stderr(Stdio::piped()).stdout(Stdio::piped()).stdin(Stdio::null())
+        .output()
         .map_err(|e| format!("clipboard read failed: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            "clipboard read failed (tool exited with error)".to_string()
+        } else {
+            format!("clipboard read failed: {err}")
+        });
+    }
     Ok(out.stdout)
 }
 
@@ -68,11 +78,23 @@ pub fn read() -> Result<Vec<u8>, String> {
 pub fn write(bytes: &[u8]) -> Result<(), String> {
     let tool = detect().ok_or("no clipboard tool found (need pbcopy/wl-copy/xclip/xsel)")?;
     let mut child = write_cmd(tool).stdin(Stdio::piped())
-        .stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+        .stdout(Stdio::null()).stderr(Stdio::piped()).spawn()
         .map_err(|e| format!("clipboard write failed: {e}"))?;
-    child.stdin.as_mut().ok_or("clipboard stdin unavailable")?
-        .write_all(bytes).map_err(|e| format!("clipboard write failed: {e}"))?;
-    child.wait().map_err(|e| format!("clipboard write failed: {e}"))?;
+    // Write then drop stdin so the tool sees EOF before we wait — otherwise
+    // wait_with_output could deadlock on a tool that drains stdin to completion.
+    let mut stdin = child.stdin.take().ok_or("clipboard stdin unavailable")?;
+    stdin.write_all(bytes).map_err(|e| format!("clipboard write failed: {e}"))?;
+    drop(stdin);
+    let out = child.wait_with_output().map_err(|e| format!("clipboard write failed: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        return Err(if err.is_empty() {
+            "clipboard write failed (tool exited with error)".to_string()
+        } else {
+            format!("clipboard write failed: {err}")
+        });
+    }
     Ok(())
 }
 
