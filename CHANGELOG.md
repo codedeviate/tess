@@ -10,6 +10,48 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-06-16
+
+### Added
+
+- **Four `less`-flag pickups** for closer drop-in compatibility:
+  - `-x` / `--tabs LIST` sets explicit, possibly variable, tab stops. The
+    argument is a comma list of column positions: a single value behaves like
+    `--tab-width` (every-N stops), while multiple values pin those stops and
+    repeat the **last interval** past the final entry (e.g. `-x4,8,16` stops at
+    4, 8, 16, 24, 32, …). Overrides `--tab-width`. Mirrors `less -x`.
+  - `-R` / `--RAW-CONTROL-CHARS` is an accepted alias for tess's default
+    ANSI-interpret mode — a no-op provided for drop-in `less -R` muscle memory.
+    Conflicts with `-r` (raw passthrough) and `--no-color`.
+  - `-#` / `--shift N` sets the column count for the `←`/`→` horizontal-scroll
+    commands; `0` keeps the half-screen default. Mirrors `less -#` / `--shift`.
+  - `--wheel-lines N` sets the absolute number of body lines scrolled per
+    mouse-wheel notch under `--mouse`. Default `3` (preserves the prior feel).
+  - `--incsearch` enables incremental search: while typing in the `/` or `?`
+    prompt, the view jumps to and highlights the first match found from where
+    the prompt opened. `Esc` restores the original position; `Enter` commits to
+    the previewed match. Off by default; toggle at runtime with `:incsearch`.
+    Mirrors `less --incsearch`.
+  - `-J` / `--status-column` adds a one-column far-left gutter showing a mark
+    letter on marked lines, otherwise `*` on lines containing a current-search
+    match (a mark beats `*`). The gutter is fixed under horizontal scroll, drawn
+    only on the first wrap-row of a line, and is a no-op in `--hex`, `-r`, and
+    image modes. Match detection runs on line content only (never the gutter)
+    and works even when `-G` suppresses the visual highlight. Mirrors `less -J`.
+- **Clipboard integration** — a new tess-native feature (not a `less` flag) that
+  shells out to OS clipboard tools (`pbcopy`/`pbpaste` on macOS;
+  `wl-copy`/`wl-paste`, then `xclip`, then `xsel` on Linux); tool failures are
+  surfaced on the status line.
+  - `--from-clipboard` reads the system clipboard as input. Conflicts with file
+    arguments and is rejected together with `--follow`/`--live`.
+  - `--to-clipboard` is a batch sink: it applies any filters / `--head` /
+    `--tail` / `--prettify`, copies the result to the clipboard, and exits.
+    Conflicts with `-o`/`--stdout` and is rejected with `--follow`.
+  - `--clipboard` enables interactive yank: the `:yank` colon command copies the
+    current line to the clipboard. A remappable `clipboard-yank-line` keybinding
+    is provided but left unbound by default so it doesn't clobber `y`
+    (scroll-up).
+
 ## [0.36.0] — 2026-06-01
 
 ### Added

@@ -75,6 +75,7 @@ does not pursue.
 - `0.27.0` — `-X`, `-F`, `-K`, `-e`, `-E`, `+CMD` startup commands.
 - `0.28.0` — `-s`, `--header=L[,C]`, `--rscroll=c`, `-z N`, `--wordwrap`.
 - `0.29.0` — `--follow-name`, `--exit-follow-on-close`.
+- `0.37.0` — `-x`/`--tabs`, `-R`, `-#`/`--shift`, `--wheel-lines`, `--incsearch`, `-J`/`--status-column`.
 
 ### `anyhow` / `thiserror` — **S**
 
