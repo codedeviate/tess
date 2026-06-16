@@ -595,6 +595,7 @@ impl Viewport {
         self.image_mode = true;
         self.top_line = 0;
         self.top_row = 0;
+        self.image_scaled = None;
     }
 
     pub fn set_image_no_color(&mut self, on: bool) { self.image_no_color = on; }
@@ -1817,12 +1818,8 @@ impl Viewport {
             Some(i) => i.dimensions(),
             None => return blank(self.image_format.clone(), None),
         };
-        let width_cols = self.image_width;
-        let target_cols = width_cols.unwrap_or(self.cols as usize).max(1) as u32;
-        let cw = self.cell_px.0.max(1) as u32;
         let ch = self.cell_px.1.max(1) as u32;
-        let scaled_w = (target_cols * cw).max(1);
-        let scaled_h = (ih as u64 * scaled_w as u64 / iw.max(1) as u64).max(1) as u32;
+        let (scaled_w, scaled_h) = protocol_scaled_dims(iw, ih, self.cols, self.cell_px, self.image_width);
 
         // Build / reuse the width-scaled image.
         let need = self.image_scaled.as_ref().map(|(c, _)| *c != scaled_w as u16).unwrap_or(true);
@@ -1832,7 +1829,7 @@ impl Viewport {
             self.image_scaled = Some((scaled_w as u16, scaled));
         }
 
-        let total_rows = (scaled_h as usize).div_ceil(ch as usize).max(1);
+        let total_rows = protocol_occupied_rows(iw, ih, self.cols, self.cell_px, self.image_width);
         let max_top = total_rows.saturating_sub(body_rows);
         if self.top_line > max_top { self.top_line = max_top; }
         self.left_col = 0; // horizontal scroll is a no-op in protocol mode
@@ -2261,15 +2258,26 @@ impl Viewport {
     pub fn visible_lines(&self) -> &[usize] { &self.visible_lines }
 }
 
+/// Fit-width scaled pixel dimensions of an image: width = target_cols cells
+/// wide (in pixels), height preserving aspect. `width_cols` overrides the
+/// terminal `cols` when `Some` (from `--image-width`). Pure; the single source
+/// of the protocol fit-width scaling formula.
+#[cfg(feature = "image")]
+pub fn protocol_scaled_dims(img_w: u32, img_h: u32, cols: u16,
+                            cell_px: (u16, u16), width_cols: Option<usize>) -> (u32, u32) {
+    let target_cols = width_cols.unwrap_or(cols as usize).max(1) as u32;
+    let scaled_w = (target_cols * cell_px.0.max(1) as u32).max(1);
+    let img_w = img_w.max(1);
+    let scaled_h = (img_h as u64 * scaled_w as u64 / img_w as u64).max(1) as u32;
+    (scaled_w, scaled_h)
+}
+
 /// Text rows a fit-width protocol image occupies. `width_cols` overrides the
 /// terminal `cols` when `Some` (from `--image-width`). Pure; used for scroll math.
 #[cfg(feature = "image")]
 pub fn protocol_occupied_rows(img_w: u32, img_h: u32, cols: u16,
                               cell_px: (u16, u16), width_cols: Option<usize>) -> usize {
-    let target_cols = width_cols.unwrap_or(cols as usize).max(1) as u32;
-    let scaled_w = (target_cols * cell_px.0.max(1) as u32).max(1);
-    let img_w = img_w.max(1);
-    let scaled_h = (img_h as u64 * scaled_w as u64 / img_w as u64).max(1) as u32;
+    let (_, scaled_h) = protocol_scaled_dims(img_w, img_h, cols, cell_px, width_cols);
     (scaled_h as usize).div_ceil(cell_px.1.max(1) as usize).max(1)
 }
 
@@ -2586,6 +2594,33 @@ mod tests {
         vp.set_image_protocol(crate::viewport::ImageProtocol::Ascii, None);
         let frame2 = vp.frame(&m, &mut idx);
         assert!(frame2.image_blob.is_none(), "ASCII protocol frame has no blob");
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn protocol_image_clamps_vertical_scroll() {
+        use image::{Rgba, RgbaImage};
+        let mut vp = Viewport::new(40, 10, "cat.png".into()); // body = 9
+        let mut idx = LineIndex::new();
+        let m = MockSource::new();
+        // Tall image so it occupies many rows.
+        vp.set_image(RgbaImage::from_pixel(20, 2000, Rgba([10, 20, 30, 255])), "png", crate::image_render::AsciiStyle::Ramp, None);
+        vp.set_image_protocol(crate::viewport::ImageProtocol::Kitty, Some((8, 16)));
+        // Scroll way past the end; frame() applies the clamp.
+        for _ in 0..10_000 {
+            vp.scroll_lines(1, &m, &mut idx);
+        }
+        let _ = vp.frame(&m, &mut idx);
+        let total = crate::viewport::protocol_occupied_rows(20, 2000, 40, (8, 16), None);
+        let body = vp.body_rows() as usize;
+        // After scrolling far past the end and rendering, the top must be clamped
+        // so the visible band never runs past the bottom of the image.
+        assert!(
+            vp.top_line() + body <= total,
+            "top_line {} + body {} ran past protocol total_rows {}",
+            vp.top_line(), body, total
+        );
+        assert!(vp.top_line() < total, "top_line did not run past the image");
     }
 
     #[cfg(feature = "image")]
