@@ -198,6 +198,11 @@ pub struct Frame {
     /// `None` means "render cells normally". Only populated when the
     /// viewport's ansi_mode is Raw.
     pub raw_rows: Vec<Option<Vec<u8>>>,
+    /// When `Some`, the whole body is a single terminal-graphics escape blob
+    /// (Sixel/Kitty). `write_frame` clears the body once, positions the cursor
+    /// at (0,0), and writes these bytes verbatim instead of the per-row cell
+    /// loop. `None` for all text/hex/ASCII-image frames.
+    pub image_blob: Option<Vec<u8>>,
 }
 
 pub struct Viewport {
@@ -1384,7 +1389,7 @@ impl Viewport {
         self.render_state_for = usize::MAX;
 
         let status = self.format_status(idx, src);
-        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows, image_blob: None }
     }
 
     fn format_status(&self, idx: &LineIndex, src: &dyn Source) -> String {
@@ -1660,7 +1665,7 @@ impl Viewport {
 
         let status = self.format_status_hex(src);
         let raw_rows = vec![None; body.len()];
-        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows }
+        Frame { body, row_styles, highlights, status, status_style: self.status_style, raw_rows, image_blob: None }
     }
 
     fn format_status_hex(&self, src: &dyn Source) -> String {
@@ -1704,6 +1709,7 @@ impl Viewport {
                     status: self.image_format.clone(),
                     status_style: self.status_style,
                     raw_rows: vec![None; body_rows],
+                    image_blob: None,
                 };
             }
         };
@@ -1732,6 +1738,7 @@ impl Viewport {
             status,
             status_style: self.status_style,
             raw_rows: vec![None; body_rows],
+            image_blob: None,
         }
     }
 
