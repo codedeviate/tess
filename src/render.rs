@@ -89,7 +89,6 @@ pub fn next_tab_stop(col: usize, width: usize, tab_stops: &Option<Vec<usize>>) -
             }
             let last = *stops.last().unwrap();
             let interval = if stops.len() >= 2 { last - stops[stops.len() - 2] } else { last.max(1) };
-            let interval = interval.max(1);
             last + (((col - last) / interval) + 1) * interval
         }
     }

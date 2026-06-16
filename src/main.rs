@@ -289,7 +289,7 @@ fn parse_tab_stops(spec: &str) -> std::result::Result<Vec<usize>, String> {
     let mut out = Vec::new();
     for part in spec.split(',') {
         let n: usize = part.trim().parse()
-            .map_err(|_| format!("--tabs: invalid number '{part}'"))?;
+            .map_err(|_| format!("--tabs: invalid number `{part}`"))?;
         if n == 0 { return Err("--tabs: stops must be >= 1".to_string()); }
         if out.last().is_some_and(|&prev| n <= prev) {
             return Err("--tabs: stops must be strictly ascending".to_string());
@@ -982,6 +982,21 @@ mod tests {
     fn parse_plus_unknown_errors() {
         assert!(parse_plus_cmd("+xyzzy").is_err());
         assert!(parse_plus_cmd("+abc").is_err());
+    }
+
+    #[test]
+    fn parse_tab_stops_accepts_ascending_list() {
+        assert_eq!(parse_tab_stops("4,8,16").unwrap(), vec![4, 8, 16]);
+        assert_eq!(parse_tab_stops("4").unwrap(), vec![4]);
+    }
+
+    #[test]
+    fn parse_tab_stops_rejects_bad_input() {
+        assert!(parse_tab_stops("").is_err());            // empty
+        assert!(parse_tab_stops("0").is_err());           // zero
+        assert!(parse_tab_stops("4,x").is_err());         // non-numeric
+        assert!(parse_tab_stops("8,4").is_err());         // not ascending
+        assert!(parse_tab_stops("4,4").is_err());         // not strictly ascending
     }
 
     #[test]
