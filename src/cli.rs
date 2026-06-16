@@ -165,7 +165,7 @@ pub struct Args {
     pub IGNORE_CASE: bool,
 
     /// Image rendering protocol: `auto` (detect terminal graphics support and
-    /// fall back to ASCII), `kitty`, `sixel`, or `ascii`. Default `auto`.
+    /// fall back to ASCII), `kitty`, `sixel`, or `ascii`.
     #[arg(long = "image-protocol", value_name = "MODE", default_value = "auto")]
     pub image_protocol: String,
 
