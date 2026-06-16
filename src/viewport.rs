@@ -2001,6 +2001,11 @@ impl Viewport {
     pub fn hscroll_left_step(&mut self)  { self.hscroll_by(-(Self::HSCROLL_STEP as isize)); }
     pub fn hscroll_right_step(&mut self) { self.hscroll_by(Self::HSCROLL_STEP as isize); }
 
+    /// Scroll left by an explicit column count (used by `--shift N`).
+    pub fn hscroll_left_cols(&mut self, n: u16)  { self.hscroll_by(-(n as isize)); }
+    /// Scroll right by an explicit column count (used by `--shift N`).
+    pub fn hscroll_right_cols(&mut self, n: u16) { self.hscroll_by(n as isize); }
+
     pub fn left_col(&self) -> usize { self.left_col }
 
     /// Drop the horizontal scroll offset. Called when a new file is opened
@@ -3366,6 +3371,21 @@ mod tests {
         v.hscroll_left_half();
         assert_eq!(v.left_col(), 8);
         v.hscroll_left_half();
+        assert_eq!(v.left_col(), 0); // clamps at 0
+    }
+
+    #[test]
+    fn hscroll_by_explicit_cols_moves_left_col() {
+        // `--shift N` path: scroll right/left by an explicit column count.
+        let mut v = Viewport::new(80, 24, "t".into());
+        v.toggle_chop(); // chop on so hscroll is active
+        v.hscroll_right_cols(12);
+        assert_eq!(v.left_col(), 12);
+        v.hscroll_right_cols(12);
+        assert_eq!(v.left_col(), 24);
+        v.hscroll_left_cols(12);
+        assert_eq!(v.left_col(), 12);
+        v.hscroll_left_cols(99);
         assert_eq!(v.left_col(), 0); // clamps at 0
     }
 

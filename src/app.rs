@@ -919,6 +919,8 @@ pub fn run(
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
     let mouse_enabled = args.mouse;
+    let hscroll_shift = args.shift.unwrap_or(0);
+    let wheel_lines = args.wheel_lines.unwrap_or(1).max(1);
 
     if let Some(tag_name) = args.tag.as_deref() {
         let _ = refresh_tag_file(&mut tag_file);
@@ -1558,11 +1560,11 @@ pub fn run(
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollDown => {
-                                viewport.scroll_lines(3, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(3 * wheel_lines as i64, src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollUp => {
-                                viewport.scroll_lines(-3, src.as_ref(), &mut idx);
+                                viewport.scroll_lines(-3 * wheel_lines as i64, src.as_ref(), &mut idx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollLeft => {
@@ -1887,11 +1889,19 @@ pub fn run(
                         // Mouse handling lives in the event-routing block, not here.
                     }
                     Command::HScrollLeft => {
-                        viewport.hscroll_left_half();
+                        if hscroll_shift != 0 {
+                            viewport.hscroll_left_cols(hscroll_shift);
+                        } else {
+                            viewport.hscroll_left_half();
+                        }
                         needs_redraw = true;
                     }
                     Command::HScrollRight => {
-                        viewport.hscroll_right_half();
+                        if hscroll_shift != 0 {
+                            viewport.hscroll_right_cols(hscroll_shift);
+                        } else {
+                            viewport.hscroll_right_half();
+                        }
                         needs_redraw = true;
                     }
                     Command::HScrollLeftStep => {

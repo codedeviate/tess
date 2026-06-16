@@ -302,6 +302,13 @@ pub struct Args {
     #[arg(short = 'r', long = "raw-control-chars", conflicts_with = "no_color")]
     pub raw_control_chars: bool,
 
+    /// Accept `less -R`: interpret SGR/OSC color escapes, strip other control
+    /// sequences — which is tess's default. Provided for drop-in `less -R`
+    /// compatibility. Distinct from `-r` (full raw) and `--no-color`.
+    #[arg(short = 'R', long = "RAW-CONTROL-CHARS",
+        conflicts_with_all = ["raw_control_chars", "no_color"])]
+    pub RAW_CONTROL_CHARS: bool,
+
     /// Treat lines matching REGEX as record boundaries. Lines that don't
     /// match are joined to the preceding record. Affects search, filter,
     /// grep, and the status line — all operate on whole records when set.
@@ -316,6 +323,11 @@ pub struct Args {
     /// string to disable. Mirrors `less --rscroll=c`.
     #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
     pub rscroll: String,
+
+    /// Column count for the ←/→ horizontal-scroll commands (default: half
+    /// screen). `0` keeps the half-screen default. Mirrors `less -#`/`--shift`.
+    #[arg(short = '#', long = "shift", value_name = "N")]
+    pub shift: Option<u16>,
 
     /// Collapse runs of two or more consecutive blank lines into a
     /// single blank line at display time. Real line numbers, search,
@@ -368,6 +380,10 @@ pub struct Args {
     #[arg(long = "truecolor", value_name = "MODE", default_value = "auto")]
     pub truecolor: String,
 
+    /// Body lines scrolled per mouse-wheel notch under `--mouse` (default 1).
+    #[arg(long = "wheel-lines", value_name = "N")]
+    pub wheel_lines: Option<u16>,
+
     /// PageDown / PageUp step size in lines. Default: full screen
     /// height (body rows). Half-page commands always advance by half
     /// the screen regardless. Mirrors `less -zn` / `--window=n`.
@@ -395,6 +411,23 @@ mod tests {
         assert!(!a.chop);
         assert_eq!(a.tab_width, 8);
         assert!(a.files.is_empty());
+    }
+
+    #[test]
+    fn parses_raw_control_chars_alias() {
+        let a = Args::parse_from(["tess", "-R", "f"]);
+        assert!(a.RAW_CONTROL_CHARS);
+    }
+    #[test]
+    fn raw_control_chars_conflicts_with_raw_and_no_color() {
+        assert!(Args::try_parse_from(["tess", "-R", "-r", "f"]).is_err());
+        assert!(Args::try_parse_from(["tess", "-R", "--no-color", "f"]).is_err());
+    }
+    #[test]
+    fn parses_shift_and_wheel_lines() {
+        let a = Args::parse_from(["tess", "--shift", "12", "--wheel-lines", "5", "f"]);
+        assert_eq!(a.shift, Some(12));
+        assert_eq!(a.wheel_lines, Some(5));
     }
 
     #[test]
@@ -699,8 +732,10 @@ mod tests {
             "--quit-if-one-screen",
             "--quit-on-intr",
             "--raw-control-chars",
+            "--RAW-CONTROL-CHARS",
             "--record-start",
             "--rscroll",
+            "--shift",
             "--squeeze-blank-lines",
             "--status-style",
             "--stdout",
@@ -710,6 +745,7 @@ mod tests {
             "--tag-file",
             "--tail",
             "--truecolor",
+            "--wheel-lines",
             "--window",
             "--wordwrap",
         ];
