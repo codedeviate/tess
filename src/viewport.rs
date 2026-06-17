@@ -591,8 +591,7 @@ impl Viewport {
     }
 
     #[cfg(feature = "image")]
-    pub fn set_image(&mut self, img: image::RgbaImage, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
-        self.image = Some(img);
+    fn reset_image_view(&mut self, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
         self.image_format = format.to_string();
         self.image_style = style;
         self.image_width = width;
@@ -600,21 +599,21 @@ impl Viewport {
         self.top_line = 0;
         self.top_row = 0;
         self.image_scaled = None;
+    }
+
+    #[cfg(feature = "image")]
+    pub fn set_image(&mut self, img: image::RgbaImage, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
+        self.reset_image_view(format, style, width);
+        self.image = Some(img);
         self.animation = None;
     }
 
     #[cfg(feature = "image")]
     pub fn set_animation(&mut self, anim: crate::image_render::Animation, format: &str,
                          style: crate::image_render::AsciiStyle, width: Option<usize>) {
-        self.animation = Some(crate::anim::AnimationState::new(anim.frames, anim.loop_count));
+        self.reset_image_view(format, style, width);
         self.image = None;
-        self.image_format = format.to_string();
-        self.image_style = style;
-        self.image_width = width;
-        self.image_mode = true;
-        self.top_line = 0;
-        self.top_row = 0;
-        self.image_scaled = None;
+        self.animation = Some(crate::anim::AnimationState::new(anim.frames, anim.loop_count));
     }
 
     #[cfg(feature = "image")]
@@ -2801,11 +2800,30 @@ mod tests {
 
     #[cfg(feature = "image")]
     #[test]
+    fn animation_status_badge_reflects_play_pause() {
+        use image::{Rgba, RgbaImage};
+        use std::time::Duration;
+        let m = MockSource::new();
+        let mut idx = LineIndex::new();
+        let mut vp = Viewport::new(40, 10, "x.gif".into());
+        let frames = vec![
+            (RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255])), Duration::from_millis(100)),
+            (RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255])), Duration::from_millis(100)),
+        ];
+        vp.set_animation(crate::image_render::Animation { frames, loop_count: None }, "gif",
+                         crate::image_render::AsciiStyle::Ramp, None);
+        let playing = vp.frame(&m, &mut idx);
+        assert!(playing.status.contains("[play 1/2]"), "status: {:?}", playing.status);
+        vp.anim_toggle_pause();
+        let paused = vp.frame(&m, &mut idx);
+        assert!(paused.status.contains("[pause 1/2]"), "status: {:?}", paused.status);
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
     fn animation_pause_stops_advance() {
         use image::{Rgba, RgbaImage};
         use std::time::Duration;
-        let _m = MockSource::new();
-        let _idx = LineIndex::new();
         let mut vp = Viewport::new(40, 10, "x.gif".into());
         let frames = vec![
             (RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255])), Duration::from_millis(100)),
