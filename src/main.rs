@@ -730,6 +730,7 @@ showing raw (use --content-type=NAME to override)"
             let head = src.bytes(0..head_len);
             if tess::image_render::sniff_image_format(&head).is_some() {
                 let all = src.bytes(0..src.len());
+                // Animation is interactive-only; batch/export emits the first frame.
                 let rgba = tess::image_render::decode_image(&all)
                     .map_err(|e| Error::Runtime(format!("image decode failed: {e}")))?;
                 let style = if args.blocks {
@@ -984,22 +985,41 @@ showing raw (use --content-type=NAME to override)"
         let head = src.bytes(0..head_len);
         if let Some(fmt) = tess::image_render::sniff_image_format(&head) {
             let all = src.bytes(0..src.len());
-            match tess::image_render::decode_image(&all) {
-                Ok(rgba) => {
-                    let style = if args.blocks {
-                        tess::image_render::AsciiStyle::Blocks
-                    } else {
-                        tess::image_render::AsciiStyle::Ramp
-                    };
-                    viewport.set_image(rgba, fmt, style, args.image_width);
-                    viewport.set_image_no_color(args.no_color);
-                    let is_tty = std::io::stdout().is_terminal();
-                    let (proto, cell_px) = resolve_image_protocol(&args.image_protocol, is_tty)?;
-                    viewport.set_image_protocol(proto, cell_px);
+            let style = if args.blocks {
+                tess::image_render::AsciiStyle::Blocks
+            } else {
+                tess::image_render::AsciiStyle::Ramp
+            };
+
+            // Prefer animated playback when the source decodes as a
+            // multi-frame image and the user did not ask for a static view.
+            let animated = if args.no_animate {
+                None
+            } else {
+                tess::image_render::decode_animation(&all)
+            };
+
+            let loaded = if let Some(anim) = animated {
+                viewport.set_animation(anim, fmt, style, args.image_width);
+                true
+            } else {
+                match tess::image_render::decode_image(&all) {
+                    Ok(rgba) => {
+                        viewport.set_image(rgba, fmt, style, args.image_width);
+                        true
+                    }
+                    Err(e) => {
+                        eprintln!("tess: image decode failed ({e}); showing raw");
+                        false
+                    }
                 }
-                Err(e) => {
-                    eprintln!("tess: image decode failed ({e}); showing raw");
-                }
+            };
+
+            if loaded {
+                viewport.set_image_no_color(args.no_color);
+                let is_tty = std::io::stdout().is_terminal();
+                let (proto, cell_px) = resolve_image_protocol(&args.image_protocol, is_tty)?;
+                viewport.set_image_protocol(proto, cell_px);
             }
         }
     }
