@@ -22,6 +22,8 @@ pub fn parse_gif_loop_count(bytes: &[u8]) -> Option<u32> {
     let needle = b"\x21\xFF\x0BNETSCAPE2.0";
     let pos = bytes.windows(needle.len()).position(|w| w == needle)?;
     let sub = pos + needle.len();
+    // After the 11-byte "NETSCAPE2.0" name comes the loop sub-block:
+    // 0x03 (size=3), 0x01 (id=loop), then a u16 little-endian loop count.
     if bytes.len() >= sub + 4 && bytes[sub] == 0x03 && bytes[sub + 1] == 0x01 {
         let lo = bytes[sub + 2] as u32;
         let hi = bytes[sub + 3] as u32;
@@ -33,6 +35,9 @@ pub fn parse_gif_loop_count(bytes: &[u8]) -> Option<u32> {
 /// Decode an animated image to its frames. Returns `None` when the source is
 /// static / single-frame (callers fall back to `decode_image`). GIF loop count
 /// comes from the NETSCAPE extension; other formats default to infinite.
+/// GIF decoding (and the static→None guard) is unit-tested; the WebP and APNG
+/// multi-frame paths are manually verified, since the `image` crate cannot
+/// encode those formats in-test to build a fixture.
 pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
     use image::AnimationDecoder;
     let fmt = image::guess_format(bytes).ok()?;
@@ -400,7 +405,6 @@ mod tests {
         assert_eq!(parse_gif_loop_count(b"GIF89a not animated"), None);
     }
 
-    #[cfg(test)]
     fn make_two_frame_gif() -> Vec<u8> {
         use image::codecs::gif::GifEncoder;
         use image::{Delay, Frame};
