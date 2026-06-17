@@ -730,7 +730,7 @@ showing raw (use --content-type=NAME to override)"
             let head = src.bytes(0..head_len);
             if tess::image_render::sniff_image_format(&head).is_some() {
                 let all = src.bytes(0..src.len());
-                // Animation is interactive-only; batch/export emits the first frame.
+                // Animation is interactive-only; batch/export decodes a static image.
                 let rgba = tess::image_render::decode_image(&all)
                     .map_err(|e| Error::Runtime(format!("image decode failed: {e}")))?;
                 let style = if args.blocks {
@@ -993,6 +993,8 @@ showing raw (use --content-type=NAME to override)"
 
             // Prefer animated playback when the source decodes as a
             // multi-frame image and the user did not ask for a static view.
+            // Decodes all frames eagerly (a frame-count cap could be added if
+            // huge animations become a memory concern).
             let animated = if args.no_animate {
                 None
             } else {
