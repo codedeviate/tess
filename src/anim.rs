@@ -6,10 +6,12 @@
 use image::RgbaImage;
 use std::time::Duration;
 
-/// Frames with a delay below this are treated as this long, matching common
-/// viewer/browser behavior (0-delay or absurdly fast GIFs must not busy-loop).
+/// Frame delays are clamped into a sane range: a raw delay below
+/// MIN_HONORED_DELAY (e.g. 0, as some GIFs encode) is treated as
+/// MIN_FRAME_DELAY, matching common viewer/browser behavior so playback can't
+/// busy-loop on absurdly fast frames.
 const MIN_FRAME_DELAY: Duration = Duration::from_millis(100);
-const TINY: Duration = Duration::from_millis(10);
+const MIN_HONORED_DELAY: Duration = Duration::from_millis(10);
 
 pub struct AnimationState {
     frames: Vec<(RgbaImage, Duration)>,
@@ -38,7 +40,7 @@ impl AnimationState {
 
     fn frame_delay(&self, i: usize) -> Duration {
         let d = self.frames[i].1;
-        if d < TINY { MIN_FRAME_DELAY } else { d }
+        if d < MIN_HONORED_DELAY { MIN_FRAME_DELAY } else { d }
     }
 
     /// Accumulate `dt`, flipping to later frames as each delay elapses (a large
@@ -198,5 +200,28 @@ mod tests {
         let mut a = AnimationState::new(frames(2, 0), None);
         assert!(!a.advance(Duration::from_millis(50)));
         assert!(a.advance(Duration::from_millis(60)));
+    }
+
+    #[test]
+    fn zero_delay_floor_applies_to_next_deadline() {
+        let a = AnimationState::new(frames(2, 0), None);
+        // A 0ms raw delay is floored, so the deadline reflects MIN_FRAME_DELAY (100ms).
+        assert_eq!(a.next_deadline(), Some(Duration::from_millis(100)));
+    }
+
+    #[test]
+    fn per_frame_delays_are_respected() {
+        use image::{Rgba, RgbaImage};
+        let mk = |c: u8, ms: u64| (RgbaImage::from_pixel(1, 1, Rgba([c, 0, 0, 255])), Duration::from_millis(ms));
+        // frame 0: 50ms, frame 1: 200ms, frame 2: 50ms
+        let mut a = AnimationState::new(vec![mk(0, 50), mk(1, 200), mk(2, 50)], None);
+        assert_eq!(a.next_deadline(), Some(Duration::from_millis(50)), "frame 0 delay is 50ms");
+        assert!(a.advance(Duration::from_millis(50)));       // 0 -> 1
+        assert_eq!(a.frame_index(), 1);
+        assert_eq!(a.next_deadline(), Some(Duration::from_millis(200)), "frame 1 delay is 200ms");
+        assert!(!a.advance(Duration::from_millis(100)), "100ms < frame 1's 200ms, no flip");
+        assert_eq!(a.frame_index(), 1);
+        assert!(a.advance(Duration::from_millis(120)), "now crosses frame 1's 200ms");
+        assert_eq!(a.frame_index(), 2);
     }
 }
