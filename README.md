@@ -199,7 +199,7 @@ Each segment appears only when relevant. The `+12/50` indicator surfaces wrap-ro
 
 ```sh
 tess photo.png                                # colored ASCII art in the pager
-tess logo.gif                                 # GIFs render their first frame
+tess logo.gif                                 # animated GIFs play automatically
 tess --blocks --image-width 100 photo.png     # higher-detail half-block render
 tess photo.png -o art.txt                     # save the art (ANSI color) to a file
 tess photo.png --no-color --stdout > art.txt  # plain, portable text
@@ -212,9 +212,12 @@ Flags:
 | `--blocks` | Unicode half-block (`▀`) mode — twice the vertical resolution per terminal row. |
 | `--image-width N` | Scale to N columns (default: terminal width). |
 | `--no-image` | View raw bytes instead of rendering; useful with `--hex`. |
+| `--no-animate` | Open an animated image as its static first frame instead of playing it. |
 | `--image-protocol auto\|kitty\|sixel\|ascii` | Render at true pixel fidelity via the Kitty graphics protocol or Sixel (default `auto`). |
 
 For true-pixel rendering, `--image-protocol` draws the image with the Kitty graphics protocol (Kitty / iTerm2 / WezTerm / Ghostty) or Sixel (foot / xterm / mlterm / WezTerm). `auto` detects terminal support and falls back to ASCII art (Kitty preferred over Sixel); explicit `kitty` / `sixel` / `ascii` skip detection. In protocol mode the image fits the terminal width and scrolls vertically; `←`/`→` are no-ops. With an explicit `kitty`/`sixel` plus `-o`/`--stdout`, tess writes the raw escape bytes (e.g. save a `.sixel`). The status line shows `[kitty]` / `[sixel]`.
+
+Animated images play automatically — animated GIF (and APNG / WebP where the decoder supports them), in every render mode (ASCII art on any terminal; Kitty / Sixel on graphics-capable ones). Playback honors the GIF loop count and rests on the last frame when it ends (loop count `0` / absent loops forever). Transport keys: `p` pause/resume, `.` / `,` step forward / back, `Backspace` restart (all remappable, no-op without an animation). The status line shows `[play i/n]` / `[pause i/n]` / `[done n/n]`. Pass `--no-animate` to open the static first frame, and note that `-o`/`--stdout` export is always a single static frame.
 
 Color output uses 24-bit truecolor SGR; pass `--no-color` for a plain character-only render. Export the art with `-o FILE` or `--stdout` — ANSI-colored by default, plain text under `--no-color`.
 
@@ -256,6 +259,7 @@ The full set, alphabetical by long name — the same order `tess --help` lists t
 | `--live` | Re-read the file when its on-disk content changes. Mutually exclusive with `--follow`. |
 | `--manual` | Print the full user manual and exit. |
 | `--mouse` | Enable mouse capture (click picker/help rows, scrollwheel scrolls the body). |
+| `--no-animate` | Open an animated image as its static first frame instead of playing it. |
 | `--no-color` | Show raw control bytes as `^X`; disable SGR/OSC interpretation. |
 | `-G, --no-hilite-search` | Disable search-match highlighting by default (navigation still works). |
 | `--no-image` | Treat a detected image file as raw text instead of rendering it. |

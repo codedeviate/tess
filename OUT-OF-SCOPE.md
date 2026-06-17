@@ -59,39 +59,6 @@ worth eating.
 
 ## Deferred
 
-### Animated image playback (GIF / APNG) — **L**
-
-> **Next up — prioritized for the upcoming development cycle.** The next planned
-> feature after the `0.38.0` Sixel/Kitty work. Gets its own brainstorm → spec →
-> plan cycle when work starts.
-
-Loop the frames of an animated image (GIF, APNG) instead of rendering only the
-first frame. Today both the ASCII path and the `0.38.0` Sixel/Kitty protocol
-path show a single frame.
-
-What already exists to build on:
-
-- `0.38.0` shipped the Kitty/Sixel encoders (`image_protocol::encode_kitty` /
-  `encode_sixel`) and the `Frame.image_blob` write path; static decoding is via
-  `image_render::decode_image` (`image::load_from_memory`, first frame only).
-- The `image` crate's `AnimationDecoder` (GIF/APNG) yields per-frame RGBA plus
-  inter-frame delays — the natural input to the existing encoders, frame by
-  frame.
-
-What the work entails:
-
-- Decode all frames + delays once when the source is animated (static images
-  stay on the current single-decode path, unchanged).
-- Drive playback from the event loop: the existing `poll(250 ms)` timeout branch
-  gains a per-frame deadline that advances the current frame and re-renders.
-  Auto-scroll/follow interactions need a design pass.
-- Per-protocol rendering: **Sixel** has no animation primitive, so each frame is
-  a full re-emit of `image_blob` at its delay; **Kitty** has a native animation
-  sub-protocol (transmit frames, advance with `a=a`) that could be used instead
-  of full re-emits — decide at spec time. ASCII mode stays first-frame for v1.
-- Controls: pause/resume, step frame, restart; honor the loop count; status line
-  shows the frame index. All remappable via `keys.toml`.
-
 ### Long tail of `less` flags — **L (cumulative)**
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some
