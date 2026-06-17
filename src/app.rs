@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::cursor::MoveTo;
 use crossterm::event::{poll, read, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -938,7 +938,8 @@ pub fn run(
     };
 
     let mut stdout = io::stdout();
-    let timeout = Duration::from_millis(250);
+    const BASE_POLL: Duration = Duration::from_millis(250);
+    let mut last_tick = Instant::now();
     let mut last_revision = src.revision();
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
@@ -1071,7 +1072,12 @@ pub fn run(
             needs_redraw = false;
         }
 
-        // Poll with timeout so stdin sources can be re-checked.
+        // Poll with timeout so stdin sources can be re-checked. When an
+        // animation is playing, shorten the wait to its next-frame deadline
+        // so the timeout branch can advance frames on time.
+        let timeout = viewport.anim_deadline()
+            .map(|d| d.min(BASE_POLL))
+            .unwrap_or(BASE_POLL);
         match poll(timeout) {
             Ok(true) => {
                 let event = read().map_err(|e| crate::error::Error::Runtime(format!("input: {}", e)))?;
@@ -2004,10 +2010,24 @@ pub fn run(
                         transient_status = Some(msg);
                         needs_redraw = true;
                     }
+                    Command::AnimPause => { viewport.anim_toggle_pause(); needs_redraw = true; }
+                    Command::AnimStepForward => { viewport.anim_step(1); needs_redraw = true; }
+                    Command::AnimStepBack => { viewport.anim_step(-1); needs_redraw = true; }
+                    Command::AnimRestart => { viewport.anim_restart(); needs_redraw = true; }
                     Command::Noop => {}
                 }
+                // Reset the tick clock after handling input so a long idle
+                // between keystrokes doesn't collapse into a burst of frame
+                // advances on the next timeout.
+                last_tick = Instant::now();
             }
             Ok(false) => {
+                // Advance any playing animation by the elapsed time since the
+                // last tick or input. tick() returns true when the visible
+                // frame changed and a redraw is needed.
+                let dt = last_tick.elapsed();
+                last_tick = Instant::now();
+                if viewport.tick(dt) { needs_redraw = true; }
                 // Timeout — check whether the source has grown or been rewritten.
                 if viewport.live_mode() {
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);

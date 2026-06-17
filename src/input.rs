@@ -79,6 +79,14 @@ pub enum Command {
     /// (only acts when `--clipboard` was passed). Same action as `:yank`.
     /// Unbound by default; remap via `clipboard-yank-line` in keys.toml.
     YankLine,
+    /// Toggle play/pause of the active animation (`p`). No-op without one.
+    AnimPause,
+    /// Step the active animation forward one frame (`.`). No-op without one.
+    AnimStepForward,
+    /// Step the active animation back one frame (`,`). No-op without one.
+    AnimStepBack,
+    /// Restart the active animation from frame 0 (`Backspace`). No-op without one.
+    AnimRestart,
     /// Enter the tag-name prompt (`Ctrl-]`).
     TagPrompt,
     /// Pop the tag stack and jump back (`Ctrl-T`).
@@ -164,6 +172,10 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Right, false) if mods.contains(KeyModifiers::SHIFT) => Command::HScrollRightStep,
         (Left, false) => Command::HScrollLeft,
         (Right, false) => Command::HScrollRight,
+        (Char('p'), false) => Command::AnimPause,
+        (Char('.'), false) => Command::AnimStepForward,
+        (Char(','), false) => Command::AnimStepBack,
+        (Backspace, _) => Command::AnimRestart,
         _ => Command::Noop,
     }
 }
@@ -224,6 +236,14 @@ mod tests {
                 Command::Digit(d),
             );
         }
+    }
+
+    #[test]
+    fn anim_keys_translate() {
+        assert_eq!(translate(key(KeyCode::Char('p'), KeyModifiers::NONE)), Command::AnimPause);
+        assert_eq!(translate(key(KeyCode::Char('.'), KeyModifiers::NONE)), Command::AnimStepForward);
+        assert_eq!(translate(key(KeyCode::Char(','), KeyModifiers::NONE)), Command::AnimStepBack);
+        assert_eq!(translate(key(KeyCode::Backspace, KeyModifiers::NONE)), Command::AnimRestart);
     }
 
     #[test]
@@ -288,8 +308,8 @@ mod tests {
     }
 
     #[test]
-    fn lowercase_p_remains_unbound() {
-        assert_eq!(translate(key(KeyCode::Char('p'), KeyModifiers::NONE)), Command::Noop);
+    fn lowercase_p_is_anim_pause() {
+        assert_eq!(translate(key(KeyCode::Char('p'), KeyModifiers::NONE)), Command::AnimPause);
     }
 
     #[test]
