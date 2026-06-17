@@ -5,6 +5,77 @@
 use crate::ansi::{Color, Style};
 use crate::render::Cell;
 use image::RgbaImage;
+use std::time::Duration;
+
+/// Decoded animation: per-frame RGBA + the delay until the next frame, plus the
+/// loop count (`None` = infinite).
+pub struct Animation {
+    pub frames: Vec<(RgbaImage, Duration)>,
+    pub loop_count: Option<u32>,
+}
+
+/// Extract the loop count from a GIF's NETSCAPE2.0 application extension.
+/// Returns `Some(0)` for infinite, `Some(n)` for a finite count, or `None`
+/// when the extension is absent (callers treat that as infinite). The `image`
+/// crate's high-level decoder does not expose this, so we read it directly.
+pub fn parse_gif_loop_count(bytes: &[u8]) -> Option<u32> {
+    let needle = b"\x21\xFF\x0BNETSCAPE2.0";
+    let pos = bytes.windows(needle.len()).position(|w| w == needle)?;
+    let sub = pos + needle.len();
+    if bytes.len() >= sub + 4 && bytes[sub] == 0x03 && bytes[sub + 1] == 0x01 {
+        let lo = bytes[sub + 2] as u32;
+        let hi = bytes[sub + 3] as u32;
+        return Some(lo | (hi << 8));
+    }
+    None
+}
+
+/// Decode an animated image to its frames. Returns `None` when the source is
+/// static / single-frame (callers fall back to `decode_image`). GIF loop count
+/// comes from the NETSCAPE extension; other formats default to infinite.
+pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
+    use image::AnimationDecoder;
+    let fmt = image::guess_format(bytes).ok()?;
+    let frames_res: Option<Vec<image::Frame>> = match fmt {
+        image::ImageFormat::Gif => image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
+            .ok()?
+            .into_frames()
+            .collect_frames()
+            .ok(),
+        image::ImageFormat::WebP => {
+            image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))
+                .ok()?
+                .into_frames()
+                .collect_frames()
+                .ok()
+        }
+        image::ImageFormat::Png => image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes))
+            .ok()?
+            .apng()
+            .ok()?
+            .into_frames()
+            .collect_frames()
+            .ok(),
+        _ => None,
+    };
+    let frames = frames_res?;
+    if frames.len() <= 1 {
+        return None;
+    }
+    let loop_count = if fmt == image::ImageFormat::Gif {
+        parse_gif_loop_count(bytes)
+    } else {
+        None
+    };
+    let frames = frames
+        .into_iter()
+        .map(|f| {
+            let delay: Duration = f.delay().into();
+            (f.into_buffer(), delay)
+        })
+        .collect();
+    Some(Animation { frames, loop_count })
+}
 
 /// Rendering aesthetic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,5 +380,61 @@ mod tests {
             }
             other => panic!("expected Char, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn gif_loop_count_parses_netscape_extension() {
+        let mut g = Vec::new();
+        g.extend_from_slice(b"GIF89a");
+        g.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]); // logical screen descriptor (values irrelevant)
+        g.extend_from_slice(&[0x21, 0xFF, 0x0B]);
+        g.extend_from_slice(b"NETSCAPE2.0");
+        g.extend_from_slice(&[0x03, 0x01, 0x00, 0x00, 0x00]); // loop count 0 = infinite
+        assert_eq!(parse_gif_loop_count(&g), Some(0));
+
+        let mut g3 = g.clone();
+        let pos = g3.len() - 3; // the loop_lo byte
+        g3[pos] = 3;
+        assert_eq!(parse_gif_loop_count(&g3), Some(3));
+
+        assert_eq!(parse_gif_loop_count(b"GIF89a not animated"), None);
+    }
+
+    #[cfg(test)]
+    fn make_two_frame_gif() -> Vec<u8> {
+        use image::codecs::gif::GifEncoder;
+        use image::{Delay, Frame};
+        let mut out = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut out);
+            for c in [0u8, 200] {
+                let img = RgbaImage::from_pixel(2, 2, Rgba([c, c, c, 255]));
+                let frame = Frame::from_parts(img, 0, 0, Delay::from_numer_denom_ms(100, 1));
+                enc.encode_frame(frame).unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn decode_animation_reads_frames_or_none_for_static() {
+        // Static PNG → None.
+        let png = {
+            let src = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+            let mut buf = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageRgba8(src)
+                .write_to(&mut buf, image::ImageFormat::Png)
+                .unwrap();
+            buf.into_inner()
+        };
+        assert!(
+            decode_animation(&png).is_none(),
+            "static image is not an animation"
+        );
+
+        // Two-frame GIF → Some with 2 frames.
+        let gif = make_two_frame_gif();
+        let anim = decode_animation(&gif).expect("animated gif decodes");
+        assert_eq!(anim.frames.len(), 2);
     }
 }
