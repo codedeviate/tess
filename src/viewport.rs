@@ -252,6 +252,8 @@ pub struct Viewport {
     #[cfg(feature = "image")]
     image: Option<image::RgbaImage>,
     #[cfg(feature = "image")]
+    animation: Option<crate::anim::AnimationState>,
+    #[cfg(feature = "image")]
     image_protocol: ImageProtocol,
     /// Pixel dimensions of one terminal cell (w, h), used by protocol rendering
     /// to scale the image to fit terminal width and map text rows to pixels.
@@ -373,6 +375,8 @@ impl Viewport {
             hex_mode: false,
             #[cfg(feature = "image")]
             image: None,
+            #[cfg(feature = "image")]
+            animation: None,
             #[cfg(feature = "image")]
             image_protocol: ImageProtocol::Ascii,
             #[cfg(feature = "image")]
@@ -587,8 +591,7 @@ impl Viewport {
     }
 
     #[cfg(feature = "image")]
-    pub fn set_image(&mut self, img: image::RgbaImage, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
-        self.image = Some(img);
+    fn reset_image_view(&mut self, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
         self.image_format = format.to_string();
         self.image_style = style;
         self.image_width = width;
@@ -596,6 +599,73 @@ impl Viewport {
         self.top_line = 0;
         self.top_row = 0;
         self.image_scaled = None;
+    }
+
+    #[cfg(feature = "image")]
+    pub fn set_image(&mut self, img: image::RgbaImage, format: &str, style: crate::image_render::AsciiStyle, width: Option<usize>) {
+        self.reset_image_view(format, style, width);
+        self.image = Some(img);
+        self.animation = None;
+    }
+
+    #[cfg(feature = "image")]
+    pub fn set_animation(&mut self, anim: crate::image_render::Animation, format: &str,
+                         style: crate::image_render::AsciiStyle, width: Option<usize>) {
+        self.reset_image_view(format, style, width);
+        self.image = None;
+        self.animation = Some(crate::anim::AnimationState::new(anim.frames, anim.loop_count));
+    }
+
+    #[cfg(feature = "image")]
+    pub fn has_animation(&self) -> bool { self.animation.is_some() }
+
+    #[cfg(feature = "image")]
+    fn current_image(&self) -> Option<&image::RgbaImage> {
+        match &self.animation {
+            Some(a) => Some(a.current_frame()),
+            None => self.image.as_ref(),
+        }
+    }
+
+    #[cfg(feature = "image")]
+    pub fn tick(&mut self, dt: std::time::Duration) -> bool {
+        if let Some(a) = &mut self.animation {
+            if a.advance(dt) { self.image_scaled = None; return true; }
+        }
+        false
+    }
+
+    #[cfg(feature = "image")]
+    pub fn anim_deadline(&self) -> Option<std::time::Duration> {
+        self.animation.as_ref().and_then(|a| a.next_deadline())
+    }
+
+    #[cfg(feature = "image")]
+    pub fn anim_toggle_pause(&mut self) {
+        if let Some(a) = &mut self.animation { a.toggle_pause(); self.image_scaled = None; }
+    }
+
+    #[cfg(feature = "image")]
+    pub fn anim_step(&mut self, delta: i32) {
+        if let Some(a) = &mut self.animation { a.step(delta); self.image_scaled = None; }
+    }
+
+    #[cfg(feature = "image")]
+    pub fn anim_restart(&mut self) {
+        if let Some(a) = &mut self.animation { a.restart(); self.image_scaled = None; }
+    }
+
+    #[cfg(feature = "image")]
+    fn anim_badge(&self) -> String {
+        match &self.animation {
+            Some(a) => {
+                let (i, n) = (a.frame_index() + 1, a.frame_count());
+                if a.is_finished() { format!("  [done {n}/{n}]") }
+                else if a.is_playing() { format!("  [play {i}/{n}]") }
+                else { format!("  [pause {i}/{n}]") }
+            }
+            None => String::new(),
+        }
     }
 
     pub fn set_image_no_color(&mut self, on: bool) { self.image_no_color = on; }
@@ -621,7 +691,7 @@ impl Viewport {
 
     #[cfg(feature = "image")]
     pub fn image_total_rows(&self) -> usize {
-        match &self.image {
+        match self.current_image() {
             Some(img) => {
                 let (w, h) = img.dimensions();
                 if self.image_protocol != ImageProtocol::Ascii {
@@ -1746,7 +1816,7 @@ impl Viewport {
         }
         let body_rows = self.body_rows() as usize;
         let cols = self.cols as usize;
-        let img = match &self.image {
+        let img = match self.current_image() {
             Some(i) => i,
             None => {
                 let body = vec![vec![Cell::Empty; cols]; body_rows];
@@ -1795,11 +1865,12 @@ impl Viewport {
         let body = self.body_rows() as usize;
         let top = self.top_line + 1;
         let bottom = (self.top_line + body).min(total_rows.max(1));
-        let dims = self.image.as_ref().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
+        let dims = self.current_image().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
         let mut s = format!("{}  {}  {}  rows {}-{}/{}", self.source_label, dims, self.image_format, top, bottom, total_rows);
         if self.left_col > 0 {
             s.push_str(&format!("  \u{00bb}{}", self.left_col));
         }
+        s.push_str(&self.anim_badge());
         s
     }
 
@@ -1818,7 +1889,7 @@ impl Viewport {
             raw_rows: vec![None; body_rows],
             image_blob: blob,
         };
-        let (iw, ih) = match &self.image {
+        let (iw, ih) = match self.current_image() {
             Some(i) => i.dimensions(),
             None => return blank(self.image_format.clone(), None),
         };
@@ -1828,8 +1899,10 @@ impl Viewport {
         // Build / reuse the width-scaled image.
         let need = self.image_scaled.as_ref().map(|(c, _)| *c != scaled_w as u16).unwrap_or(true);
         if need {
-            let src = self.image.as_ref().unwrap();
-            let scaled = image::imageops::resize(src, scaled_w, scaled_h, image::imageops::FilterType::Triangle);
+            let scaled = {
+                let src = self.current_image().unwrap();
+                image::imageops::resize(src, scaled_w, scaled_h, image::imageops::FilterType::Triangle)
+            };
             self.image_scaled = Some((scaled_w as u16, scaled));
         }
 
@@ -1861,8 +1934,8 @@ impl Viewport {
             ImageProtocol::Sixel => "sixel",
             ImageProtocol::Ascii => "ascii",
         };
-        let dims = self.image.as_ref().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
-        format!("{}  {}  {}  [{}]  rows {}-{}/{}", self.source_label, dims, self.image_format, proto, top, bottom, total_rows)
+        let dims = self.current_image().map(|i| { let (w, h) = i.dimensions(); format!("{w}×{h}") }).unwrap_or_default();
+        format!("{}  {}  {}  [{}]  rows {}-{}/{}{}", self.source_label, dims, self.image_format, proto, top, bottom, total_rows, self.anim_badge())
     }
 
     /// Jump by whole logical lines, regardless of wrap rows. `top_row` is
@@ -2224,7 +2297,7 @@ impl Viewport {
     /// xxd layout) and raw (`AnsiMode::Raw`) are excluded.
     pub fn hscroll_active(&self) -> bool {
         #[cfg(feature = "image")]
-        if self.image.is_some() {
+        if self.current_image().is_some() {
             return true;
         }
         !self.opts.wrap
@@ -2700,6 +2773,67 @@ mod tests {
             frame1.body[0][0], cell_at_col0,
             "the scrolled first cell must differ from the unscrolled one"
         );
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn animation_renders_current_frame_and_advances() {
+        use image::{Rgba, RgbaImage};
+        use std::time::Duration;
+        let m = MockSource::new();
+        let mut idx = LineIndex::new();
+        let mut vp = Viewport::new(40, 10, "x.gif".into());
+        let frames = vec![
+            (RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255])), Duration::from_millis(100)),
+            (RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255])), Duration::from_millis(100)),
+        ];
+        vp.set_animation(crate::image_render::Animation { frames, loop_count: None }, "gif",
+                         crate::image_render::AsciiStyle::Ramp, None);
+        let f0 = vp.frame(&m, &mut idx);
+        let changed = vp.tick(Duration::from_millis(120));
+        assert!(changed, "tick past the frame delay advances");
+        let f1 = vp.frame(&m, &mut idx);
+        assert_ne!(format!("{:?}", f0.body), format!("{:?}", f1.body), "frame content changed");
+        assert!(vp.has_animation());
+        assert!(vp.anim_deadline().is_some());
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn animation_status_badge_reflects_play_pause() {
+        use image::{Rgba, RgbaImage};
+        use std::time::Duration;
+        let m = MockSource::new();
+        let mut idx = LineIndex::new();
+        let mut vp = Viewport::new(40, 10, "x.gif".into());
+        let frames = vec![
+            (RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255])), Duration::from_millis(100)),
+            (RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255])), Duration::from_millis(100)),
+        ];
+        vp.set_animation(crate::image_render::Animation { frames, loop_count: None }, "gif",
+                         crate::image_render::AsciiStyle::Ramp, None);
+        let playing = vp.frame(&m, &mut idx);
+        assert!(playing.status.contains("[play 1/2]"), "status: {:?}", playing.status);
+        vp.anim_toggle_pause();
+        let paused = vp.frame(&m, &mut idx);
+        assert!(paused.status.contains("[pause 1/2]"), "status: {:?}", paused.status);
+    }
+
+    #[cfg(feature = "image")]
+    #[test]
+    fn animation_pause_stops_advance() {
+        use image::{Rgba, RgbaImage};
+        use std::time::Duration;
+        let mut vp = Viewport::new(40, 10, "x.gif".into());
+        let frames = vec![
+            (RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255])), Duration::from_millis(100)),
+            (RgbaImage::from_pixel(4, 4, Rgba([255, 255, 255, 255])), Duration::from_millis(100)),
+        ];
+        vp.set_animation(crate::image_render::Animation { frames, loop_count: None }, "gif",
+                         crate::image_render::AsciiStyle::Ramp, None);
+        vp.anim_toggle_pause();
+        assert!(!vp.tick(Duration::from_millis(500)), "paused tick does not advance");
+        assert_eq!(vp.anim_deadline(), None);
     }
 
     #[test]

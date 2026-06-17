@@ -10,6 +10,32 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-06-17
+
+### Added
+
+- **Animated image playback** — animated GIFs (and APNG / WebP, where the
+  decoder supports them) now *play* instead of showing only the first frame.
+  Playback works in **every render mode**: the colored-ASCII / Unicode
+  half-block path animates on any terminal (including Warp), and the
+  `--image-protocol kitty` / `sixel` paths animate on graphics-capable
+  terminals via per-frame re-emit.
+  - **Auto-plays on open**, honoring the GIF loop count: after N loops it rests
+    on the last frame; a loop count of `0` or absent (the common case) loops
+    forever. WebP / APNG loop counts are not parsed and are treated as infinite.
+  - **Transport keys** (active globally, no-op without an animation, all
+    remappable in `~/.config/tess/keys.toml`): `p` pause/resume (also revives a
+    finished animation), `.` step forward, `,` step back (both auto-pause),
+    `Backspace` restart. Kebab binding names: `anim-pause`, `anim-step-forward`,
+    `anim-step-back`, `anim-restart`.
+  - **`--no-animate`** opens the static first frame instead of playing.
+  - The status line in image mode shows a transport badge: `[play i/n]` /
+    `[pause i/n]` / `[done n/n]`.
+  - Batch export (`-o FILE` / `--stdout`) emits a single static image —
+    animation is interactive-only. Native Kitty animation protocol is deferred
+    (every mode uses per-frame re-emit). Behind the default-on `image` Cargo
+    feature.
+
 ## [0.38.0] — 2026-06-16
 
 ### Added

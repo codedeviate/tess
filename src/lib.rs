@@ -32,6 +32,8 @@ pub mod tags;
 pub mod keymap;
 pub mod config_path;
 #[cfg(feature = "image")]
+pub mod anim;
+#[cfg(feature = "image")]
 pub mod image_render;
 #[cfg(feature = "image")]
 pub mod image_export;

@@ -220,6 +220,9 @@ tess --clipboard app.log                                # then :yank a line
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
+| `p` | Animated image: pause / resume (revives a finished animation); no-op without an animation |
+| `.` `,` | Animated image: step one frame forward / back (auto-pauses) |
+| `Backspace` | Animated image: restart from the first frame |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `F1` | Open the help overlay (also `:help` / `:h` at the colon prompt) |
@@ -478,7 +481,8 @@ Action:
 
 - Existing command name in kebab-case: `scroll-down`, `page-up`,
   `goto-line`, `toggle-line-numbers`, `mark-set`, `search-forward`,
-  `shell-escape`, `hscroll-left`, `hscroll-right`, etc. Unknown command
+  `shell-escape`, `hscroll-left`, `hscroll-right`, `anim-pause`,
+  `anim-step-forward`, `anim-step-back`, `anim-restart`, etc. Unknown command
   names error at startup. `clipboard-yank-line` (copy the current line to
   the clipboard, requires `--clipboard`) is a valid command but left
   unbound by default so it doesn't clobber `y` (scroll-up).
@@ -1005,7 +1009,7 @@ so you can find ASCII strings in the gutter or hex byte sequences:
 
 ```sh
 tess photo.png
-tess logo.gif           # GIFs render their first frame
+tess logo.gif           # animated GIFs play automatically
 ```
 
 ### Flags
@@ -1013,11 +1017,49 @@ tess logo.gif           # GIFs render their first frame
 - **`--no-image`** — skip rendering and show the raw bytes instead (combine with `--hex` for a byte-level view).
 - **`--blocks`** — Unicode half-block (`▀`) mode. Each terminal cell encodes two pixel rows (top as fg, bottom as bg), doubling vertical resolution. Ignored when a non-ASCII `--image-protocol` is active.
 - **`--image-width N`** — render at N columns (protocol modes treat it as a fit-width override). Defaults to the current terminal width.
+- **`--no-animate`** — open an animated image as its static first frame instead of playing it. See **Animation** below.
 - **`--image-protocol auto|kitty|sixel|ascii`** — choose how images are drawn. Default `auto`:
   - `auto` queries the terminal for graphics support (a Kitty graphics query, plus a DA1 query for Sixel) and falls back to the colored-ASCII / half-block path when neither is available. Explicit `kitty` / `sixel` / `ascii` skip detection. When both protocols are detected, Kitty is preferred over Sixel.
   - In `kitty` / `sixel` mode the image fits the terminal width and you scroll down through a tall image with the usual vertical-scroll keys; `←`/`→` horizontal scroll is a no-op in protocol mode (it still works in `ascii` mode wider than the terminal). The status line shows `[kitty]` / `[sixel]` while in image mode.
   - Terminal support: the Kitty graphics protocol works on Kitty, iTerm2, WezTerm, and Ghostty; Sixel works on foot, xterm (built with `--enable-sixel`), mlterm, and WezTerm.
   - Combined with `-o FILE` / `--stdout`, an explicit `kitty` or `sixel` writes the raw encoded escape-sequence bytes to the file or pipe (e.g. `tess --image-protocol sixel --stdout photo.png > out.sixel`); `auto` / `ascii` export colored ASCII art as described below.
+
+### Animation
+
+Animated images **play automatically** when you open them. Animated GIF is the
+primary, fully-tested case; APNG and animated WebP are also decoded and played
+where the underlying `image` crate supports them.
+
+Playback works in **every render mode**. The colored-ASCII / `--blocks`
+half-block path animates on any terminal (Warp included); the
+`--image-protocol kitty` / `sixel` paths animate on graphics-capable terminals
+by re-emitting each frame. (There is no native Kitty animation protocol — every
+mode uses per-frame re-emit.)
+
+The animation **honors the GIF loop count**: after the requested number of
+loops it rests on the last frame. A loop count of `0` or absent — the common
+case — loops forever. WebP / APNG loop counts are not parsed and are treated as
+infinite.
+
+**Transport keys** control playback. They are active globally but do nothing
+when the current view has no animation, and they are all remappable in
+`~/.config/tess/keys.toml`:
+
+| Key | Action | Binding name |
+|---|---|---|
+| `p` | Pause / resume (also revives a finished animation) | `anim-pause` |
+| `.` | Step one frame forward (auto-pauses) | `anim-step-forward` |
+| `,` | Step one frame back (auto-pauses) | `anim-step-back` |
+| `Backspace` | Restart from the first frame | `anim-restart` |
+
+The status line in image mode shows a transport badge: `[play i/n]` while
+playing, `[pause i/n]` when paused, and `[done n/n]` once a finite loop count
+has finished.
+
+Pass **`--no-animate`** to open the static first frame instead of playing.
+
+**Batch export is always a static image.** Combining an animated source with
+`-o FILE` / `--stdout` emits a single frame — animation is interactive-only.
 
 ### Color and export
 

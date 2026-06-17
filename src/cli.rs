@@ -207,6 +207,11 @@ pub struct Args {
     #[arg(long = "mouse")]
     pub mouse: bool,
 
+    /// Show only the first frame of an animated image (GIF/APNG/WebP) instead
+    /// of playing it. No effect on static images or non-image input.
+    #[arg(long = "no-animate")]
+    pub no_animate: bool,
+
     /// Show raw control bytes as `^X` glyphs (pre-0.18 default). Disables
     /// SGR / OSC interpretation. Honoured also by the `NO_COLOR` environment
     /// variable (any non-empty value) and `CLICOLOR=0`.
@@ -659,6 +664,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_no_animate() {
+        assert!(Args::parse_from(["tess", "--no-animate", "x.gif"]).no_animate);
+        assert!(!Args::parse_from(["tess", "x.gif"]).no_animate);
+    }
+
+    #[test]
     fn parses_no_image_flag() {
         let a = Args::parse_from(["tess", "--no-image", "cat.png"]);
         assert!(a.no_image);
@@ -796,6 +807,7 @@ mod tests {
             "--live",
             "--manual",
             "--mouse",
+            "--no-animate",
             "--no-color",
             "--no-hilite-search",
             "--no-image",
