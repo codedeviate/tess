@@ -1151,9 +1151,16 @@ pub fn run(
         // animation is playing, shorten the wait to its next-frame deadline
         // so the timeout branch can advance frames on time.
         #[cfg(feature = "image")]
-        let timeout = viewport.anim_deadline()
-            .map(|d| d.min(BASE_POLL))
-            .unwrap_or(BASE_POLL);
+        let timeout = {
+            let mut d = viewport.anim_deadline();
+            if let Some(other) = other_pane.as_ref() {
+                d = match (d, other.viewport.anim_deadline()) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+            }
+            d.map(|x| x.min(BASE_POLL)).unwrap_or(BASE_POLL)
+        };
         #[cfg(not(feature = "image"))]
         let timeout = BASE_POLL;
         match poll(timeout) {
@@ -2117,6 +2124,10 @@ pub fn run(
                 {
                     last_tick = std::time::Instant::now();
                 }
+                #[cfg(feature = "image")]
+                if let Some(other) = other_pane.as_mut() {
+                    other.last_tick = std::time::Instant::now();
+                }
             }
             Ok(false) => {
                 // Advance any playing animation by the elapsed time since the
@@ -2127,6 +2138,12 @@ pub fn run(
                     let dt = last_tick.elapsed();
                     last_tick = std::time::Instant::now();
                     if viewport.tick(dt) { needs_redraw = true; }
+                }
+                #[cfg(feature = "image")]
+                if let Some(other) = other_pane.as_mut() {
+                    let odt = other.last_tick.elapsed();
+                    other.last_tick = std::time::Instant::now();
+                    if other.viewport.tick(odt) { needs_redraw = true; }
                 }
                 // Timeout — check whether the source has grown or been rewritten.
                 if viewport.live_mode() {
@@ -2207,6 +2224,19 @@ pub fn run(
                         needs_redraw = true;
                     }
                 }
+                // Drive follow/live growth for the background pane too, so a
+                // split with two growing files updates both halves.
+                if let Some(other) = other_pane.as_mut() {
+                    if pump_pane(
+                        &mut other.src,
+                        &mut other.idx,
+                        &mut other.viewport,
+                        &mut other.last_revision,
+                        &rebuild_spec,
+                    ) {
+                        needs_redraw = true;
+                    }
+                }
             }
             Err(_) => {
                 // poll() error — sleep the timeout duration to avoid tight-spinning.
@@ -2249,6 +2279,57 @@ fn apply_prettify(
     }
     rebuild_after_replace(src, viewport, idx, spec);
     viewport.set_prettify_label(src.prettify_label());
+}
+
+/// Pump a background pane's source for follow/live growth. Returns true if
+/// anything changed (so the caller can flag a redraw).
+///
+/// This is the minimal subset of the focused pane's live/follow handling that
+/// applies to a non-focused pane: whole-file rewrite (`--live`) rebuilds the
+/// index and re-snaps to bottom if the pane was at bottom; otherwise (follow
+/// mode or a still-streaming stdin source) new bytes are folded in and the
+/// pane auto-scrolls when it was already at the bottom. The focused pane keeps
+/// its own inlined logic verbatim because it also handles file-rotation reopen,
+/// transient status messages, and loop control (`continue`/`break`) that can't
+/// move into a free function — so this is a deliberate minimal duplication to
+/// avoid disturbing the byte-identical focused path.
+fn pump_pane(
+    src: &mut Box<dyn Source>,
+    idx: &mut LineIndex,
+    viewport: &mut Viewport,
+    last_revision: &mut u64,
+    rebuild_spec: &RebuildSpec,
+) -> bool {
+    let mut changed = false;
+    if viewport.live_mode() {
+        let was_at_bottom = viewport.is_at_bottom(src.as_ref(), idx);
+        src.pump();
+        if src.revision() != *last_revision {
+            rebuild_after_replace(src.as_ref(), viewport, idx, *rebuild_spec);
+            if was_at_bottom {
+                viewport.goto_bottom(src.as_ref(), idx);
+            }
+            *last_revision = src.revision();
+            changed = true;
+        }
+    } else if viewport.follow_mode() || !src.is_complete() {
+        let was_at_bottom = viewport.is_at_bottom(src.as_ref(), idx);
+        src.pump();
+        // A background pane never reopens on rotation; just clear the flag so
+        // it doesn't leak into a later focus switch.
+        let _ = src.take_rotated();
+        let lines_before = idx.line_count();
+        idx.notice_new_bytes(src.as_ref());
+        viewport.extend_visible_lines(idx, src.as_ref());
+        if idx.line_count() != lines_before {
+            changed = true;
+            viewport.note_growth();
+            if was_at_bottom {
+                viewport.goto_bottom(src.as_ref(), idx);
+            }
+        }
+    }
+    changed
 }
 
 /// Rebuild line index and visible-line cache after the source content has
