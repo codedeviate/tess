@@ -202,4 +202,36 @@ mod tests {
         let m = compose_split(&l, &r, 2, 5, false);
         assert!(m.status.contains("\u{2502}*R"), "focused-right status marked: {:?}", m.status);
     }
+
+    #[test]
+    fn uneven_body_rows_pad_with_empty() {
+        // Left has 2 rows, right has 1: merged row 1's right half must be all Empty,
+        // and every merged row is exactly left_w + divider + right_w cells.
+        let l = frame(vec![vec![cell('a')], vec![cell('b')]], "L"); // 2 rows
+        let r = frame(vec![vec![cell('x')]], "R");                  // 1 row
+        let m = compose_split(&l, &r, 1, 3, true); // lw=1, rw = 3-(1+1)=1
+        assert_eq!(m.body.len(), 2, "merged uses the taller pane's row count");
+        for row in &m.body {
+            assert_eq!(row.len(), 3, "each merged row is lw + divider + rw");
+            assert!(matches!(row[1], Cell::Char { ch: '\u{2502}', .. }), "divider at col 1");
+        }
+        // Row 1: left 'b', divider, right padded Empty.
+        assert!(matches!(m.body[1][0], Cell::Char { ch: 'b', .. }));
+        assert!(matches!(m.body[1][2], Cell::Empty), "missing right row → Empty pad");
+    }
+
+    #[test]
+    fn pane_status_truncates_to_width() {
+        // A status longer than the pane width is fit-truncated by display columns.
+        // lw=4: focused-left status "*LongStatus" truncates to 4 cols → "*Lon".
+        let l = frame(vec![vec![cell('a')]], "LongStatus");
+        let r = frame(vec![vec![cell('x')]], "R");
+        let m = compose_split(&l, &r, 4, 9, true); // lw=4, rw = 9-(4+1)=4
+        // Left status segment is exactly the first 4 cols of the row's status.
+        assert!(m.status.starts_with("*Lon"), "focused-left status truncated to width 4: {:?}", m.status);
+        // The divider separates the two pane statuses; left segment is 4 wide.
+        let div_pos = m.status.find('\u{2502}').expect("divider in status");
+        // 4 display columns before the divider (all ASCII here → 4 bytes).
+        assert_eq!(div_pos, 4, "left status occupies exactly left_w columns before divider");
+    }
 }
