@@ -28,6 +28,7 @@ pub mod style_spec;
 pub mod open;
 pub mod or;
 pub mod overlay;
+pub mod pane;
 pub mod tags;
 pub mod keymap;
 pub mod config_path;
