@@ -10,6 +10,21 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.40.1] — 2026-06-18
+
+### Fixed
+
+- **Status-bar flicker during image animation on terminals that ignore
+  synchronized output (e.g. Warp).** The status row was redrawn each frame as
+  `Clear` then `Print` — a brief blank window a mid-repaint refresh could catch,
+  which flickered the bar during animation (most visibly in the heavier
+  Kitty/Sixel protocol path). The status row is now drawn **in place**: a single
+  full-width write, padded by **display width** (so multibyte glyphs like `×` /
+  `»` / `▶` fill the row correctly), with no preceding `Clear`. A custom
+  `--prompt` carrying raw escape sequences keeps the clear-then-print path, since
+  its display width can't be measured. (`--blocks` never affected this — the
+  flicker was intermittent regardless of protocol/style.)
+
 ## [0.40.0] — 2026-06-18
 
 ### Changed
