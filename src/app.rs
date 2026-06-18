@@ -914,6 +914,59 @@ fn dispatch_colon_command(
     }
 }
 
+/// In split mode the compositor is cell-based: force ASCII images and disable
+/// raw passthrough so every row is cells.
+fn force_cell_mode(vp: &mut Viewport) {
+    #[cfg(feature = "image")]
+    vp.set_image_protocol(crate::viewport::ImageProtocol::Ascii, None);
+    vp.set_ansi_mode_cells();
+}
+
+/// Initialize split layout: size both panes to half-widths and force cell mode.
+/// Returns the stashed other pane (None when not splitting).
+fn other_pane_init(
+    second: Option<crate::pane::Pane>,
+    focused_vp: &mut Viewport,
+    cols: u16,
+    rows: u16,
+) -> Option<crate::pane::Pane> {
+    let mut other = second?;
+    let (lw, rw) = crate::pane::split_widths(cols);
+    if rw == 0 {
+        focused_vp.resize(cols, rows);
+    } else {
+        focused_vp.resize(lw, rows);
+        other.viewport.resize(rw, rows);
+    }
+    force_cell_mode(focused_vp);
+    force_cell_mode(&mut other.viewport);
+    Some(other)
+}
+
+/// Resize the focused viewport, sizing the other pane's viewport to the
+/// complementary half-width when a split is active (focused-pane-only fallback
+/// when the terminal is too narrow to split).
+fn resize_split_aware(
+    focused_vp: &mut Viewport,
+    other_pane: &mut Option<crate::pane::Pane>,
+    cols: u16,
+    rows: u16,
+    focused_left: bool,
+) {
+    if let Some(other) = other_pane.as_mut() {
+        let (lw, rw) = crate::pane::split_widths(cols);
+        if rw == 0 {
+            focused_vp.resize(cols, rows);
+        } else {
+            let (fw, ow) = if focused_left { (lw, rw) } else { (rw, lw) };
+            focused_vp.resize(fw, rows);
+            other.viewport.resize(ow, rows);
+        }
+    } else {
+        focused_vp.resize(cols, rows);
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::collapsible_match)]
 pub fn run(
     mut src: Box<dyn Source>,
@@ -927,6 +980,7 @@ pub fn run(
     args: crate::cli::Args,
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
+    second_pane: Option<crate::pane::Pane>,
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -942,6 +996,10 @@ pub fn run(
     #[cfg(feature = "image")]
     let mut last_tick = std::time::Instant::now();
     let mut last_revision = src.revision();
+
+    let mut other_pane = other_pane_init(second_pane, &mut viewport, cols, rows);
+    // Focus switch is a later task; for now the focused pane is always the left.
+    let focused_left = true;
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
     // we need to scan the whole source up front to find matching lines.
@@ -1033,7 +1091,23 @@ pub fn run(
                     .collect();
                 viewport.set_status_marks(status_marks);
             }
-            let mut frame = viewport.frame(src.as_ref(), &mut idx);
+            let mut frame = if let Some(other) = other_pane.as_mut() {
+                let (lw, rw) = crate::pane::split_widths(cols);
+                if rw == 0 {
+                    viewport.frame(src.as_ref(), &mut idx)
+                } else {
+                    let ffr = viewport.frame(src.as_ref(), &mut idx);
+                    let ofr = other.viewport.frame(other.src.as_ref(), &mut other.idx);
+                    let (left_fr, right_fr, left_w) = if focused_left {
+                        (&ffr, &ofr, lw)
+                    } else {
+                        (&ofr, &ffr, rw)
+                    };
+                    crate::pane::compose_split(left_fr, right_fr, left_w, cols, focused_left)
+                }
+            } else {
+                viewport.frame(src.as_ref(), &mut idx)
+            };
             // Override the status row when we're in an interactive prompt OR
             // when a transient status message is pending.
             match &mode {
@@ -1518,7 +1592,7 @@ pub fn run(
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
-                    viewport.resize(c, r);
+                    resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
                     }
@@ -1757,7 +1831,7 @@ pub fn run(
                     Command::Resize(c, r) => {
                         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
-                        viewport.resize(c, r);
+                        resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }

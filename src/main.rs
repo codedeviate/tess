@@ -162,6 +162,106 @@ fn build_examples_text() -> String {
     buf
 }
 
+/// Build the second (background) pane for `--split`. Opens `path` through the
+/// same source pipeline as a file-switch (`open::open_source_for_path` — no
+/// prettify/format-specific config) and configures a viewport with the
+/// display-relevant, non-format-specific options the focused pane uses. The
+/// format-specific compiled predicates (filter/grep/or/display) are consumed
+/// into the focused viewport and intentionally not mirrored here; the second
+/// pane shows the file's plain view. `other_pane_init` corrects the size, so
+/// the `cols`/`rows` passed here are provisional.
+#[allow(clippy::too_many_arguments)]
+fn build_second_pane(
+    path: &std::path::Path,
+    args: &Args,
+    ansi_mode: tess::render::AnsiMode,
+    cols: u16,
+    rows: u16,
+    preprocessor: Option<&tess::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+) -> Result<tess::pane::Pane> {
+    let (src, label, preprocess_failure) =
+        tess::open::open_source_for_path(path, args, preprocessor)?;
+
+    let mut idx = match args.tail {
+        Some(n) => {
+            let off = find_tail_offset(src.as_ref(), n);
+            LineIndex::new_starting_at(off)
+        }
+        None => LineIndex::new(),
+    };
+    if let Some(n) = args.head {
+        idx.set_head_cap(n);
+    }
+    if let Some(re) = record_start_regex {
+        idx.set_record_start(re.clone());
+    }
+
+    let mut viewport = Viewport::new(cols, rows, label);
+    if args.line_numbers { viewport.toggle_line_numbers(); }
+    if args.chop { viewport.toggle_chop(); }
+    viewport.opts.tab_width = args.tab_width;
+    if let Some(spec) = args.tabs.as_deref() {
+        let stops = parse_tab_stops(spec).map_err(Error::Runtime)?;
+        if stops.len() == 1 {
+            viewport.opts.tab_width = stops[0].clamp(1, u8::MAX as usize) as u8;
+        } else {
+            viewport.opts.tab_stops = Some(stops);
+        }
+    }
+    viewport.set_follow_mode(args.follow);
+    viewport.set_live_mode(args.live);
+    if args.hex {
+        viewport.set_hex_mode(true);
+        let bpg = tess::hex::hex_chars_to_bytes_per_group(args.hex_group)
+            .ok_or_else(|| Error::Runtime(format!(
+                "--hex-group must be one of 2, 4, 8, 16, 32 (got {})",
+                args.hex_group
+            )))?;
+        viewport.set_hex_group_size(bpg);
+    }
+    viewport.set_ansi_mode(ansi_mode);
+    viewport.set_squeeze_blanks(args.squeeze_blanks);
+    viewport.set_status_column(args.status_column);
+    if let Some(spec) = args.header.as_deref() {
+        let (lines, hcols) = parse_header_spec(spec).map_err(Error::Runtime)?;
+        viewport.set_header(lines, hcols);
+    }
+    viewport.opts.rscroll_char = args.rscroll.chars().next();
+    viewport.opts.word_wrap = args.word_wrap;
+    viewport.set_page_size(args.window);
+    viewport.set_preprocess_failure(preprocess_failure);
+    viewport.set_file_index(0, 1);
+
+    // Image auto-detection: the split compositor is cell-based, so render any
+    // image as ASCII (force_cell_mode in app::run pins the protocol to ASCII).
+    #[cfg(feature = "image")]
+    if !args.hex && !args.no_image {
+        let head_len = src.len().min(64);
+        let head = src.bytes(0..head_len);
+        if let Some(fmt) = tess::image_render::sniff_image_format(&head) {
+            let all = src.bytes(0..src.len());
+            let style = if args.blocks {
+                tess::image_render::AsciiStyle::Blocks
+            } else {
+                tess::image_render::AsciiStyle::Ramp
+            };
+            if let Ok(rgba) = tess::image_render::decode_image(&all) {
+                viewport.set_image(rgba, fmt, style, args.image_width);
+                viewport.set_image_no_color(args.no_color);
+            }
+        }
+    }
+
+    Ok(tess::pane::Pane {
+        last_revision: src.revision(),
+        #[cfg(feature = "image")]
+        last_tick: std::time::Instant::now(),
+        src,
+        idx,
+        viewport,
+    })
+}
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -249,7 +349,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
     let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
     let stub_args = Args::parse_from(["tess"]);
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None, None)?;
+    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None, None, None)?;
     Ok(())
 }
 
@@ -1034,7 +1134,36 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
-    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file)?;
+    // Build the second pane for `--split` before `args`/`preprocessor`/
+    // `record_start_regex` are moved into `app::run`. Only meaningful for a
+    // file-backed launch (not stdin/clipboard): the second file is `files[1]`
+    // if present, otherwise a second view of `files[0]`. `other_pane_init`
+    // inside `app::run` resizes both panes, so `cols`/`rows` are provisional.
+    let second_pane: Option<tess::pane::Pane> = if args.split {
+        let second_path = args.files.get(1).or_else(|| args.files.first()).cloned();
+        match second_path {
+            Some(p) => match build_second_pane(
+                &p,
+                &args,
+                ansi_mode,
+                cols,
+                rows,
+                preprocessor.as_ref(),
+                record_start_regex.as_ref(),
+            ) {
+                Ok(pane) => Some(pane),
+                Err(e) => {
+                    eprintln!("tess: --split second pane: {e}");
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file, second_pane)?;
     Ok(())
 }
 

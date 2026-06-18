@@ -751,6 +751,15 @@ impl Viewport {
         self.ansi_mode
     }
 
+    /// Force cell rendering for split mode: if the current ANSI mode is Raw
+    /// (which emits whole-row raw bytes the split compositor can't merge),
+    /// switch to Interpret. Strict/Interpret are left unchanged.
+    pub fn set_ansi_mode_cells(&mut self) {
+        if matches!(self.ansi_mode, crate::render::AnsiMode::Raw) {
+            self.ansi_mode = crate::render::AnsiMode::Interpret;
+        }
+    }
+
     pub fn set_source_label(&mut self, label: String) {
         self.source_label = label;
     }
