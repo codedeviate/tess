@@ -233,8 +233,48 @@ fn build_second_pane(
     viewport.set_preprocess_failure(preprocess_failure);
     viewport.set_file_index(0, 1);
 
+    // Status/prompt theming parity with the first pane: resolve `--status-style`
+    // as the base, with `--prompt-style` (or the per-format `prompt_style`)
+    // taking over when a prompt is active. Mirrors the resolution in real_main
+    // so the focused-pane status bar is themed identically once focus can switch.
+    {
+        let (fmt_prompt, fmt_prompt_style): (Option<tess::prompt::ParsedPrompt>, Option<tess::ansi::Style>) =
+            if let Some(name) = args.format.as_deref() {
+                let formats = format::load_all().map_err(Error::Runtime)?;
+                let entry = formats.get(name);
+                (
+                    entry.and_then(|f| f.prompt.clone()),
+                    entry.and_then(|f| f.prompt_style),
+                )
+            } else {
+                (None, None)
+            };
+        let prompt_active = match args.prompt.as_deref() {
+            Some(_) => true,
+            None => fmt_prompt.is_some(),
+        };
+        let status_style_base = tess::style_spec::parse(&args.status_style)
+            .map_err(|e| Error::Runtime(format!("--status-style: {e}")))?;
+        let cli_prompt_style = if args.prompt_style.trim().is_empty() {
+            None
+        } else {
+            Some(tess::style_spec::parse(&args.prompt_style)
+                .map_err(|e| Error::Runtime(format!("--prompt-style: {e}")))?)
+        };
+        let resolved_status_style = if prompt_active {
+            cli_prompt_style
+                .or(fmt_prompt_style)
+                .unwrap_or(status_style_base)
+        } else {
+            status_style_base
+        };
+        viewport.set_status_style(resolved_status_style);
+    }
+
     // Image auto-detection: the split compositor is cell-based, so render any
     // image as ASCII (force_cell_mode in app::run pins the protocol to ASCII).
+    // Mirror the first pane: prefer animated playback so the per-pane tick has
+    // an AnimationState to advance; fall back to a static first frame otherwise.
     #[cfg(feature = "image")]
     if !args.hex && !args.no_image {
         let head_len = src.len().min(64);
@@ -246,8 +286,27 @@ fn build_second_pane(
             } else {
                 tess::image_render::AsciiStyle::Ramp
             };
-            if let Ok(rgba) = tess::image_render::decode_image(&all) {
-                viewport.set_image(rgba, fmt, style, args.image_width);
+            use tess::image_render::AnimationDecode;
+            let decoded = if args.no_animate {
+                AnimationDecode::Static
+            } else {
+                tess::image_render::decode_animation(&all)
+            };
+            let loaded = if let AnimationDecode::Animated(anim) = decoded {
+                viewport.set_animation(anim, fmt, style, args.image_width);
+                true
+            } else {
+                // Unsupported animation → fall back to the static first frame;
+                // the hint flash is the focused pane's concern, so skip it here.
+                match tess::image_render::decode_image(&all) {
+                    Ok(rgba) => {
+                        viewport.set_image(rgba, fmt, style, args.image_width);
+                        true
+                    }
+                    Err(_) => false,
+                }
+            };
+            if loaded {
                 viewport.set_image_no_color(args.no_color);
             }
         }
