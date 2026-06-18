@@ -2328,6 +2328,66 @@ fn emit_hyperlink_diff<W: Write>(
 const SYNC_UPDATE_BEGIN: &[u8] = b"\x1b[?2026h";
 const SYNC_UPDATE_END: &[u8] = b"\x1b[?2026l";
 
+/// Fit `s` to exactly `cols` display columns: truncate on a char boundary at
+/// the column limit, then pad with spaces. Used so the status row can be
+/// overwritten in place by a single full-width write.
+fn fit_status_to_cols(s: &str, cols: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    let mut out = String::with_capacity(cols);
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + cw > cols {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    for _ in w..cols {
+        out.push(' ');
+    }
+    out
+}
+
+/// Draw the status row at the bottom. For plain-text status (the common case,
+/// including the animation `[play i/n]` badge) we write a width-padded string
+/// **in place with no preceding `Clear`** — so on terminals that ignore
+/// synchronized output (DEC 2026), the row never blanks mid-repaint, which is
+/// what caused the status-bar flicker during animation. A status carrying raw
+/// escape sequences (a custom `--prompt` with `\e…`) can't be measured by
+/// display width, so it keeps the clear-then-print path.
+fn write_status_row(
+    out: &mut impl Write,
+    status: &str,
+    status_style: &crate::ansi::Style,
+    cols: u16,
+    rows: u16,
+    truecolor: bool,
+) -> io::Result<()> {
+    out.queue(MoveTo(0, rows.saturating_sub(1)))?;
+    if status.contains('\x1b') {
+        // Embedded-escape prompt: clear first, then emit verbatim (truncated on
+        // a char boundary as a loose width bound — matches prior behavior).
+        out.queue(Clear(ClearType::UntilNewLine))?;
+        emit_style_diff(out, &crate::ansi::Style::default(), status_style, truecolor)?;
+        let mut s = status.to_string();
+        if s.len() > cols as usize {
+            let mut end = cols as usize;
+            while end > 0 && !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            s.truncate(end);
+        }
+        out.queue(Print(s))?;
+    } else {
+        emit_style_diff(out, &crate::ansi::Style::default(), status_style, truecolor)?;
+        out.queue(Print(fit_status_to_cols(status, cols as usize)))?;
+    }
+    out.queue(ResetColor)?;
+    out.queue(SetAttribute(Attribute::Reset))?;
+    Ok(())
+}
+
 fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, truecolor: bool) -> io::Result<()> {
     // Raw mode (`-r` / `:color raw`) routes each visible body row through the
     // `frame.raw_rows` slot (populated by `Viewport::frame` when ansi_mode is
@@ -2355,16 +2415,7 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, trueco
         }
         out.queue(MoveTo(0, 0))?;
         out.write_all(blob)?;
-        // Status row, mirroring the normal path's status handling.
-        out.queue(MoveTo(0, rows.saturating_sub(1)))?;
-        out.queue(Clear(ClearType::UntilNewLine))?;
-        emit_style_diff(out, &crate::ansi::Style::default(), &frame.status_style, truecolor)?;
-        let mut status = frame.status.clone();
-        if status.len() > cols as usize { status.truncate(cols as usize); }
-        else { let pad = cols as usize - status.len(); status.push_str(&" ".repeat(pad)); }
-        out.queue(Print(status))?;
-        out.queue(ResetColor)?;
-        out.queue(SetAttribute(Attribute::Reset))?;
+        write_status_row(out, &frame.status, &frame.status_style, cols, rows, truecolor)?;
         out.write_all(SYNC_UPDATE_END)?;
         return out.flush();
     }
@@ -2409,19 +2460,7 @@ fn write_frame(out: &mut impl Write, frame: &Frame, cols: u16, rows: u16, trueco
         write_row_with_highlights(out, row, cols, highlights, base_style, truecolor)?;
     }
     // Status row
-    out.queue(MoveTo(0, rows.saturating_sub(1)))?;
-    out.queue(Clear(ClearType::UntilNewLine))?;
-    emit_style_diff(out, &crate::ansi::Style::default(), &frame.status_style, truecolor)?;
-    let mut status = frame.status.clone();
-    if status.len() > cols as usize {
-        status.truncate(cols as usize);
-    } else {
-        let pad = cols as usize - status.len();
-        status.push_str(&" ".repeat(pad));
-    }
-    out.queue(Print(status))?;
-    out.queue(ResetColor)?;
-    out.queue(SetAttribute(Attribute::Reset))?;
+    write_status_row(out, &frame.status, &frame.status_style, cols, rows, truecolor)?;
 
     // End the synchronized update. The terminal flushes the buffered frame
     // atomically on receipt of this sequence.
@@ -2663,6 +2702,61 @@ mod tests {
         assert!(out.windows(needle.len()).any(|w| w == needle), "image blob emitted verbatim");
         assert!(String::from_utf8_lossy(&out).contains("img"), "status still drawn");
         assert!(!String::from_utf8_lossy(&out).contains('Z'), "cell loop skipped: body cell not rendered");
+    }
+
+    #[test]
+    fn fit_status_pads_by_display_width_not_bytes() {
+        assert_eq!(fit_status_to_cols("ab", 5), "ab   ");
+        // `×` is 2 bytes but 1 display column: must pad to 4 columns (3 spaces),
+        // not byte-length (which would give only 2 spaces).
+        assert_eq!(fit_status_to_cols("\u{00d7}", 4), "\u{00d7}   ");
+        assert_eq!(fit_status_to_cols("hello", 3), "hel"); // truncate by columns
+        assert_eq!(fit_status_to_cols("", 3), "   ");
+    }
+
+    #[test]
+    fn plain_status_row_drawn_in_place_without_clear() {
+        // image_blob path: the N body rows are cleared, but the plain status row
+        // is drawn in place with NO Clear — so total Clear(UntilNewLine) == N.
+        // (Pre-fix this was N+1; the extra clear was the status-bar flicker window.)
+        let body_rows = 3usize;
+        let cols = 12u16;
+        let frame = Frame {
+            body: vec![vec![crate::render::Cell::Empty; cols as usize]; body_rows],
+            row_styles: vec![RowStyle::Normal; body_rows],
+            highlights: vec![Vec::new(); body_rows],
+            status: "[play 1/8]".to_string(),
+            status_style: crate::ansi::Style::default(),
+            raw_rows: vec![None; body_rows],
+            image_blob: Some(b"\x1bPqX\x1b\\".to_vec()),
+        };
+        let mut out: Vec<u8> = Vec::new();
+        write_frame(&mut out, &frame, cols, (body_rows + 1) as u16, true).unwrap();
+        let clears = out.windows(3).filter(|w| *w == b"\x1b[K").count();
+        assert_eq!(clears, body_rows, "status row must not be cleared (no blank-window flicker)");
+        assert!(String::from_utf8_lossy(&out).contains("[play 1/8]"), "status text present");
+    }
+
+    #[test]
+    fn escaped_status_keeps_clear_then_print() {
+        // A status carrying raw escape sequences (custom --prompt) can't be
+        // width-measured, so it retains the clear-then-print path: N body clears
+        // + 1 status clear.
+        let body_rows = 2usize;
+        let cols = 20u16;
+        let frame = Frame {
+            body: vec![vec![crate::render::Cell::Empty; cols as usize]; body_rows],
+            row_styles: vec![RowStyle::Normal; body_rows],
+            highlights: vec![Vec::new(); body_rows],
+            status: "\x1b[31mred\x1b[0m".to_string(),
+            status_style: crate::ansi::Style::default(),
+            raw_rows: vec![None; body_rows],
+            image_blob: None,
+        };
+        let mut out: Vec<u8> = Vec::new();
+        write_frame(&mut out, &frame, cols, (body_rows + 1) as u16, true).unwrap();
+        let clears = out.windows(3).filter(|w| *w == b"\x1b[K").count();
+        assert_eq!(clears, body_rows + 1, "embedded-escape status keeps the clear");
     }
 
     #[test]
