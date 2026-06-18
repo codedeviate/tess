@@ -357,6 +357,11 @@ pub struct Args {
     #[arg(short = '#', long = "shift", value_name = "N")]
     pub shift: Option<u16>,
 
+    /// Open two files side by side in a vertical split (needs ≥2 file args; with
+    /// one file, opens a second view of it). Interactive only. Runtime: `:vsplit`.
+    #[arg(long = "split")]
+    pub split: bool,
+
     /// Collapse runs of two or more consecutive blank lines into a
     /// single blank line at display time. Real line numbers, search,
     /// and tag jumps are unaffected (they reference the original
@@ -462,6 +467,12 @@ mod tests {
         assert!(Args::try_parse_from(["tess", "-R", "-r", "f"]).is_err());
         assert!(Args::try_parse_from(["tess", "-R", "--no-color", "f"]).is_err());
     }
+    #[test]
+    fn parses_split() {
+        assert!(Args::parse_from(["tess", "--split", "a", "b"]).split);
+        assert!(!Args::parse_from(["tess", "a"]).split);
+    }
+
     #[test]
     fn parses_shift_and_wheel_lines() {
         let a = Args::parse_from(["tess", "--shift", "12", "--wheel-lines", "5", "f"]);
@@ -830,6 +841,7 @@ mod tests {
             "--record-start",
             "--rscroll",
             "--shift",
+            "--split",
             "--squeeze-blank-lines",
             "--status-column",
             "--status-style",
