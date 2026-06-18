@@ -48,5 +48,6 @@ img2webp -loop 0 -d 120 /tmp/anim_frames/f*.png -o sweep.webp     # animated Web
 ```
 
 Note: the APNG must be **8-bit** — the `image` crate's APNG decoder rejects
-16-bit (`Rgb16`) frames, in which case `tess` falls back to showing the static
-first frame.
+16-bit (`Rgb16`) frames, in which case `tess` shows the static first frame and
+flashes `couldn't decode animation; showing first frame` on the status line
+(since 0.40.0).
