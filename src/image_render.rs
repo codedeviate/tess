@@ -14,6 +14,29 @@ pub struct Animation {
     pub loop_count: Option<u32>,
 }
 
+/// Outcome of `decode_animation`.
+pub enum AnimationDecode {
+    /// Not an animation (single frame / static): the caller decodes and
+    /// displays it normally, with no hint.
+    Static,
+    /// A decoded multi-frame animation to play.
+    Animated(Animation),
+    /// The source *is* an animation, but its frames could not be decoded
+    /// (e.g. a 16-bit APNG — the `image` crate's APNG decoder rejects
+    /// `Rgb16`). The caller should fall back to the static first frame and
+    /// hint the user, rather than silently dropping the animation. Carries a
+    /// short human-facing reason.
+    Unsupported(String),
+}
+
+/// True if the PNG carries an `acTL` (animation-control) chunk — i.e. it is an
+/// APNG, not a plain still PNG. Lets `decode_animation` distinguish "static
+/// PNG" (even 16-bit) from "animated PNG that failed to decode", so a still
+/// image is never reported as an animation failure.
+fn png_has_actl(bytes: &[u8]) -> bool {
+    bytes.windows(4).any(|w| w == b"acTL")
+}
+
 /// Extract the loop count from a GIF's NETSCAPE2.0 application extension.
 /// Returns `Some(0)` for infinite, `Some(n)` for a finite count, or `None`
 /// when the extension is absent (callers treat that as infinite). The `image`
@@ -32,40 +55,58 @@ pub fn parse_gif_loop_count(bytes: &[u8]) -> Option<u32> {
     None
 }
 
-/// Decode an animated image to its frames. Returns `None` when the source is
-/// static / single-frame (callers fall back to `decode_image`). GIF loop count
-/// comes from the NETSCAPE extension; other formats default to infinite.
-/// GIF decoding (and the static→None guard) is unit-tested; the WebP and APNG
-/// multi-frame paths are manually verified, since the `image` crate cannot
-/// encode those formats in-test to build a fixture.
-pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
+/// Decode an animated image. Returns `Static` for a single-frame / non-animated
+/// source (caller falls back to `decode_image`), `Animated` for a playable
+/// multi-frame animation, or `Unsupported` when the source is animated but its
+/// frames can't be decoded (so the caller can show the first frame *and* hint).
+/// GIF loop count comes from the NETSCAPE extension; other formats default to
+/// infinite. GIF, 8-bit APNG, and animated WebP decode to `Animated`; a 16-bit
+/// APNG (which the `image` crate rejects) decodes to `Unsupported` — both
+/// covered by `tests/animation_decode.rs`.
+pub fn decode_animation(bytes: &[u8]) -> AnimationDecode {
     use image::AnimationDecoder;
-    let fmt = image::guess_format(bytes).ok()?;
-    let frames_res: Option<Vec<image::Frame>> = match fmt {
-        image::ImageFormat::Gif => image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
-            .ok()?
-            .into_frames()
-            .collect_frames()
-            .ok(),
-        image::ImageFormat::WebP => {
-            image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))
-                .ok()?
-                .into_frames()
-                .collect_frames()
-                .ok()
-        }
-        image::ImageFormat::Png => image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes))
-            .ok()?
-            .apng()
-            .ok()?
-            .into_frames()
-            .collect_frames()
-            .ok(),
-        _ => None,
+    let fmt = match image::guess_format(bytes) {
+        Ok(f) => f,
+        Err(_) => return AnimationDecode::Static,
     };
-    let frames = frames_res?;
+    // Decode the container's frames. A failed *decode* of an animated source
+    // becomes `Unsupported`; "not an animation at all" becomes `Static`.
+    let frames: Vec<image::Frame> = match fmt {
+        image::ImageFormat::Gif => match image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)) {
+            Ok(d) => match d.into_frames().collect_frames() {
+                Ok(f) => f,
+                Err(e) => return AnimationDecode::Unsupported(format!("GIF: {e}")),
+            },
+            Err(_) => return AnimationDecode::Static,
+        },
+        image::ImageFormat::WebP => match image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes)) {
+            Ok(d) => match d.into_frames().collect_frames() {
+                Ok(f) => f,
+                Err(e) => return AnimationDecode::Unsupported(format!("WebP: {e}")),
+            },
+            Err(_) => return AnimationDecode::Static,
+        },
+        image::ImageFormat::Png => {
+            // Only an APNG (acTL present) can be an animation; a plain still
+            // PNG — even 16-bit — is `Static`, never an animation failure.
+            if !png_has_actl(bytes) {
+                return AnimationDecode::Static;
+            }
+            match image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes)) {
+                Ok(d) => match d.apng() {
+                    Ok(apng) => match apng.into_frames().collect_frames() {
+                        Ok(f) => f,
+                        Err(e) => return AnimationDecode::Unsupported(format!("APNG: {e}")),
+                    },
+                    Err(e) => return AnimationDecode::Unsupported(format!("APNG: {e}")),
+                },
+                Err(_) => return AnimationDecode::Static,
+            }
+        }
+        _ => return AnimationDecode::Static,
+    };
     if frames.len() <= 1 {
-        return None;
+        return AnimationDecode::Static;
     }
     let loop_count = if fmt == image::ImageFormat::Gif {
         parse_gif_loop_count(bytes)
@@ -79,7 +120,7 @@ pub fn decode_animation(bytes: &[u8]) -> Option<Animation> {
             (f.into_buffer(), delay)
         })
         .collect();
-    Some(Animation { frames, loop_count })
+    AnimationDecode::Animated(Animation { frames, loop_count })
 }
 
 /// Rendering aesthetic.
@@ -421,8 +462,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_animation_reads_frames_or_none_for_static() {
-        // Static PNG → None.
+    fn decode_animation_reads_frames_or_static() {
+        // Static PNG → Static.
         let png = {
             let src = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
             let mut buf = std::io::Cursor::new(Vec::new());
@@ -432,13 +473,23 @@ mod tests {
             buf.into_inner()
         };
         assert!(
-            decode_animation(&png).is_none(),
+            matches!(decode_animation(&png), AnimationDecode::Static),
             "static image is not an animation"
         );
 
-        // Two-frame GIF → Some with 2 frames.
+        // Two-frame GIF → Animated with 2 frames.
         let gif = make_two_frame_gif();
-        let anim = decode_animation(&gif).expect("animated gif decodes");
-        assert_eq!(anim.frames.len(), 2);
+        match decode_animation(&gif) {
+            AnimationDecode::Animated(anim) => assert_eq!(anim.frames.len(), 2),
+            _ => panic!("two-frame GIF should decode as Animated"),
+        }
+    }
+
+    #[test]
+    fn png_has_actl_detects_apng_chunk() {
+        // acTL anywhere in the byte stream → treated as an APNG.
+        assert!(png_has_actl(b"\x89PNG....acTL....IDAT...."));
+        // A plain PNG without the animation-control chunk → not an APNG.
+        assert!(!png_has_actl(b"\x89PNG....IHDR....IDAT....IEND"));
     }
 }

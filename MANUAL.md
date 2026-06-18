@@ -1058,6 +1058,12 @@ has finished.
 
 Pass **`--no-animate`** to open the static first frame instead of playing.
 
+If a source is genuinely animated but its frames can't be decoded — most
+notably a **16-bit APNG**, which the underlying decoder rejects — `tess` shows
+the static first frame and flashes `couldn't decode animation; showing first
+frame` on the status line, rather than silently dropping the animation. Re-encode
+such an APNG as 8-bit to play it.
+
 **Batch export is always a static image.** Combining an animated source with
 `-o FILE` / `--stdout` emits a single frame — animation is interactive-only.
 

@@ -10,6 +10,21 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-06-18
+
+### Changed
+
+- **Animated images that can't be decoded now hint instead of silently showing
+  a static frame.** When a source is genuinely animated but its frames can't be
+  decoded — most notably a **16-bit APNG**, which the underlying `image` crate
+  rejects — `tess` falls back to the static first frame *and* flashes
+  `couldn't decode animation; showing first frame` on the status line, rather
+  than dropping the animation with no explanation. Plain static images (even
+  16-bit PNGs) are unaffected: the APNG path is gated on the `acTL` chunk, so a
+  still image is never mistaken for a failed animation. Internally
+  `image_render::decode_animation` now returns an `AnimationDecode`
+  (`Static` / `Animated` / `Unsupported`) instead of `Option<Animation>`.
+
 ## [0.39.0] — 2026-06-17
 
 ### Added

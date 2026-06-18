@@ -995,19 +995,27 @@ showing raw (use --content-type=NAME to override)"
             // multi-frame image and the user did not ask for a static view.
             // Decodes all frames eagerly (a frame-count cap could be added if
             // huge animations become a memory concern).
-            let animated = if args.no_animate {
-                None
+            use tess::image_render::AnimationDecode;
+            let decoded = if args.no_animate {
+                AnimationDecode::Static
             } else {
                 tess::image_render::decode_animation(&all)
             };
+            // `Unsupported` means the source IS animated but its frames can't be
+            // decoded (e.g. a 16-bit APNG) — show the static first frame and
+            // hint, instead of silently dropping the animation.
+            let unsupported = matches!(decoded, AnimationDecode::Unsupported(_));
 
-            let loaded = if let Some(anim) = animated {
+            let loaded = if let AnimationDecode::Animated(anim) = decoded {
                 viewport.set_animation(anim, fmt, style, args.image_width);
                 true
             } else {
                 match tess::image_render::decode_image(&all) {
                     Ok(rgba) => {
                         viewport.set_image(rgba, fmt, style, args.image_width);
+                        if unsupported {
+                            viewport.flash("couldn't decode animation; showing first frame", 20);
+                        }
                         true
                     }
                     Err(e) => {
