@@ -48,15 +48,10 @@ pub fn user_config_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serializes tests that mutate env vars. Same pattern as the
-    /// HOME_LOCK in `format.rs`.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn global_config_dir_honors_env_var() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
         std::env::set_var("TESS_GLOBAL_CONFIG_DIR", "/tmp/tess-test-global");
         assert_eq!(
@@ -71,7 +66,7 @@ mod tests {
 
     #[test]
     fn global_config_dir_with_no_env_var_returns_etc_or_none() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
         std::env::remove_var("TESS_GLOBAL_CONFIG_DIR");
         let result = global_config_dir();
@@ -89,7 +84,7 @@ mod tests {
 
     #[test]
     fn user_config_dir_appends_config_tess() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev = std::env::var_os("HOME");
         std::env::set_var("HOME", "/tmp/fakehome");
         assert_eq!(

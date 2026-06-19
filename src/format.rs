@@ -816,11 +816,6 @@ pub fn print_format_list(formats: &HashMap<String, LogFormat>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Serializes tests that mutate the `HOME` env var; otherwise they
-    /// trample each other when cargo runs tests in parallel.
-    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn builtins_all_compile() {
@@ -1002,7 +997,7 @@ mod tests {
 
     #[test]
     fn load_groups_reads_user_config() {
-        let _g = HOME_LOCK.lock().unwrap();
+        let _g = crate::test_env::lock();
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -1252,7 +1247,7 @@ file = "/tmp/x.log"
 
     #[test]
     fn load_groups_rejects_reserved_name() {
-        let _g = HOME_LOCK.lock().unwrap();
+        let _g = crate::test_env::lock();
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -1274,7 +1269,7 @@ file = "/x.log"
 
     #[test]
     fn user_config_overrides_builtin_via_load_all() {
-        let _g = HOME_LOCK.lock().unwrap();
+        let _g = crate::test_env::lock();
         // Use a temp HOME to avoid touching the real user's config.
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
@@ -1324,7 +1319,7 @@ regex = "^(?P<custom>\\S+)$"
 
     #[test]
     fn layered_loader_local_overrides_global() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
@@ -1393,7 +1388,7 @@ regex = "^LOCAL (?P<msg>.+)$"
 
     #[test]
     fn layered_loader_warns_on_bad_global_toml() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
@@ -1426,7 +1421,7 @@ regex = "^LOCAL (?P<msg>.+)$"
 
     #[test]
     fn layered_loader_fails_on_bad_local_toml() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
@@ -1541,7 +1536,7 @@ regex = "^LOCAL (?P<msg>.+)$"
 
     #[test]
     fn load_all_tags_source_correctly() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
@@ -1642,7 +1637,7 @@ regex = "^LOCAL (?P<msg>.+)$"
 
     #[test]
     fn load_groups_reads_or_conditions() {
-        let _g = HOME_LOCK.lock().unwrap();
+        let _g = crate::test_env::lock();
         let tmp = tempfile::tempdir().unwrap();
         let cfg_dir = tmp.path().join(".config").join("tess");
         std::fs::create_dir_all(&cfg_dir).unwrap();

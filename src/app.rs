@@ -3246,8 +3246,15 @@ mod tests {
 
     #[test]
     fn parse_colon_e_with_tilde() {
+        let _guard = crate::test_env::lock();
+        let saved = std::env::var_os("HOME");
         std::env::set_var("HOME", "/home/user");
-        match parse_colon_command("e ~/foo.log").unwrap() {
+        let result = parse_colon_command("e ~/foo.log");
+        match saved {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match result.unwrap() {
             ColonCommand::Edit(p) => assert_eq!(p, std::path::PathBuf::from("/home/user/foo.log")),
             other => panic!("expected Edit, got {other:?}"),
         }

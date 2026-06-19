@@ -369,9 +369,6 @@ fn format_key_event(ke: KeyEvent) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_empty_file_returns_empty_map() {
@@ -621,7 +618,7 @@ mod tests {
 
     #[test]
     fn layered_keys_local_overrides_global_per_binding() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
@@ -691,7 +688,7 @@ mod tests {
 
     #[test]
     fn layered_keys_warns_on_bad_global() {
-        let _guard = HOME_LOCK.lock().unwrap();
+        let _guard = crate::test_env::lock();
         let prev_home = std::env::var_os("HOME");
         let prev_global = std::env::var_os("TESS_GLOBAL_CONFIG_DIR");
 
