@@ -2345,6 +2345,10 @@ fn pump_pane(
                     *last_revision = src.revision();
                     return true;
                 }
+                // Reopen failed: unlike the focused pane (which surfaces
+                // `[reopen failed: ...]`), a background pane has no status
+                // surface of its own, so we intentionally swallow the Err and
+                // fall through to the normal growth path on the stale source.
             }
         }
         let lines_before = idx.line_count();
@@ -2356,7 +2360,10 @@ fn pump_pane(
             if was_at_bottom {
                 viewport.goto_bottom(src.as_ref(), idx);
             }
+        } else {
+            viewport.tick_idle();
         }
+        viewport.tick_flash();
     }
     changed
 }
