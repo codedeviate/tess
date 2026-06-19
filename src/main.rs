@@ -162,6 +162,153 @@ fn build_examples_text() -> String {
     buf
 }
 
+/// Build the second (background) pane for `--split`. Opens `path` through the
+/// same source pipeline as a file-switch (`open::open_source_for_path` — no
+/// prettify/format-specific config) and configures a viewport with the
+/// display-relevant, non-format-specific options the focused pane uses. The
+/// format-specific compiled predicates (filter/grep/or/display) are consumed
+/// into the focused viewport and intentionally not mirrored here; the second
+/// pane shows the file's plain view. `other_pane_init` corrects the size, so
+/// the `cols`/`rows` passed here are provisional.
+#[allow(clippy::too_many_arguments)]
+fn build_second_pane(
+    path: &std::path::Path,
+    args: &Args,
+    ansi_mode: tess::render::AnsiMode,
+    cols: u16,
+    rows: u16,
+    preprocessor: Option<&tess::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+) -> Result<tess::pane::Pane> {
+    let (src, label, preprocess_failure) =
+        tess::open::open_source_for_path(path, args, preprocessor)?;
+
+    let mut idx = match args.tail {
+        Some(n) => {
+            let off = find_tail_offset(src.as_ref(), n);
+            LineIndex::new_starting_at(off)
+        }
+        None => LineIndex::new(),
+    };
+    if let Some(n) = args.head {
+        idx.set_head_cap(n);
+    }
+    if let Some(re) = record_start_regex {
+        idx.set_record_start(re.clone());
+    }
+
+    let mut viewport = Viewport::new(cols, rows, label);
+    // Shared subset (line numbers, chop, tab_width, follow, live, hex, squeeze,
+    // status_column, rscroll, word_wrap, page_size, file_index) — the single
+    // source of truth shared with the runtime `:vsplit` pane.
+    tess::app::apply_pane_display_config(&mut viewport, args);
+    // Startup-only extras the runtime `:vsplit` path intentionally omits: the
+    // `--tabs`/`--header` spec parsers, ANSI mode, and preprocess failure.
+    // (`--hex-group` is already validated when the first pane was built, so the
+    // helper's silent-ignore of a bad value is unreachable here.)
+    if let Some(spec) = args.tabs.as_deref() {
+        let stops = parse_tab_stops(spec).map_err(Error::Runtime)?;
+        if stops.len() == 1 {
+            viewport.opts.tab_width = stops[0].clamp(1, u8::MAX as usize) as u8;
+        } else {
+            viewport.opts.tab_stops = Some(stops);
+        }
+    }
+    viewport.set_ansi_mode(ansi_mode);
+    if let Some(spec) = args.header.as_deref() {
+        let (lines, hcols) = parse_header_spec(spec).map_err(Error::Runtime)?;
+        viewport.set_header(lines, hcols);
+    }
+    viewport.set_preprocess_failure(preprocess_failure);
+
+    // Status/prompt theming parity with the first pane: resolve `--status-style`
+    // as the base, with `--prompt-style` (or the per-format `prompt_style`)
+    // taking over when a prompt is active. Mirrors the resolution in real_main
+    // so the focused-pane status bar is themed identically once focus can switch.
+    {
+        let (fmt_prompt, fmt_prompt_style): (Option<tess::prompt::ParsedPrompt>, Option<tess::ansi::Style>) =
+            if let Some(name) = args.format.as_deref() {
+                let formats = format::load_all().map_err(Error::Runtime)?;
+                let entry = formats.get(name);
+                (
+                    entry.and_then(|f| f.prompt.clone()),
+                    entry.and_then(|f| f.prompt_style),
+                )
+            } else {
+                (None, None)
+            };
+        let prompt_active = match args.prompt.as_deref() {
+            Some(_) => true,
+            None => fmt_prompt.is_some(),
+        };
+        let status_style_base = tess::style_spec::parse(&args.status_style)
+            .map_err(|e| Error::Runtime(format!("--status-style: {e}")))?;
+        let cli_prompt_style = if args.prompt_style.trim().is_empty() {
+            None
+        } else {
+            Some(tess::style_spec::parse(&args.prompt_style)
+                .map_err(|e| Error::Runtime(format!("--prompt-style: {e}")))?)
+        };
+        let resolved_status_style = if prompt_active {
+            cli_prompt_style
+                .or(fmt_prompt_style)
+                .unwrap_or(status_style_base)
+        } else {
+            status_style_base
+        };
+        viewport.set_status_style(resolved_status_style);
+    }
+
+    // Image auto-detection: the split compositor is cell-based, so render any
+    // image as ASCII (force_cell_mode in app::run pins the protocol to ASCII).
+    // Mirror the first pane: prefer animated playback so the per-pane tick has
+    // an AnimationState to advance; fall back to a static first frame otherwise.
+    #[cfg(feature = "image")]
+    if !args.hex && !args.no_image {
+        let head_len = src.len().min(64);
+        let head = src.bytes(0..head_len);
+        if let Some(fmt) = tess::image_render::sniff_image_format(&head) {
+            let all = src.bytes(0..src.len());
+            let style = if args.blocks {
+                tess::image_render::AsciiStyle::Blocks
+            } else {
+                tess::image_render::AsciiStyle::Ramp
+            };
+            use tess::image_render::AnimationDecode;
+            let decoded = if args.no_animate {
+                AnimationDecode::Static
+            } else {
+                tess::image_render::decode_animation(&all)
+            };
+            let loaded = if let AnimationDecode::Animated(anim) = decoded {
+                viewport.set_animation(anim, fmt, style, args.image_width);
+                true
+            } else {
+                // Unsupported animation → fall back to the static first frame;
+                // the hint flash is the focused pane's concern, so skip it here.
+                match tess::image_render::decode_image(&all) {
+                    Ok(rgba) => {
+                        viewport.set_image(rgba, fmt, style, args.image_width);
+                        true
+                    }
+                    Err(_) => false,
+                }
+            };
+            if loaded {
+                viewport.set_image_no_color(args.no_color);
+            }
+        }
+    }
+
+    Ok(tess::pane::Pane {
+        last_revision: src.revision(),
+        #[cfg(feature = "image")]
+        last_tick: std::time::Instant::now(),
+        src,
+        idx,
+        viewport,
+    })
+}
 
 fn main() -> ExitCode {
     install_panic_hook();
@@ -249,7 +396,22 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
     let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
     let stub_args = Args::parse_from(["tess"]);
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None, None)?;
+    app::run(
+        Box::new(src),
+        viewport,
+        idx,
+        sigterm,
+        RebuildSpec::default(),
+        keymap,
+        file_set,
+        None,
+        stub_args,
+        None,
+        None,
+        None,
+        #[cfg(feature = "image")]
+        (tess::viewport::ImageProtocol::Ascii, None),
+    )?;
     Ok(())
 }
 
@@ -976,6 +1138,15 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
+    // Resolve the startup image protocol once: it pins the first viewport's
+    // image rendering AND is handed to `app::run` so `:only` can restore it
+    // after a split (split forces ASCII; `:only` undoes that).
+    #[cfg(feature = "image")]
+    let startup_image_protocol = {
+        let is_tty = std::io::stdout().is_terminal();
+        resolve_image_protocol(&args.image_protocol, is_tty)?
+    };
+
     // Image auto-detection: sniff the source's leading bytes. If it is a
     // supported image and the user did not force raw (--no-image) or hex
     // (--hex wins), decode and switch the viewport into ASCII-art mode.
@@ -1027,14 +1198,57 @@ showing raw (use --content-type=NAME to override)"
 
             if loaded {
                 viewport.set_image_no_color(args.no_color);
-                let is_tty = std::io::stdout().is_terminal();
-                let (proto, cell_px) = resolve_image_protocol(&args.image_protocol, is_tty)?;
+                let (proto, cell_px) = startup_image_protocol;
                 viewport.set_image_protocol(proto, cell_px);
             }
         }
     }
 
-    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file)?;
+    // Build the second pane for `--split` before `args`/`preprocessor`/
+    // `record_start_regex` are moved into `app::run`. Only meaningful for a
+    // file-backed launch (not stdin/clipboard): the second file is `files[1]`
+    // if present, otherwise a second view of `files[0]`. `other_pane_init`
+    // inside `app::run` resizes both panes, so `cols`/`rows` are provisional.
+    let second_pane: Option<tess::pane::Pane> = if args.split {
+        let second_path = args.files.get(1).or_else(|| args.files.first()).cloned();
+        match second_path {
+            Some(p) => match build_second_pane(
+                &p,
+                &args,
+                ansi_mode,
+                cols,
+                rows,
+                preprocessor.as_ref(),
+                record_start_regex.as_ref(),
+            ) {
+                Ok(pane) => Some(pane),
+                Err(e) => {
+                    eprintln!("tess: --split second pane: {e}");
+                    None
+                }
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    app::run(
+        src,
+        viewport,
+        idx,
+        sigterm,
+        rebuild_spec,
+        keymap,
+        file_set,
+        record_start_regex,
+        args,
+        preprocessor,
+        tag_file,
+        second_pane,
+        #[cfg(feature = "image")]
+        startup_image_protocol,
+    )?;
     Ok(())
 }
 

@@ -107,6 +107,12 @@ enum ColonCommand {
     /// `:yank` — copy the current top logical line to the system clipboard
     /// (only acts when `--clipboard` was passed).
     Yank,
+    /// `:vsplit [file]` / `:split [file]` — open a vertical split. With a path,
+    /// open that file beside the current pane; without, duplicate the focused
+    /// file at its current scroll position.
+    VSplit(Option<String>),
+    /// `:only` / `:close` — collapse a split back to the focused pane.
+    Only,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,19 +167,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
             if rest.is_empty() {
                 Err(ColonParseError::MissingPath)
             } else {
-                // Tilde expansion.
-                let expanded = if let Some(stripped) = rest.strip_prefix("~/") {
-                    if let Some(home) = std::env::var_os("HOME") {
-                        let mut p = std::path::PathBuf::from(home);
-                        p.push(stripped);
-                        p
-                    } else {
-                        std::path::PathBuf::from(rest)
-                    }
-                } else {
-                    std::path::PathBuf::from(rest)
-                };
-                Ok(ColonCommand::Edit(expanded))
+                Ok(ColonCommand::Edit(expand_tilde(rest)))
             }
         }
         "f" => Ok(ColonCommand::ShowFile),
@@ -221,6 +215,14 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 }
             }
         }
+        "vsplit" | "split" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::VSplit(None))
+            } else {
+                Ok(ColonCommand::VSplit(Some(rest.to_string())))
+            }
+        }
+        "only" | "close" => Ok(ColonCommand::Only),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
@@ -911,7 +913,162 @@ fn dispatch_colon_command(
             };
             ColonOutcome::Continue(Some(format!("[case: {label}]")))
         }
+        // Split commands are intercepted in the event loop (they need the
+        // loose `other_pane`/`cols`/`rows`/`focused_left` locals) and never
+        // reach this file-set-only dispatcher.
+        ColonCommand::VSplit(_) | ColonCommand::Only => {
+            unreachable!("split commands are handled in the run() event loop")
+        }
     }
+}
+
+/// In split mode the compositor is cell-based: force ASCII images and disable
+/// raw passthrough so every row is cells.
+fn force_cell_mode(vp: &mut Viewport) {
+    #[cfg(feature = "image")]
+    vp.set_image_protocol(crate::viewport::ImageProtocol::Ascii, None);
+    vp.set_ansi_mode_cells();
+}
+
+/// Initialize split layout: size both panes to half-widths and force cell mode.
+/// Returns the stashed other pane (None when not splitting).
+fn other_pane_init(
+    second: Option<crate::pane::Pane>,
+    focused_vp: &mut Viewport,
+    cols: u16,
+    rows: u16,
+) -> Option<crate::pane::Pane> {
+    let mut other = second?;
+    let (lw, rw) = crate::pane::split_widths(cols);
+    if rw == 0 {
+        focused_vp.resize(cols, rows);
+    } else {
+        focused_vp.resize(lw, rows);
+        other.viewport.resize(rw, rows);
+    }
+    force_cell_mode(focused_vp);
+    force_cell_mode(&mut other.viewport);
+    Some(other)
+}
+
+/// Resize the focused viewport, sizing the other pane's viewport to the
+/// complementary half-width when a split is active (focused-pane-only fallback
+/// when the terminal is too narrow to split).
+fn resize_split_aware(
+    focused_vp: &mut Viewport,
+    other_pane: &mut Option<crate::pane::Pane>,
+    cols: u16,
+    rows: u16,
+    focused_left: bool,
+) {
+    if let Some(other) = other_pane.as_mut() {
+        let (lw, rw) = crate::pane::split_widths(cols);
+        if rw == 0 {
+            focused_vp.resize(cols, rows);
+        } else {
+            let (fw, ow) = if focused_left { (lw, rw) } else { (rw, lw) };
+            focused_vp.resize(fw, rows);
+            other.viewport.resize(ow, rows);
+        }
+    } else {
+        focused_vp.resize(cols, rows);
+    }
+}
+
+/// Expand a leading `~/` against `$HOME`. Shared by `:e`/`:edit` and the
+/// `:vsplit`/`:split` path argument, which both capture a raw remainder string.
+fn expand_tilde(arg: &str) -> std::path::PathBuf {
+    if let Some(stripped) = arg.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut p = std::path::PathBuf::from(home);
+            p.push(stripped);
+            return p;
+        }
+    }
+    std::path::PathBuf::from(arg)
+}
+
+/// The display-config subset shared by every pane, focused or not. Both the
+/// startup `--split` pane (`main::build_second_pane`) and the runtime `:vsplit`
+/// pane call this so they stay in lockstep. Format-specific predicates
+/// (filter/grep/format/display) and the `--tabs`/`--header` spec parsers live
+/// in the `main` binary and are NOT applied here: `build_second_pane` layers
+/// them on after this call, while runtime panes show the plain file (documented
+/// v1 limitation). Images are pinned to ASCII by `force_cell_mode`, which the
+/// caller invokes.
+pub fn apply_pane_display_config(viewport: &mut Viewport, args: &crate::cli::Args) {
+    if args.line_numbers { viewport.toggle_line_numbers(); }
+    if args.chop { viewport.toggle_chop(); }
+    viewport.opts.tab_width = args.tab_width;
+    viewport.set_follow_mode(args.follow);
+    viewport.set_live_mode(args.live);
+    if args.hex {
+        viewport.set_hex_mode(true);
+        if let Some(bpg) = crate::hex::hex_chars_to_bytes_per_group(args.hex_group) {
+            viewport.set_hex_group_size(bpg);
+        }
+    }
+    viewport.set_squeeze_blanks(args.squeeze_blanks);
+    viewport.set_status_column(args.status_column);
+    viewport.opts.rscroll_char = args.rscroll.chars().next();
+    viewport.opts.word_wrap = args.word_wrap;
+    viewport.set_page_size(args.window);
+    viewport.set_file_index(0, 1);
+}
+
+/// Build a `Pane` at runtime for `:vsplit`. `path_arg = Some(p)` opens that
+/// file; `None` duplicates the focused file (`focused_label`/`focused_top`) at
+/// its current scroll position — which requires the focused source to be
+/// file-backed (`focused_path = Some(_)`); stdin yields an error.
+#[allow(clippy::too_many_arguments)]
+fn build_runtime_pane(
+    path_arg: Option<&str>,
+    focused_path: Option<&std::path::Path>,
+    focused_top: usize,
+    cols: u16,
+    rows: u16,
+    args: &crate::cli::Args,
+    ansi_mode: crate::render::AnsiMode,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+) -> crate::error::Result<crate::pane::Pane> {
+    // Resolve the path and whether we duplicate the focused scroll position.
+    let (path, dup_top): (std::path::PathBuf, Option<usize>) = match path_arg {
+        Some(arg) => (expand_tilde(arg), None),
+        None => match focused_path {
+            Some(p) => (p.to_path_buf(), Some(focused_top)),
+            None => {
+                return Err(crate::error::Error::Runtime(
+                    "can't duplicate stdin; give a file".to_string(),
+                ));
+            }
+        },
+    };
+
+    let (src, label, preprocess_failure) =
+        crate::open::open_source_for_path(&path, args, preprocessor)?;
+
+    let mut idx = crate::line_index::LineIndex::new();
+    if let Some(re) = record_start_regex {
+        idx.set_record_start(re.clone());
+    }
+
+    let mut viewport = Viewport::new(cols, rows, label);
+    apply_pane_display_config(&mut viewport, args);
+    viewport.set_ansi_mode(ansi_mode);
+    viewport.set_preprocess_failure(preprocess_failure);
+    if let Some(top) = dup_top {
+        viewport.goto_line(top, src.as_ref(), &mut idx);
+    }
+
+    Ok(crate::pane::Pane {
+        last_revision: src.revision(),
+        #[cfg(feature = "image")]
+        last_tick: std::time::Instant::now(),
+        src,
+        idx,
+        viewport,
+    })
 }
 
 #[allow(clippy::too_many_arguments, clippy::collapsible_match)]
@@ -927,6 +1084,9 @@ pub fn run(
     args: crate::cli::Args,
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
+    second_pane: Option<crate::pane::Pane>,
+    #[cfg(feature = "image")]
+    startup_image_protocol: (crate::viewport::ImageProtocol, Option<(u16, u16)>),
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -942,6 +1102,12 @@ pub fn run(
     #[cfg(feature = "image")]
     let mut last_tick = std::time::Instant::now();
     let mut last_revision = src.revision();
+
+    let mut other_pane = other_pane_init(second_pane, &mut viewport, cols, rows);
+    // `Tab` flips this to swap which logical pane is focused; physical
+    // left/right placement is decided by this flag in the render/resize
+    // branches, so a focus swap must keep each physical side at its own width.
+    let mut focused_left = true;
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
     // we need to scan the whole source up front to find matching lines.
@@ -1033,7 +1199,26 @@ pub fn run(
                     .collect();
                 viewport.set_status_marks(status_marks);
             }
-            let mut frame = viewport.frame(src.as_ref(), &mut idx);
+            let mut frame = if let Some(other) = other_pane.as_mut() {
+                let (lw, rw) = crate::pane::split_widths(cols);
+                if rw == 0 {
+                    viewport.frame(src.as_ref(), &mut idx)
+                } else {
+                    let ffr = viewport.frame(src.as_ref(), &mut idx);
+                    let ofr = other.viewport.frame(other.src.as_ref(), &mut other.idx);
+                    // Physical-left always renders at `lw`, physical-right at
+                    // `rw`, regardless of focus; `focused_left` only decides
+                    // which logical pane sits on which side (and gets the `*`).
+                    let (left_fr, right_fr) = if focused_left {
+                        (&ffr, &ofr)
+                    } else {
+                        (&ofr, &ffr)
+                    };
+                    crate::pane::compose_split(left_fr, right_fr, lw, cols, focused_left)
+                }
+            } else {
+                viewport.frame(src.as_ref(), &mut idx)
+            };
             // Override the status row when we're in an interactive prompt OR
             // when a transient status message is pending.
             match &mode {
@@ -1077,9 +1262,16 @@ pub fn run(
         // animation is playing, shorten the wait to its next-frame deadline
         // so the timeout branch can advance frames on time.
         #[cfg(feature = "image")]
-        let timeout = viewport.anim_deadline()
-            .map(|d| d.min(BASE_POLL))
-            .unwrap_or(BASE_POLL);
+        let timeout = {
+            let mut d = viewport.anim_deadline();
+            if let Some(other) = other_pane.as_ref() {
+                d = match (d, other.viewport.anim_deadline()) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
+            }
+            d.map(|x| x.min(BASE_POLL)).unwrap_or(BASE_POLL)
+        };
         #[cfg(not(feature = "image"))]
         let timeout = BASE_POLL;
         match poll(timeout) {
@@ -1335,6 +1527,54 @@ pub fn run(
                                         mode = InputMode::Normal;
                                     } else {
                                         match parse_colon_command(buffer) {
+                                            Ok(ColonCommand::VSplit(path_arg)) => {
+                                                if other_pane.is_some() {
+                                                    viewport.flash("already split (`:only` first)", 30);
+                                                } else {
+                                                    let (lw, rw) = crate::pane::split_widths(cols);
+                                                    if rw == 0 {
+                                                        viewport.flash("terminal too narrow to split", 30);
+                                                    } else {
+                                                        let focused_path = file_set.current().map(|p| p.to_path_buf());
+                                                        let focused_ansi = viewport.ansi_mode();
+                                                        let built = build_runtime_pane(
+                                                            path_arg.as_deref(),
+                                                            focused_path.as_deref(),
+                                                            viewport.top_line(),
+                                                            rw,
+                                                            rows,
+                                                            &args,
+                                                            focused_ansi,
+                                                            preprocessor.as_ref(),
+                                                            record_start_regex.as_ref(),
+                                                        );
+                                                        match built {
+                                                            Ok(mut pane) => {
+                                                                force_cell_mode(&mut viewport);
+                                                                force_cell_mode(&mut pane.viewport);
+                                                                focused_left = true;
+                                                                viewport.resize(lw, rows);
+                                                                pane.viewport.resize(rw, rows);
+                                                                other_pane = Some(pane);
+                                                            }
+                                                            Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
+                                                        }
+                                                    }
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Only) => {
+                                                if other_pane.take().is_some() {
+                                                    viewport.resize(cols, rows);
+                                                    #[cfg(feature = "image")]
+                                                    {
+                                                        let (proto, cell_px) = startup_image_protocol;
+                                                        viewport.set_image_protocol(proto, cell_px);
+                                                    }
+                                                    focused_left = true;
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
                                             Ok(cmd) => {
                                                 let is_tag_cmd = matches!(
                                                     &cmd,
@@ -1518,7 +1758,7 @@ pub fn run(
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
-                    viewport.resize(c, r);
+                    resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
                     }
@@ -1757,7 +1997,7 @@ pub fn run(
                     Command::Resize(c, r) => {
                         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
-                        viewport.resize(c, r);
+                        resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }
@@ -1798,6 +2038,23 @@ pub fn run(
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         viewport.note_motion_for_eof(false, src.as_ref(), &idx);
                         needs_redraw = true;
+                    }
+                    Command::FocusOtherPane => {
+                        if let Some(other) = other_pane.as_mut() {
+                            std::mem::swap(&mut src, &mut other.src);
+                            std::mem::swap(&mut idx, &mut other.idx);
+                            std::mem::swap(&mut viewport, &mut other.viewport);
+                            std::mem::swap(&mut last_revision, &mut other.last_revision);
+                            #[cfg(feature = "image")]
+                            std::mem::swap(&mut last_tick, &mut other.last_tick);
+                            focused_left = !focused_left;
+                            // Re-assert physical-side widths: the render/resize
+                            // branches key width off `focused_left`, so after the
+                            // swap+flip each viewport must be resized to the side
+                            // it now occupies (matters on odd widths where lw != rw).
+                            resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
+                            needs_redraw = true;
+                        }
                     }
                     Command::Refresh => {
                         needs_redraw = true;
@@ -2043,6 +2300,10 @@ pub fn run(
                 {
                     last_tick = std::time::Instant::now();
                 }
+                #[cfg(feature = "image")]
+                if let Some(other) = other_pane.as_mut() {
+                    other.last_tick = std::time::Instant::now();
+                }
             }
             Ok(false) => {
                 // Advance any playing animation by the elapsed time since the
@@ -2053,6 +2314,12 @@ pub fn run(
                     let dt = last_tick.elapsed();
                     last_tick = std::time::Instant::now();
                     if viewport.tick(dt) { needs_redraw = true; }
+                }
+                #[cfg(feature = "image")]
+                if let Some(other) = other_pane.as_mut() {
+                    let odt = other.last_tick.elapsed();
+                    other.last_tick = std::time::Instant::now();
+                    if other.viewport.tick(odt) { needs_redraw = true; }
                 }
                 // Timeout — check whether the source has grown or been rewritten.
                 if viewport.live_mode() {
@@ -2133,6 +2400,21 @@ pub fn run(
                         needs_redraw = true;
                     }
                 }
+                // Drive follow/live growth for the background pane too, so a
+                // split with two growing files updates both halves.
+                if let Some(other) = other_pane.as_mut() {
+                    if pump_pane(
+                        &mut other.src,
+                        &mut other.idx,
+                        &mut other.viewport,
+                        &mut other.last_revision,
+                        &rebuild_spec,
+                        &args,
+                        preprocessor.as_ref(),
+                    ) {
+                        needs_redraw = true;
+                    }
+                }
             }
             Err(_) => {
                 // poll() error — sleep the timeout duration to avoid tight-spinning.
@@ -2175,6 +2457,91 @@ fn apply_prettify(
     }
     rebuild_after_replace(src, viewport, idx, spec);
     viewport.set_prettify_label(src.prettify_label());
+}
+
+/// Pump a background pane's source for follow/live growth. Returns true if
+/// anything changed (so the caller can flag a redraw).
+///
+/// This is the minimal subset of the focused pane's live/follow handling that
+/// applies to a non-focused pane: whole-file rewrite (`--live`) rebuilds the
+/// index and re-snaps to bottom if the pane was at bottom; otherwise (follow
+/// mode or a still-streaming stdin source) new bytes are folded in and the
+/// pane auto-scrolls when it was already at the bottom. A background follow
+/// pane also reopens its source on rotation/truncation, mirroring the focused
+/// path (minus the focused-only `(F reopened)` flash). The focused pane keeps
+/// its own inlined logic verbatim because it also emits transient status
+/// messages and uses loop control (`continue`/`break`) that can't move into a
+/// free function — so this is a deliberate minimal duplication to avoid
+/// disturbing the byte-identical focused path.
+fn pump_pane(
+    src: &mut Box<dyn Source>,
+    idx: &mut LineIndex,
+    viewport: &mut Viewport,
+    last_revision: &mut u64,
+    rebuild_spec: &RebuildSpec,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+) -> bool {
+    let mut changed = false;
+    if viewport.live_mode() {
+        let was_at_bottom = viewport.is_at_bottom(src.as_ref(), idx);
+        src.pump();
+        if src.revision() != *last_revision {
+            rebuild_after_replace(src.as_ref(), viewport, idx, *rebuild_spec);
+            if was_at_bottom {
+                viewport.goto_bottom(src.as_ref(), idx);
+            }
+            *last_revision = src.revision();
+            changed = true;
+        }
+    } else if viewport.follow_mode() || !src.is_complete() {
+        let was_at_bottom = viewport.is_at_bottom(src.as_ref(), idx);
+        src.pump();
+        if src.take_rotated() {
+            // File was rotated or truncated. Re-open from offset 0 and reset
+            // the line index so we're not staring at stale mmap content, then
+            // snap to bottom of the fresh content. Mirrors the focused pane's
+            // inline reopen (same args + preprocessor so the reopened source
+            // behaves identically), minus the focused-only `(F reopened)`
+            // flash. A stdin source has no path and can't rotate anyway, so
+            // the reopen is naturally skipped for it.
+            if let Some(path) = src.path().map(|p| p.to_path_buf()) {
+                if let Ok((new_src, _label, _err)) =
+                    crate::open::open_source_for_path(&path, args, preprocessor)
+                {
+                    *src = new_src;
+                    *idx = LineIndex::new();
+                    if let Some(n) = rebuild_spec.head {
+                        idx.set_head_cap(n);
+                    }
+                    viewport.invalidate_filter_cache();
+                    idx.notice_new_bytes(src.as_ref());
+                    viewport.extend_visible_lines(idx, src.as_ref());
+                    viewport.goto_bottom(src.as_ref(), idx);
+                    *last_revision = src.revision();
+                    return true;
+                }
+                // Reopen failed: unlike the focused pane (which surfaces
+                // `[reopen failed: ...]`), a background pane has no status
+                // surface of its own, so we intentionally swallow the Err and
+                // fall through to the normal growth path on the stale source.
+            }
+        }
+        let lines_before = idx.line_count();
+        idx.notice_new_bytes(src.as_ref());
+        viewport.extend_visible_lines(idx, src.as_ref());
+        if idx.line_count() != lines_before {
+            changed = true;
+            viewport.note_growth();
+            if was_at_bottom {
+                viewport.goto_bottom(src.as_ref(), idx);
+            }
+        } else {
+            viewport.tick_idle();
+        }
+        viewport.tick_flash();
+    }
+    changed
 }
 
 /// Rebuild line index and visible-line cache after the source content has
@@ -2869,11 +3236,26 @@ mod tests {
 
     #[test]
     fn parse_colon_e_with_tilde() {
+        let _guard = crate::test_env::lock();
+        let saved = std::env::var_os("HOME");
         std::env::set_var("HOME", "/home/user");
-        match parse_colon_command("e ~/foo.log").unwrap() {
+        let result = parse_colon_command("e ~/foo.log");
+        match saved {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match result.unwrap() {
             ColonCommand::Edit(p) => assert_eq!(p, std::path::PathBuf::from("/home/user/foo.log")),
             other => panic!("expected Edit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_colon_vsplit_and_only() {
+        assert_eq!(parse_colon_command("vsplit").unwrap(), ColonCommand::VSplit(None));
+        assert_eq!(parse_colon_command("split a.log").unwrap(), ColonCommand::VSplit(Some("a.log".into())));
+        assert_eq!(parse_colon_command("only").unwrap(), ColonCommand::Only);
+        assert_eq!(parse_colon_command("close").unwrap(), ColonCommand::Only);
     }
 
     #[test]

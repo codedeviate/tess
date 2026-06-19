@@ -63,12 +63,14 @@ pub fn run_shell_command(cmd_text: &str) -> io::Result<()> {
 mod tests {
     use super::*;
 
-    // These tests exec real subprocesses and toggle terminal modes.
-    // They must run serial (the project uses --test-threads=1 across the
-    // board, so this is enforced at the cargo-test command level).
+    // These tests exec real subprocesses that inherit the process `SHELL`
+    // env var, and one of them mutates `SHELL`. They share the crate-wide
+    // env lock so the mutator can't swap `SHELL` out from under the readers
+    // when cargo runs tests in parallel.
 
     #[test]
     fn run_shell_command_happy_path() {
+        let _guard = crate::test_env::lock();
         let result = run_shell_command("true");
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
     }
@@ -77,12 +79,14 @@ mod tests {
     fn run_shell_command_propagates_nonzero_exit_as_ok() {
         // The helper returns Ok even when the child exits non-zero —
         // it's the spawn result that matters, not the exit code.
+        let _guard = crate::test_env::lock();
         let result = run_shell_command("false");
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
     }
 
     #[test]
     fn run_shell_command_missing_executable_returns_err() {
+        let _guard = crate::test_env::lock();
         let prev = std::env::var("SHELL").ok();
         std::env::set_var("SHELL", "/this/path/does/not/exist/x9z");
         let result = run_shell_command("true");

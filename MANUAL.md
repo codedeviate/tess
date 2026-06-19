@@ -189,6 +189,7 @@ tess --clipboard app.log                                # then :yank a line
 - **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch under `--mouse`. Default `3`.
 - **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
 - **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
+- **`--split`** — open a side-by-side vertical split of the first two file arguments (or two views of a single file). Interactive only. See [Split view](#split-view). Runtime equivalent: `:vsplit`.
 - **`--incsearch`** — enable incremental search (off by default). See [Search](#search). Toggle at runtime with `:incsearch`. Mirrors `less --incsearch`.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
 - **`-V`, `--version`** — print version.
@@ -223,6 +224,7 @@ tess --clipboard app.log                                # then :yank a line
 | `p` | Animated image: pause / resume (revives a finished animation); no-op without an animation |
 | `.` `,` | Animated image: step one frame forward / back (auto-pauses) |
 | `Backspace` | Animated image: restart from the first frame |
+| `Tab` | Switch the focused pane in a split (see [Split view](#split-view); no-op without a split) |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `F1` | Open the help overlay (also `:help` / `:h` at the colon prompt) |
@@ -252,6 +254,48 @@ The `←` / `→` step defaults to half the screen width, but `-#` / `--shift N`
 The **line-number gutter** (`-N`) stays fixed while text scrolls. For chopped text, a `<` marker appears at the left edge when content extends further left (analogous to the existing `>` / `--rscroll` right-edge marker). Images shift cleanly with no edge markers. When scrolled past column 0, the status line shows a `»{col}` offset readout; `<col-offset>` is available as a `--prompt` template placeholder.
 
 Frozen left content-columns (`--header ,C`) remain a future addition.
+
+### Split view
+
+Open two panes side by side in vertical columns for lightweight compare
+within the pager.
+
+```sh
+tess --split app.log app.log.1      # first two file args, side by side
+tess --split big.log                # one file → a second independent view
+```
+
+`--split` is **interactive only** (ignored for `--to-clipboard` / `--stdout`
+batch runs). At runtime:
+
+- `:vsplit [file]` / `:split [file]` — open a split. With a path argument it
+  opens that file in the new pane (a leading `~/` is expanded); with no
+  argument it duplicates the focused file at its current scroll position.
+  Duplicating stdin isn't possible (there's no path to reopen) — that case
+  reports an error on the status line.
+- `:only` / `:close` — collapse back to a single pane (the focused one).
+
+Each pane is a full viewport with its **own** scroll position, search, marks,
+and follow/tail state. `Tab` switches the focused pane — scroll, search, and
+colon commands target the focused pane, while the other pane keeps following /
+tailing on its own (including log-rotation re-open). `Tab` is remappable in
+`~/.config/tess/keys.toml` via the command name `focus-other-pane`.
+
+The two panes are separated by a vertical divider, and each gets a
+**half-width status line**; the focused pane's status is prefixed with `*`.
+Each pane needs at least 8 usable columns: in a terminal too narrow to fit
+both, the focused pane renders full-width until the window is widened.
+
+**v1 limitations.** The split is **2-pane vertical only** — no horizontal
+(stacked) split and no more than two panes. The two views are **independent**:
+there is no synchronized scrolling and no diff alignment. The **second pane
+shows the plain file** — `--filter`, `--grep`, `--format`, and `--display`
+predicates apply to the focused/first pane only. Because the split compositor
+works on rendered cells, **protocol images** (Kitty/Sixel) render as **ASCII**
+and **`-r` raw** content renders through the cell pipeline (Interpret) while
+split. Runtime `:vsplit` panes also do not apply `--tabs`, `--header`, or
+status-prompt theming (the startup `--split` pane does). Per-pane frozen left
+columns (`--header ,C`) remain deferred. See `OUT-OF-SCOPE.md`.
 
 ### Search
 
