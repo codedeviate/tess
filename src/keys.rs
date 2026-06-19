@@ -274,6 +274,7 @@ fn command_from_kebab(name: &str) -> Option<Command> {
         "anim-step-forward" => Some(Command::AnimStepForward),
         "anim-step-back" => Some(Command::AnimStepBack),
         "anim-restart" => Some(Command::AnimRestart),
+        "focus-other-pane" => Some(Command::FocusOtherPane),
         _ => None,
     }
 }
@@ -319,6 +320,7 @@ fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
         Command::AnimStepForward => Some("anim-step-forward"),
         Command::AnimStepBack => Some("anim-step-back"),
         Command::AnimRestart => Some("anim-restart"),
+        Command::FocusOtherPane => Some("focus-other-pane"),
         _ => None,
     }
 }
@@ -594,6 +596,7 @@ mod tests {
             "hscroll-left", "hscroll-right", "hscroll-left-step", "hscroll-right-step",
             "clipboard-yank-line",
             "anim-pause", "anim-step-forward", "anim-step-back", "anim-restart",
+            "focus-other-pane",
         ];
         for name in &names {
             let cmd = command_from_kebab(name).expect(&format!("from_kebab failed for {name}"));

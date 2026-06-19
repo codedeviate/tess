@@ -111,6 +111,8 @@ pub enum Command {
     /// scroll command happens in `app::run` based on whether an overlay
     /// is active and on which axis the event was.
     MouseEvent(crossterm::event::MouseEvent),
+    /// `Tab` — in split view, swap which pane is focused. No-op single-pane.
+    FocusOtherPane,
     Noop,
 }
 
@@ -176,6 +178,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char('.'), false) => Command::AnimStepForward,
         (Char(','), false) => Command::AnimStepBack,
         (Backspace, _) => Command::AnimRestart,
+        (Tab, _) => Command::FocusOtherPane,
         _ => Command::Noop,
     }
 }
@@ -368,6 +371,11 @@ mod tests {
     fn f1_opens_help() {
         let evt = key(KeyCode::F(1), KeyModifiers::NONE);
         assert_eq!(translate(evt), Command::OpenHelp);
+    }
+
+    #[test]
+    fn tab_is_focus_other_pane() {
+        assert_eq!(translate(key(KeyCode::Tab, KeyModifiers::NONE)), Command::FocusOtherPane);
     }
 
     #[test]

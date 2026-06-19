@@ -998,8 +998,10 @@ pub fn run(
     let mut last_revision = src.revision();
 
     let mut other_pane = other_pane_init(second_pane, &mut viewport, cols, rows);
-    // Focus switch is a later task; for now the focused pane is always the left.
-    let focused_left = true;
+    // `Tab` flips this to swap which logical pane is focused; physical
+    // left/right placement is decided by this flag in the render/resize
+    // branches, so a focus swap must keep each physical side at its own width.
+    let mut focused_left = true;
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
     // we need to scan the whole source up front to find matching lines.
@@ -1098,12 +1100,15 @@ pub fn run(
                 } else {
                     let ffr = viewport.frame(src.as_ref(), &mut idx);
                     let ofr = other.viewport.frame(other.src.as_ref(), &mut other.idx);
-                    let (left_fr, right_fr, left_w) = if focused_left {
-                        (&ffr, &ofr, lw)
+                    // Physical-left always renders at `lw`, physical-right at
+                    // `rw`, regardless of focus; `focused_left` only decides
+                    // which logical pane sits on which side (and gets the `*`).
+                    let (left_fr, right_fr) = if focused_left {
+                        (&ffr, &ofr)
                     } else {
-                        (&ofr, &ffr, rw)
+                        (&ofr, &ffr)
                     };
-                    crate::pane::compose_split(left_fr, right_fr, left_w, cols, focused_left)
+                    crate::pane::compose_split(left_fr, right_fr, lw, cols, focused_left)
                 }
             } else {
                 viewport.frame(src.as_ref(), &mut idx)
@@ -1879,6 +1884,23 @@ pub fn run(
                         viewport.suspend_follow_if(args.follow_suspend_on_motion);
                         viewport.note_motion_for_eof(false, src.as_ref(), &idx);
                         needs_redraw = true;
+                    }
+                    Command::FocusOtherPane => {
+                        if let Some(other) = other_pane.as_mut() {
+                            std::mem::swap(&mut src, &mut other.src);
+                            std::mem::swap(&mut idx, &mut other.idx);
+                            std::mem::swap(&mut viewport, &mut other.viewport);
+                            std::mem::swap(&mut last_revision, &mut other.last_revision);
+                            #[cfg(feature = "image")]
+                            std::mem::swap(&mut last_tick, &mut other.last_tick);
+                            focused_left = !focused_left;
+                            // Re-assert physical-side widths: the render/resize
+                            // branches key width off `focused_left`, so after the
+                            // swap+flip each viewport must be resized to the side
+                            // it now occupies (matters on odd widths where lw != rw).
+                            resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
+                            needs_redraw = true;
+                        }
                     }
                     Command::Refresh => {
                         needs_redraw = true;
