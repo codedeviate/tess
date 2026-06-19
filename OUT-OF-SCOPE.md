@@ -59,38 +59,24 @@ worth eating.
 
 ## Deferred
 
-### Side-by-side / split view — **L**
+### Horizontal split & synchronized/diff split — **L**
 
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
+Vertical 2-pane split shipped in `0.41.0` (`--split`, `:vsplit` / `:split` /
+`:only`). What remains deferred from that feature's v1:
 
-View two panes side by side — two files, or two regions of the same file — in
-columns, for lightweight diff/compare within the pager (e.g. two log streams,
-config vs config, before/after).
-
-This is the most layout-invasive feature on the list: the viewport and frame
-composition currently assume a **single full-width column**. Expect the design
-to grapple with:
-
-- **A pane/layout layer above the viewport.** Today `app` owns one `Viewport`
-  rendering one `Frame` for the full width. A split needs two viewports (each
-  with its own scroll state, search, top_line) composited into one frame with a
-  vertical divider, each pane sized to ~half `cols`. The cleanest shape is a
-  small `layout`/`panes` unit that owns N viewports and stitches their per-row
-  cells side by side; `write_frame` then draws the combined grid (the status
-  line stays full-width, showing the focused pane's context).
-- **Focus + input routing.** One pane is focused; scroll/search/colon commands
-  target it; a key (e.g. `Ctrl-W` or a `:split` / `:focus` colon command) opens
-  the split and switches focus. Most existing commands route to the focused
-  viewport unchanged.
-- **Reusing `file_set`.** The working set already tracks multiple files; a split
-  can show two of them, so `:e`/`:n` semantics need a "which pane" notion.
-- **Interaction with wrap/chop, the line-number gutter, `-J`, horizontal
-  scroll, and images per pane** — each pane is a normal viewport, so these
-  should mostly compose, but the halved width and the divider column need care.
-- Likely scoped to a **2-pane vertical split** for v1 (horizontal split and
-  N>2 deferred), and **no synchronized scrolling / no diff alignment** initially
-  (just two independent views) — a true diff mode is a separate, larger feature.
+- **Horizontal (stacked) split and N>2 panes.** v1 is vertical, 2-pane only.
+- **Synchronized scrolling and diff alignment.** The two panes are independent
+  views; a true side-by-side diff (aligned hunks, scroll-lock) is a separate,
+  larger feature.
+- **Format predicates in the second pane.** The second pane currently shows the
+  plain file — `--filter` / `--grep` / `--format` / `--display` apply to the
+  focused/first pane only. Per-pane predicates need a "which pane" notion
+  threaded through the filter/format setup.
+- **Protocol images and raw passthrough per pane.** The split compositor is
+  cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the
+  cell pipeline while split. True per-pane protocol/raw output needs a
+  region-addressed compositor.
+- **Frozen left content-columns (`--header ,C`) per pane.**
 
 ### Long tail of `less` flags — **L (cumulative)**
 

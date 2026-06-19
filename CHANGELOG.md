@@ -10,6 +10,47 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-06-20
+
+### Added
+
+- **Side-by-side / vertical split view.** View two panes in columns for
+  lightweight compare within the pager.
+  - `--split` launch flag opens a vertical 2-pane split. With ≥2 file args it
+    shows the first two; with a single file it opens a second view of it.
+    Interactive only (no-op for batch/`--stdout`).
+  - Runtime colon commands: `:vsplit [file]` / `:split [file]` open or
+    duplicate into a split (no argument duplicates the focused file at its
+    current scroll position; stdin can't be duplicated — gives an error). `:only`
+    / `:close` collapse back to a single pane.
+  - `Tab` switches the focused pane (remappable as `focus-other-pane` in
+    `~/.config/tess/keys.toml`). Scroll, search, and colon commands target the
+    focused pane; the other pane keeps its own scroll/search state and follows /
+    tails independently (including rotation re-open).
+  - Each pane gets a **half-width status line**; the focused pane's is prefixed
+    with `*`. A vertical divider separates the columns. Each pane needs ≥8
+    usable columns — in a terminal too narrow to fit both, the focused pane
+    renders full-width until there's room.
+  - **v1 limitations (deferred):** vertical 2-pane only (no horizontal split,
+    no N>2); no synchronized scrolling and no diff alignment (the two views are
+    independent); the **second pane shows the plain file** — `--filter` /
+    `--grep` / `--format` / `--display` predicates apply to the focused/first
+    pane only; the split compositor is cell-based, so protocol images
+    (Kitty/Sixel) render as **ASCII** and `-r` raw content renders through the
+    cell pipeline (Interpret) while split; runtime `:vsplit` panes also omit
+    `--tabs` / `--header` / status-prompt theming (the startup `--split` pane
+    applies them); frozen left content-columns (`--header ,C`) per pane remain
+    deferred.
+
+### Fixed
+
+- **Test suite is now green under default (parallel) `cargo test`, not just
+  `--test-threads=1`.** Tests that mutate the process-global `HOME` / `SHELL` /
+  `TESS_GLOBAL_CONFIG_DIR` env vars previously used per-module locks (and two
+  were unguarded), so they raced and corrupted each other under parallelism,
+  with a poisoned `Mutex` cascading the failures. They now share one crate-wide
+  poison-tolerant lock. No runtime behavior change.
+
 ## [0.40.1] — 2026-06-18
 
 ### Fixed

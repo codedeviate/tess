@@ -30,6 +30,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 - **Live + follow modes.** `--follow` for tail-style appended logs (background reader thread, doesn't fight your tty); `--live` for whole-file rewrites (editor saves, AI agents, build outputs).
 - **Cheap on huge files.** mmap'd file source, lazy line indexing, `--tail N` reverse-scans only as far as needed.
 - **Long-line scrolling that actually works.** `j` walks wrap-rows so the last 1000 chars of a 5000-char line are reachable; `J` / `K` jump by whole logical lines when you don't want to scroll through every wrap.
+- **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `:only` collapses back.
 
 It is **not** a log search/correlation tool, structured query engine, or replacement for `lnav`. It's a single-file pager.
 
@@ -224,6 +225,31 @@ Color output uses 24-bit truecolor SGR; pass `--no-color` for a plain character-
 When `--image-width N` produces a render wider than the terminal, use `←`/`→` (or `Shift-←`/`Shift-→` for fine steps) to scroll the image sideways.
 
 The `image` feature is on by default. Build without it (`--no-default-features`) for a smaller binary that treats all inputs as text.
+
+---
+
+## Split view
+
+```sh
+tess --split app.log app.log.1      # two files side by side
+tess --split big.log                # one file, two independent views
+```
+
+Opens a vertical 2-pane split. Each pane is a full viewport with its own
+scroll position, search, and follow/tail state. `Tab` switches the focused
+pane (scroll, search, and colon commands target it); the other pane keeps
+scrolling/tailing on its own. The focused pane's half-width status line is
+prefixed with `*`.
+
+At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
+duplicates the current file at its scroll position); `:only` / `:close`
+collapse back to a single pane. `Tab` is remappable as `focus-other-pane`.
+
+**v1 scope:** vertical 2-pane only; the two views are independent (no
+synchronized scrolling or diff alignment); the second pane shows the plain
+file (`--filter` / `--grep` / `--format` apply to the first pane only); and
+because the compositor is cell-based, protocol images render as ASCII and
+`-r` raw renders through cells while split.
 
 ---
 
