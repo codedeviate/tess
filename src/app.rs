@@ -2233,6 +2233,8 @@ pub fn run(
                         &mut other.viewport,
                         &mut other.last_revision,
                         &rebuild_spec,
+                        &args,
+                        preprocessor.as_ref(),
                     ) {
                         needs_redraw = true;
                     }
@@ -2288,17 +2290,21 @@ fn apply_prettify(
 /// applies to a non-focused pane: whole-file rewrite (`--live`) rebuilds the
 /// index and re-snaps to bottom if the pane was at bottom; otherwise (follow
 /// mode or a still-streaming stdin source) new bytes are folded in and the
-/// pane auto-scrolls when it was already at the bottom. The focused pane keeps
-/// its own inlined logic verbatim because it also handles file-rotation reopen,
-/// transient status messages, and loop control (`continue`/`break`) that can't
-/// move into a free function — so this is a deliberate minimal duplication to
-/// avoid disturbing the byte-identical focused path.
+/// pane auto-scrolls when it was already at the bottom. A background follow
+/// pane also reopens its source on rotation/truncation, mirroring the focused
+/// path (minus the focused-only `(F reopened)` flash). The focused pane keeps
+/// its own inlined logic verbatim because it also emits transient status
+/// messages and uses loop control (`continue`/`break`) that can't move into a
+/// free function — so this is a deliberate minimal duplication to avoid
+/// disturbing the byte-identical focused path.
 fn pump_pane(
     src: &mut Box<dyn Source>,
     idx: &mut LineIndex,
     viewport: &mut Viewport,
     last_revision: &mut u64,
     rebuild_spec: &RebuildSpec,
+    args: &crate::cli::Args,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
 ) -> bool {
     let mut changed = false;
     if viewport.live_mode() {
@@ -2315,9 +2321,32 @@ fn pump_pane(
     } else if viewport.follow_mode() || !src.is_complete() {
         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), idx);
         src.pump();
-        // A background pane never reopens on rotation; just clear the flag so
-        // it doesn't leak into a later focus switch.
-        let _ = src.take_rotated();
+        if src.take_rotated() {
+            // File was rotated or truncated. Re-open from offset 0 and reset
+            // the line index so we're not staring at stale mmap content, then
+            // snap to bottom of the fresh content. Mirrors the focused pane's
+            // inline reopen (same args + preprocessor so the reopened source
+            // behaves identically), minus the focused-only `(F reopened)`
+            // flash. A stdin source has no path and can't rotate anyway, so
+            // the reopen is naturally skipped for it.
+            if let Some(path) = src.path().map(|p| p.to_path_buf()) {
+                if let Ok((new_src, _label, _err)) =
+                    crate::open::open_source_for_path(&path, args, preprocessor)
+                {
+                    *src = new_src;
+                    *idx = LineIndex::new();
+                    if let Some(n) = rebuild_spec.head {
+                        idx.set_head_cap(n);
+                    }
+                    viewport.invalidate_filter_cache();
+                    idx.notice_new_bytes(src.as_ref());
+                    viewport.extend_visible_lines(idx, src.as_ref());
+                    viewport.goto_bottom(src.as_ref(), idx);
+                    *last_revision = src.revision();
+                    return true;
+                }
+            }
+        }
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src.as_ref());
         viewport.extend_visible_lines(idx, src.as_ref());
