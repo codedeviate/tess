@@ -198,9 +198,14 @@ fn build_second_pane(
     }
 
     let mut viewport = Viewport::new(cols, rows, label);
-    if args.line_numbers { viewport.toggle_line_numbers(); }
-    if args.chop { viewport.toggle_chop(); }
-    viewport.opts.tab_width = args.tab_width;
+    // Shared subset (line numbers, chop, tab_width, follow, live, hex, squeeze,
+    // status_column, rscroll, word_wrap, page_size, file_index) — the single
+    // source of truth shared with the runtime `:vsplit` pane.
+    tess::app::apply_pane_display_config(&mut viewport, args);
+    // Startup-only extras the runtime `:vsplit` path intentionally omits: the
+    // `--tabs`/`--header` spec parsers, ANSI mode, and preprocess failure.
+    // (`--hex-group` is already validated when the first pane was built, so the
+    // helper's silent-ignore of a bad value is unreachable here.)
     if let Some(spec) = args.tabs.as_deref() {
         let stops = parse_tab_stops(spec).map_err(Error::Runtime)?;
         if stops.len() == 1 {
@@ -209,29 +214,12 @@ fn build_second_pane(
             viewport.opts.tab_stops = Some(stops);
         }
     }
-    viewport.set_follow_mode(args.follow);
-    viewport.set_live_mode(args.live);
-    if args.hex {
-        viewport.set_hex_mode(true);
-        let bpg = tess::hex::hex_chars_to_bytes_per_group(args.hex_group)
-            .ok_or_else(|| Error::Runtime(format!(
-                "--hex-group must be one of 2, 4, 8, 16, 32 (got {})",
-                args.hex_group
-            )))?;
-        viewport.set_hex_group_size(bpg);
-    }
     viewport.set_ansi_mode(ansi_mode);
-    viewport.set_squeeze_blanks(args.squeeze_blanks);
-    viewport.set_status_column(args.status_column);
     if let Some(spec) = args.header.as_deref() {
         let (lines, hcols) = parse_header_spec(spec).map_err(Error::Runtime)?;
         viewport.set_header(lines, hcols);
     }
-    viewport.opts.rscroll_char = args.rscroll.chars().next();
-    viewport.opts.word_wrap = args.word_wrap;
-    viewport.set_page_size(args.window);
     viewport.set_preprocess_failure(preprocess_failure);
-    viewport.set_file_index(0, 1);
 
     // Status/prompt theming parity with the first pane: resolve `--status-style`
     // as the base, with `--prompt-style` (or the per-format `prompt_style`)

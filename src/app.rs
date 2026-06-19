@@ -167,19 +167,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
             if rest.is_empty() {
                 Err(ColonParseError::MissingPath)
             } else {
-                // Tilde expansion.
-                let expanded = if let Some(stripped) = rest.strip_prefix("~/") {
-                    if let Some(home) = std::env::var_os("HOME") {
-                        let mut p = std::path::PathBuf::from(home);
-                        p.push(stripped);
-                        p
-                    } else {
-                        std::path::PathBuf::from(rest)
-                    }
-                } else {
-                    std::path::PathBuf::from(rest)
-                };
-                Ok(ColonCommand::Edit(expanded))
+                Ok(ColonCommand::Edit(expand_tilde(rest)))
             }
         }
         "f" => Ok(ColonCommand::ShowFile),
@@ -987,8 +975,8 @@ fn resize_split_aware(
     }
 }
 
-/// Expand a leading `~/` against `$HOME`. Mirrors the expansion `:e` does at
-/// parse time (vsplit captures the raw remainder, so it expands here instead).
+/// Expand a leading `~/` against `$HOME`. Shared by `:e`/`:edit` and the
+/// `:vsplit`/`:split` path argument, which both capture a raw remainder string.
 fn expand_tilde(arg: &str) -> std::path::PathBuf {
     if let Some(stripped) = arg.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
@@ -1000,13 +988,15 @@ fn expand_tilde(arg: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(arg)
 }
 
-/// Apply the same display-config subset `main::build_second_pane` applies, so a
-/// runtime-built pane looks like a `--split` second pane. Format-specific
-/// predicates (filter/grep/format/display) and the `--tabs`/`--header` spec
-/// parsers live in the `main` binary and are intentionally NOT applied here —
-/// runtime panes show the plain file (documented v1 limitation). Images are
-/// pinned to ASCII by `force_cell_mode`, which the caller invokes.
-fn apply_pane_display_config(viewport: &mut Viewport, args: &crate::cli::Args) {
+/// The display-config subset shared by every pane, focused or not. Both the
+/// startup `--split` pane (`main::build_second_pane`) and the runtime `:vsplit`
+/// pane call this so they stay in lockstep. Format-specific predicates
+/// (filter/grep/format/display) and the `--tabs`/`--header` spec parsers live
+/// in the `main` binary and are NOT applied here: `build_second_pane` layers
+/// them on after this call, while runtime panes show the plain file (documented
+/// v1 limitation). Images are pinned to ASCII by `force_cell_mode`, which the
+/// caller invokes.
+pub fn apply_pane_display_config(viewport: &mut Viewport, args: &crate::cli::Args) {
     if args.line_numbers { viewport.toggle_line_numbers(); }
     if args.chop { viewport.toggle_chop(); }
     viewport.opts.tab_width = args.tab_width;
