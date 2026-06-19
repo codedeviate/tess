@@ -408,7 +408,22 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         .unwrap_or_else(|_| tess::keys::KeyMap::empty());
     let file_set = tess::file_set::FileSet::new(vec![std::path::PathBuf::from(label)]);
     let stub_args = Args::parse_from(["tess"]);
-    app::run(Box::new(src), viewport, idx, sigterm, RebuildSpec::default(), keymap, file_set, None, stub_args, None, None, None)?;
+    app::run(
+        Box::new(src),
+        viewport,
+        idx,
+        sigterm,
+        RebuildSpec::default(),
+        keymap,
+        file_set,
+        None,
+        stub_args,
+        None,
+        None,
+        None,
+        #[cfg(feature = "image")]
+        (tess::viewport::ImageProtocol::Ascii, None),
+    )?;
     Ok(())
 }
 
@@ -1135,6 +1150,15 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
+    // Resolve the startup image protocol once: it pins the first viewport's
+    // image rendering AND is handed to `app::run` so `:only` can restore it
+    // after a split (split forces ASCII; `:only` undoes that).
+    #[cfg(feature = "image")]
+    let startup_image_protocol = {
+        let is_tty = std::io::stdout().is_terminal();
+        resolve_image_protocol(&args.image_protocol, is_tty)?
+    };
+
     // Image auto-detection: sniff the source's leading bytes. If it is a
     // supported image and the user did not force raw (--no-image) or hex
     // (--hex wins), decode and switch the viewport into ASCII-art mode.
@@ -1186,8 +1210,7 @@ showing raw (use --content-type=NAME to override)"
 
             if loaded {
                 viewport.set_image_no_color(args.no_color);
-                let is_tty = std::io::stdout().is_terminal();
-                let (proto, cell_px) = resolve_image_protocol(&args.image_protocol, is_tty)?;
+                let (proto, cell_px) = startup_image_protocol;
                 viewport.set_image_protocol(proto, cell_px);
             }
         }
@@ -1222,7 +1245,22 @@ showing raw (use --content-type=NAME to override)"
         None
     };
 
-    app::run(src, viewport, idx, sigterm, rebuild_spec, keymap, file_set, record_start_regex, args, preprocessor, tag_file, second_pane)?;
+    app::run(
+        src,
+        viewport,
+        idx,
+        sigterm,
+        rebuild_spec,
+        keymap,
+        file_set,
+        record_start_regex,
+        args,
+        preprocessor,
+        tag_file,
+        second_pane,
+        #[cfg(feature = "image")]
+        startup_image_protocol,
+    )?;
     Ok(())
 }
 

@@ -107,6 +107,12 @@ enum ColonCommand {
     /// `:yank` — copy the current top logical line to the system clipboard
     /// (only acts when `--clipboard` was passed).
     Yank,
+    /// `:vsplit [file]` / `:split [file]` — open a vertical split. With a path,
+    /// open that file beside the current pane; without, duplicate the focused
+    /// file at its current scroll position.
+    VSplit(Option<String>),
+    /// `:only` / `:close` — collapse a split back to the focused pane.
+    Only,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -221,6 +227,14 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 }
             }
         }
+        "vsplit" | "split" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::VSplit(None))
+            } else {
+                Ok(ColonCommand::VSplit(Some(rest.to_string())))
+            }
+        }
+        "only" | "close" => Ok(ColonCommand::Only),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
@@ -911,6 +925,12 @@ fn dispatch_colon_command(
             };
             ColonOutcome::Continue(Some(format!("[case: {label}]")))
         }
+        // Split commands are intercepted in the event loop (they need the
+        // loose `other_pane`/`cols`/`rows`/`focused_left` locals) and never
+        // reach this file-set-only dispatcher.
+        ColonCommand::VSplit(_) | ColonCommand::Only => {
+            unreachable!("split commands are handled in the run() event loop")
+        }
     }
 }
 
@@ -967,6 +987,100 @@ fn resize_split_aware(
     }
 }
 
+/// Expand a leading `~/` against `$HOME`. Mirrors the expansion `:e` does at
+/// parse time (vsplit captures the raw remainder, so it expands here instead).
+fn expand_tilde(arg: &str) -> std::path::PathBuf {
+    if let Some(stripped) = arg.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            let mut p = std::path::PathBuf::from(home);
+            p.push(stripped);
+            return p;
+        }
+    }
+    std::path::PathBuf::from(arg)
+}
+
+/// Apply the same display-config subset `main::build_second_pane` applies, so a
+/// runtime-built pane looks like a `--split` second pane. Format-specific
+/// predicates (filter/grep/format/display) and the `--tabs`/`--header` spec
+/// parsers live in the `main` binary and are intentionally NOT applied here —
+/// runtime panes show the plain file (documented v1 limitation). Images are
+/// pinned to ASCII by `force_cell_mode`, which the caller invokes.
+fn apply_pane_display_config(viewport: &mut Viewport, args: &crate::cli::Args) {
+    if args.line_numbers { viewport.toggle_line_numbers(); }
+    if args.chop { viewport.toggle_chop(); }
+    viewport.opts.tab_width = args.tab_width;
+    viewport.set_follow_mode(args.follow);
+    viewport.set_live_mode(args.live);
+    if args.hex {
+        viewport.set_hex_mode(true);
+        if let Some(bpg) = crate::hex::hex_chars_to_bytes_per_group(args.hex_group) {
+            viewport.set_hex_group_size(bpg);
+        }
+    }
+    viewport.set_squeeze_blanks(args.squeeze_blanks);
+    viewport.set_status_column(args.status_column);
+    viewport.opts.rscroll_char = args.rscroll.chars().next();
+    viewport.opts.word_wrap = args.word_wrap;
+    viewport.set_page_size(args.window);
+    viewport.set_file_index(0, 1);
+}
+
+/// Build a `Pane` at runtime for `:vsplit`. `path_arg = Some(p)` opens that
+/// file; `None` duplicates the focused file (`focused_label`/`focused_top`) at
+/// its current scroll position — which requires the focused source to be
+/// file-backed (`focused_path = Some(_)`); stdin yields an error.
+#[allow(clippy::too_many_arguments)]
+fn build_runtime_pane(
+    path_arg: Option<&str>,
+    focused_path: Option<&std::path::Path>,
+    focused_top: usize,
+    cols: u16,
+    rows: u16,
+    args: &crate::cli::Args,
+    ansi_mode: crate::render::AnsiMode,
+    preprocessor: Option<&crate::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+) -> crate::error::Result<crate::pane::Pane> {
+    // Resolve the path and whether we duplicate the focused scroll position.
+    let (path, dup_top): (std::path::PathBuf, Option<usize>) = match path_arg {
+        Some(arg) => (expand_tilde(arg), None),
+        None => match focused_path {
+            Some(p) => (p.to_path_buf(), Some(focused_top)),
+            None => {
+                return Err(crate::error::Error::Runtime(
+                    "can't duplicate stdin; give a file".to_string(),
+                ));
+            }
+        },
+    };
+
+    let (src, label, preprocess_failure) =
+        crate::open::open_source_for_path(&path, args, preprocessor)?;
+
+    let mut idx = crate::line_index::LineIndex::new();
+    if let Some(re) = record_start_regex {
+        idx.set_record_start(re.clone());
+    }
+
+    let mut viewport = Viewport::new(cols, rows, label);
+    apply_pane_display_config(&mut viewport, args);
+    viewport.set_ansi_mode(ansi_mode);
+    viewport.set_preprocess_failure(preprocess_failure);
+    if let Some(top) = dup_top {
+        viewport.goto_line(top, src.as_ref(), &mut idx);
+    }
+
+    Ok(crate::pane::Pane {
+        last_revision: src.revision(),
+        #[cfg(feature = "image")]
+        last_tick: std::time::Instant::now(),
+        src,
+        idx,
+        viewport,
+    })
+}
+
 #[allow(clippy::too_many_arguments, clippy::collapsible_match)]
 pub fn run(
     mut src: Box<dyn Source>,
@@ -981,6 +1095,8 @@ pub fn run(
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
     second_pane: Option<crate::pane::Pane>,
+    #[cfg(feature = "image")]
+    startup_image_protocol: (crate::viewport::ImageProtocol, Option<(u16, u16)>),
 ) -> Result<()> {
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
@@ -1421,6 +1537,54 @@ pub fn run(
                                         mode = InputMode::Normal;
                                     } else {
                                         match parse_colon_command(buffer) {
+                                            Ok(ColonCommand::VSplit(path_arg)) => {
+                                                if other_pane.is_some() {
+                                                    viewport.flash("already split (`:only` first)", 30);
+                                                } else {
+                                                    let (lw, rw) = crate::pane::split_widths(cols);
+                                                    if rw == 0 {
+                                                        viewport.flash("terminal too narrow to split", 30);
+                                                    } else {
+                                                        let focused_path = file_set.current().map(|p| p.to_path_buf());
+                                                        let focused_ansi = viewport.ansi_mode();
+                                                        let built = build_runtime_pane(
+                                                            path_arg.as_deref(),
+                                                            focused_path.as_deref(),
+                                                            viewport.top_line(),
+                                                            rw,
+                                                            rows,
+                                                            &args,
+                                                            focused_ansi,
+                                                            preprocessor.as_ref(),
+                                                            record_start_regex.as_ref(),
+                                                        );
+                                                        match built {
+                                                            Ok(mut pane) => {
+                                                                force_cell_mode(&mut viewport);
+                                                                force_cell_mode(&mut pane.viewport);
+                                                                focused_left = true;
+                                                                viewport.resize(lw, rows);
+                                                                pane.viewport.resize(rw, rows);
+                                                                other_pane = Some(pane);
+                                                            }
+                                                            Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
+                                                        }
+                                                    }
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Only) => {
+                                                if other_pane.take().is_some() {
+                                                    viewport.resize(cols, rows);
+                                                    #[cfg(feature = "image")]
+                                                    {
+                                                        let (proto, cell_px) = startup_image_protocol;
+                                                        viewport.set_image_protocol(proto, cell_px);
+                                                    }
+                                                    focused_left = true;
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
                                             Ok(cmd) => {
                                                 let is_tag_cmd = matches!(
                                                     &cmd,
@@ -3087,6 +3251,14 @@ mod tests {
             ColonCommand::Edit(p) => assert_eq!(p, std::path::PathBuf::from("/home/user/foo.log")),
             other => panic!("expected Edit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_colon_vsplit_and_only() {
+        assert_eq!(parse_colon_command("vsplit").unwrap(), ColonCommand::VSplit(None));
+        assert_eq!(parse_colon_command("split a.log").unwrap(), ColonCommand::VSplit(Some("a.log".into())));
+        assert_eq!(parse_colon_command("only").unwrap(), ColonCommand::Only);
+        assert_eq!(parse_colon_command("close").unwrap(), ColonCommand::Only);
     }
 
     #[test]
