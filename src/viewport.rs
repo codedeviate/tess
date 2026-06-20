@@ -865,7 +865,7 @@ impl Viewport {
 
         for r in range {
             let bytes = idx.record_bytes_stripped(r, src);
-            let text = String::from_utf8_lossy(&bytes);
+            let text = crate::charset::decode_line(&bytes, self.opts.encoding);
             if pattern.is_match(&text) {
                 let line_range = idx.record_line_range(r);
                 self.top_line = line_range.start;
@@ -881,12 +881,12 @@ impl Viewport {
         // what they can find. With a template active, that's the rendered form;
         // otherwise the raw line. ANSI color sequences are stripped so that
         // `/error` finds a red `error` regardless of escape codes.
+        // Decode via the active charset so non-ASCII text in non-UTF-8 files
+        // is matched as the user typed it (e.g. ISO-8859-1 "café").
         let display = self.line_display_bytes(src, idx, line_n);
         let bytes = crate::ansi::strip_sgr(&display);
-        match std::str::from_utf8(&bytes) {
-            Ok(s) => pattern.is_match(s),
-            Err(_) => false,
-        }
+        let text = crate::charset::decode_line(&bytes, self.opts.encoding);
+        pattern.is_match(&text)
     }
 
     fn search_step_in_logical(&mut self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, forward: bool) -> bool {
@@ -4205,5 +4205,18 @@ mod tests {
         vp.set_scroll_lock(false);
         let frame = vp.frame(&src, &mut idx);
         assert!(!frame.status.contains("[lock]"));
+    }
+
+    #[test]
+    fn search_finds_decoded_latin1_line() {
+        // lines: "alpha", "café" (latin1: 63 61 66 E9), "gamma"
+        let data = [b"alpha\n".as_ref(), &[0x63, 0x61, 0x66, 0xE9, 0x0a], b"gamma\n"].concat();
+        let (m, mut idx) = setup(&data);
+        let mut vp = Viewport::new(20, 5, "f".into());
+        vp.opts.encoding = crate::charset::parse_label("iso-8859-1").unwrap();
+        vp.set_search("caf\u{e9}".into(), SearchDirection::Forward).unwrap();
+        let found = vp.search_repeat(&m, &mut idx, false);
+        assert!(found, "search should find latin-1 encoded 'café' on line 1");
+        assert_eq!(vp.top_line, 1, "viewport should have scrolled to line 1");
     }
 }
