@@ -78,11 +78,11 @@ struct OrGroup {
 }
 
 impl OrGroup {
-    fn matches_line(&self, line: &[u8]) -> bool {
+    fn matches_line(&self, line: &[u8], enc: crate::charset::Encoding) -> bool {
         self.filters
             .iter()
-            .any(|f| matches!(f.evaluate(line, crate::charset::Encoding::utf8()), FilterMatch::Matched))
-            || self.greps.iter().any(|g| g.matches(line, crate::charset::Encoding::utf8()))
+            .any(|f| matches!(f.evaluate(line, enc), FilterMatch::Matched))
+            || self.greps.iter().any(|g| g.matches(line, enc))
     }
 
     /// OR-filters use `evaluate_record` (dotall + multi-line) so captures span
@@ -90,11 +90,11 @@ impl OrGroup {
     /// the full record bytes — a literal pattern on any continuation line still
     /// matches — but is compiled single-line, so a `.` won't cross a newline.
     /// This is identical to how the required `--grep` behaves on records.
-    fn matches_record(&self, record: &[u8]) -> bool {
+    fn matches_record(&self, record: &[u8], enc: crate::charset::Encoding) -> bool {
         self.filters
             .iter()
-            .any(|f| matches!(f.evaluate_record(record, crate::charset::Encoding::utf8()), FilterMatch::Matched))
-            || self.greps.iter().any(|g| g.matches(record, crate::charset::Encoding::utf8()))
+            .any(|f| matches!(f.evaluate_record(record, enc), FilterMatch::Matched))
+            || self.greps.iter().any(|g| g.matches(record, enc))
     }
 }
 
@@ -110,12 +110,12 @@ impl OrGroups {
         !self.groups.is_empty()
     }
 
-    pub fn matches_line(&self, line: &[u8]) -> bool {
-        self.groups.iter().all(|g| g.matches_line(line))
+    pub fn matches_line(&self, line: &[u8], enc: crate::charset::Encoding) -> bool {
+        self.groups.iter().all(|g| g.matches_line(line, enc))
     }
 
-    pub fn matches_record(&self, record: &[u8]) -> bool {
-        self.groups.iter().all(|g| g.matches_record(record))
+    pub fn matches_record(&self, record: &[u8], enc: crate::charset::Encoding) -> bool {
+        self.groups.iter().all(|g| g.matches_record(record, enc))
     }
 
     /// Compile raw specs against an optional `format` (required only when any
@@ -214,7 +214,7 @@ mod tests {
         let raw = OrSpecRaw::new();
         let og = OrGroups::compile(&raw, None, CaseMode::Sensitive).unwrap();
         assert!(!og.is_active());
-        assert!(og.matches_line(b"anything"));
+        assert!(og.matches_line(b"anything", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -224,9 +224,9 @@ mod tests {
         raw.add_grep(DEFAULT_GROUP, "invalid".into());
         let og = OrGroups::compile(&raw, None, CaseMode::Sensitive).unwrap();
         assert!(og.is_active());
-        assert!(og.matches_line(b"login failed"));
-        assert!(og.matches_line(b"invalid user"));
-        assert!(!og.matches_line(b"all good"));
+        assert!(og.matches_line(b"login failed", crate::charset::Encoding::utf8()));
+        assert!(og.matches_line(b"invalid user", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"all good", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -236,10 +236,10 @@ mod tests {
         raw.add_grep("a", "denied".into());
         raw.add_grep("b", "ssh".into());
         let og = OrGroups::compile(&raw, None, CaseMode::Sensitive).unwrap();
-        assert!(og.matches_line(b"ssh login failed"));
-        assert!(og.matches_line(b"ssh access denied"));
-        assert!(!og.matches_line(b"login failed"));
-        assert!(!og.matches_line(b"ssh login ok"));
+        assert!(og.matches_line(b"ssh login failed", crate::charset::Encoding::utf8()));
+        assert!(og.matches_line(b"ssh access denied", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"login failed", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"ssh login ok", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -248,9 +248,9 @@ mod tests {
         raw.add_filter(DEFAULT_GROUP, "lvl=ERROR".into());
         raw.add_grep(DEFAULT_GROUP, "panic".into());
         let og = OrGroups::compile(&raw, Some(&fmt()), CaseMode::Sensitive).unwrap();
-        assert!(og.matches_line(b"ERROR disk full"));
-        assert!(og.matches_line(b"INFO panic trace"));
-        assert!(!og.matches_line(b"INFO ok"));
+        assert!(og.matches_line(b"ERROR disk full", crate::charset::Encoding::utf8()));
+        assert!(og.matches_line(b"INFO panic trace", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"INFO ok", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -280,9 +280,9 @@ mod tests {
             "tess", "--or-grep", "failed", "--or-filter", "lvl=ERROR",
         ]));
         let og = OrGroups::compile(&raw, Some(&fmt()), CaseMode::Sensitive).unwrap();
-        assert!(og.matches_line(b"INFO failed"));
-        assert!(og.matches_line(b"ERROR x"));
-        assert!(!og.matches_line(b"INFO ok"));
+        assert!(og.matches_line(b"INFO failed", crate::charset::Encoding::utf8()));
+        assert!(og.matches_line(b"ERROR x", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"INFO ok", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -294,9 +294,9 @@ mod tests {
             "--or-grep", "ssh",
         ]));
         let og = OrGroups::compile(&raw, None, CaseMode::Sensitive).unwrap();
-        assert!(og.matches_line(b"ssh failed"));
-        assert!(!og.matches_line(b"ssh ok"));
-        assert!(!og.matches_line(b"http failed"));
+        assert!(og.matches_line(b"ssh failed", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"ssh ok", crate::charset::Encoding::utf8()));
+        assert!(!og.matches_line(b"http failed", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
             "tess", "--or-group=svc", "--or-grep=ssh", "--or-filter=lvl=ERROR",
         ]));
         let og = OrGroups::compile(&raw, Some(&fmt()), CaseMode::Sensitive).unwrap();
-        assert!(og.matches_line(b"ssh ERROR"));
+        assert!(og.matches_line(b"ssh ERROR", crate::charset::Encoding::utf8()));
     }
 
     #[test]

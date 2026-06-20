@@ -752,6 +752,8 @@ impl Viewport {
         self.tag_active = info;
     }
 
+    pub fn set_encoding(&mut self, enc: crate::charset::Encoding) { self.opts.encoding = enc; }
+
     pub fn set_ansi_mode(&mut self, mode: crate::render::AnsiMode) {
         self.ansi_mode = mode;
     }
@@ -785,7 +787,7 @@ impl Viewport {
         let range = idx.line_range(line_n, src);
         let raw = src.bytes(range);
         if let Some(r) = self.display.as_ref() {
-            if let Some(rendered) = r.render_line(&raw, crate::charset::Encoding::utf8()) {
+            if let Some(rendered) = r.render_line(&raw, self.opts.encoding) {
                 return std::borrow::Cow::Owned(rendered.into_bytes());
             }
         }
@@ -1037,14 +1039,14 @@ impl Viewport {
     /// different granularity (filter = header line, grep = whole record).
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
-            Some(f) => matches!(f.evaluate(line, crate::charset::Encoding::utf8()), FilterMatch::Matched),
+            Some(f) => matches!(f.evaluate(line, self.opts.encoding), FilterMatch::Matched),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(line, crate::charset::Encoding::utf8()),
+            Some(g) => g.matches(line, self.opts.encoding),
             None => true,
         };
-        filter_ok && grep_ok && self.or_groups.matches_line(line)
+        filter_ok && grep_ok && self.or_groups.matches_line(line, self.opts.encoding)
     }
 
     /// Records-mode predicate. Both filter and grep are evaluated against
@@ -1063,17 +1065,17 @@ impl Viewport {
         };
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(
-                f.evaluate_record(bytes.as_deref().unwrap(), crate::charset::Encoding::utf8()),
+                f.evaluate_record(bytes.as_deref().unwrap(), self.opts.encoding),
                 FilterMatch::Matched,
             ),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(bytes.as_deref().unwrap(), crate::charset::Encoding::utf8()),
+            Some(g) => g.matches(bytes.as_deref().unwrap(), self.opts.encoding),
             None => true,
         };
         let or_ok = if self.or_groups.is_active() {
-            self.or_groups.matches_record(bytes.as_deref().unwrap())
+            self.or_groups.matches_record(bytes.as_deref().unwrap(), self.opts.encoding)
         } else {
             true
         };
@@ -1300,7 +1302,7 @@ impl Viewport {
             for hl in 0..header_rows {
                 let raw = src.bytes(idx.line_range(hl, src));
                 let display_bytes = if let Some(r) = self.display.as_ref() {
-                    match r.render_line(&raw, crate::charset::Encoding::utf8()) {
+                    match r.render_line(&raw, self.opts.encoding) {
                         Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                         None => raw.clone(),
                     }
@@ -1392,7 +1394,7 @@ impl Viewport {
                 }
             }
             let display_bytes = if let Some(r) = self.display.as_ref() {
-                match r.render_line(&raw, crate::charset::Encoding::utf8()) {
+                match r.render_line(&raw, self.opts.encoding) {
                     Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                     None => raw.clone(),
                 }
