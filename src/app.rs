@@ -2056,6 +2056,10 @@ pub fn run(
                             needs_redraw = true;
                         }
                     }
+                    Command::ToggleScrollLock => {
+                        // Wiring deferred to the sync-scroll task that adds
+                        // scroll-lock state to the split pane machinery.
+                    }
                     Command::Refresh => {
                         needs_redraw = true;
                     }

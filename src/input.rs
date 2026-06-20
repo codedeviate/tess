@@ -113,6 +113,9 @@ pub enum Command {
     MouseEvent(crossterm::event::MouseEvent),
     /// `Tab` — in split view, swap which pane is focused. No-op single-pane.
     FocusOtherPane,
+    /// `=` — in split view, toggle synchronized scrolling between panes.
+    /// No-op in single-pane mode. Remappable via `scroll-lock-toggle` in keys.toml.
+    ToggleScrollLock,
     Noop,
 }
 
@@ -179,6 +182,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char(','), false) => Command::AnimStepBack,
         (Backspace, _) => Command::AnimRestart,
         (Tab, _) => Command::FocusOtherPane,
+        (Char('='), false) => Command::ToggleScrollLock,
         _ => Command::Noop,
     }
 }
@@ -376,6 +380,14 @@ mod tests {
     #[test]
     fn tab_is_focus_other_pane() {
         assert_eq!(translate(key(KeyCode::Tab, KeyModifiers::NONE)), Command::FocusOtherPane);
+    }
+
+    #[test]
+    fn translates_equals_to_toggle_scroll_lock() {
+        assert_eq!(
+            translate(key(KeyCode::Char('='), KeyModifiers::NONE)),
+            Command::ToggleScrollLock
+        );
     }
 
     #[test]

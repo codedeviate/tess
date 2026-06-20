@@ -275,6 +275,7 @@ fn command_from_kebab(name: &str) -> Option<Command> {
         "anim-step-back" => Some(Command::AnimStepBack),
         "anim-restart" => Some(Command::AnimRestart),
         "focus-other-pane" => Some(Command::FocusOtherPane),
+        "scroll-lock-toggle" => Some(Command::ToggleScrollLock),
         _ => None,
     }
 }
@@ -321,6 +322,7 @@ fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
         Command::AnimStepBack => Some("anim-step-back"),
         Command::AnimRestart => Some("anim-restart"),
         Command::FocusOtherPane => Some("focus-other-pane"),
+        Command::ToggleScrollLock => Some("scroll-lock-toggle"),
         _ => None,
     }
 }
@@ -593,13 +595,23 @@ mod tests {
             "hscroll-left", "hscroll-right", "hscroll-left-step", "hscroll-right-step",
             "clipboard-yank-line",
             "anim-pause", "anim-step-forward", "anim-step-back", "anim-restart",
-            "focus-other-pane",
+            "focus-other-pane", "scroll-lock-toggle",
         ];
         for name in &names {
             let cmd = command_from_kebab(name).expect(&format!("from_kebab failed for {name}"));
             let back = command_to_kebab(&cmd).expect(&format!("to_kebab failed for {name}"));
             assert_eq!(back, *name, "round-trip mismatch for {name}");
         }
+    }
+
+    #[test]
+    fn binds_scroll_lock_toggle_from_config() {
+        let m = KeyMap::load_from_str("[bindings]\n\"=\" = \"scroll-lock-toggle\"\n").unwrap();
+        let ev = KeyEvent::new(KeyCode::Char('='), KeyModifiers::NONE);
+        assert!(matches!(
+            m.lookup(&ev),
+            Some(BindingTarget::Command(Command::ToggleScrollLock))
+        ));
     }
 
     #[test]
