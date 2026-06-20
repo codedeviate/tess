@@ -352,6 +352,11 @@ pub struct Args {
     #[arg(long = "rscroll", value_name = "CHAR", default_value = ">")]
     pub rscroll: String,
 
+    /// Start with the split panes scroll-locked together (relative offset
+    /// captured at launch). Only meaningful with --split; ignored otherwise.
+    #[arg(long = "scroll-lock")]
+    pub scroll_lock: bool,
+
     /// Column count for the ←/→ horizontal-scroll commands (default: half
     /// screen). `0` keeps the half-screen default. Mirrors `less -#`/`--shift`.
     #[arg(short = '#', long = "shift", value_name = "N")]
@@ -467,6 +472,12 @@ mod tests {
         assert!(Args::try_parse_from(["tess", "-R", "-r", "f"]).is_err());
         assert!(Args::try_parse_from(["tess", "-R", "--no-color", "f"]).is_err());
     }
+    #[test]
+    fn parses_scroll_lock() {
+        assert!(Args::parse_from(["tess", "--scroll-lock", "a", "b"]).scroll_lock);
+        assert!(!Args::parse_from(["tess", "a"]).scroll_lock);
+    }
+
     #[test]
     fn parses_split() {
         assert!(Args::parse_from(["tess", "--split", "a", "b"]).split);
@@ -840,6 +851,7 @@ mod tests {
             "--RAW-CONTROL-CHARS",
             "--record-start",
             "--rscroll",
+            "--scroll-lock",
             "--shift",
             "--split",
             "--squeeze-blank-lines",
