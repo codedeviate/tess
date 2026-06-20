@@ -59,20 +59,16 @@ worth eating.
 
 ## Deferred
 
-### Horizontal split & synchronized/diff split — **L**
-
-> **Next up — synchronized scrolling + diff alignment prioritized for the
-> upcoming cycle.** Gets its own brainstorm → spec → plan cycle. The other
-> sub-items below (horizontal/N>2 panes, per-pane predicates, per-pane protocol
-> images) stay deferred.
+### Horizontal split & diff alignment — **L**
 
 Vertical 2-pane split shipped in `0.41.0` (`--split`, `:vsplit` / `:split` /
-`:only`). What remains deferred from that feature's v1:
+`:only`); synchronized scrolling shipped in `0.42.0` (`=` / `:scrolllock` /
+`--scroll-lock`). What remains deferred:
 
-- **Horizontal (stacked) split and N>2 panes.** v1 is vertical, 2-pane only.
-- **Synchronized scrolling and diff alignment.** The two panes are independent
-  views; a true side-by-side diff (aligned hunks, scroll-lock) is a separate,
-  larger feature.
+- **Horizontal (stacked) split and N>2 panes.** Split is vertical, 2-pane only.
+- **Diff alignment.** Synchronized scrolling is line-based; a true side-by-side
+  diff (aligned hunks, change highlighting, filler rows for inserts/deletes) is
+  a separate, larger feature — the natural next cycle building on scroll-lock.
 - **Format predicates in the second pane.** The second pane currently shows the
   plain file — `--filter` / `--grep` / `--format` / `--display` apply to the
   focused/first pane only. Per-pane predicates need a "which pane" notion

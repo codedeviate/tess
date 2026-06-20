@@ -10,6 +10,32 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-06-21
+
+### Added
+
+- **Synchronized scrolling for the split view.** Couple the two split panes so
+  scrolling one scrolls the other, keeping a chosen alignment — for comparing
+  two files (or two regions of one) side by side.
+  - Toggle with `=` (remappable as `scroll-lock-toggle` in
+    `~/.config/tess/keys.toml`), the `:scrolllock` colon command, or the
+    `--scroll-lock` startup flag (meaningful only with `--split`; ignored
+    otherwise).
+  - **Relative (delta) lock:** the offset between the two panes' top lines is
+    captured the moment you enable lock, so you can align two interesting
+    regions first and then scroll together. Coupling is by **logical line**
+    (the partner's wrap sub-row resets to its line start), and the partner is
+    re-derived from the fixed offset on every move — so it **survives an
+    EOF/top clamp and restores** the alignment when there's room again, with no
+    drift.
+  - `Tab` focus-swap never disturbs the alignment (the offset is stored in
+    stable left/right terms). While locked, the focused pane drives — it alone
+    auto-tails under `--follow`/`--live`; the partner is governed by the lock.
+  - Status shows `[lock]` on the focused pane; `<lock>` is available as a
+    `--prompt` / per-format prompt placeholder.
+  - v1 is **line-based sync only** — diff alignment (aligned hunks, change
+    highlighting, filler rows) remains a separate future cycle.
+
 ## [0.41.0] — 2026-06-20
 
 ### Added

@@ -30,7 +30,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 - **Live + follow modes.** `--follow` for tail-style appended logs (background reader thread, doesn't fight your tty); `--live` for whole-file rewrites (editor saves, AI agents, build outputs).
 - **Cheap on huge files.** mmap'd file source, lazy line indexing, `--tail N` reverse-scans only as far as needed.
 - **Long-line scrolling that actually works.** `j` walks wrap-rows so the last 1000 chars of a 5000-char line are reachable; `J` / `K` jump by whole logical lines when you don't want to scroll through every wrap.
-- **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `:only` collapses back.
+- **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `=` locks the panes to scroll together; `:only` collapses back.
 
 It is **not** a log search/correlation tool, structured query engine, or replacement for `lnav`. It's a single-file pager.
 
@@ -245,11 +245,18 @@ At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
 duplicates the current file at its scroll position); `:only` / `:close`
 collapse back to a single pane. `Tab` is remappable as `focus-other-pane`.
 
-**v1 scope:** vertical 2-pane only; the two views are independent (no
-synchronized scrolling or diff alignment); the second pane shows the plain
-file (`--filter` / `--grep` / `--format` apply to the first pane only); and
-because the compositor is cell-based, protocol images render as ASCII and
-`-r` raw renders through cells while split.
+**Synchronized scrolling.** Press `=` (or `:scrolllock`, or start with
+`--scroll-lock`) to lock the panes together — scrolling one scrolls the other
+by the same number of logical lines, showing `[lock]` on the focused pane. The
+lock is *relative*: align two regions first, then `=` freezes that offset, and
+it restores exactly after you scroll either pane to its edge and back. `Tab`
+swaps focus without moving either pane.
+
+**v1 scope:** vertical 2-pane only; synchronized scrolling is line-based with
+no diff alignment (aligned hunks / change highlighting — a future cycle); the
+second pane shows the plain file (`--filter` / `--grep` / `--format` apply to
+the first pane only); and because the compositor is cell-based, protocol images
+render as ASCII and `-r` raw renders through cells while split.
 
 ---
 

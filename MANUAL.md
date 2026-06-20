@@ -190,6 +190,7 @@ tess --clipboard app.log                                # then :yank a line
 - **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
 - **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
 - **`--split`** — open a side-by-side vertical split of the first two file arguments (or two views of a single file). Interactive only. See [Split view](#split-view). Runtime equivalent: `:vsplit`.
+- **`--scroll-lock`** — start a `--split` session with the two panes scroll-locked together. Only meaningful with `--split`; ignored otherwise. See [Synchronized scrolling](#synchronized-scrolling-scrolllock). Runtime toggle: `=` / `:scrolllock`.
 - **`--incsearch`** — enable incremental search (off by default). See [Search](#search). Toggle at runtime with `:incsearch`. Mirrors `less --incsearch`.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
 - **`-V`, `--version`** — print version.
@@ -225,6 +226,7 @@ tess --clipboard app.log                                # then :yank a line
 | `.` `,` | Animated image: step one frame forward / back (auto-pauses) |
 | `Backspace` | Animated image: restart from the first frame |
 | `Tab` | Switch the focused pane in a split (see [Split view](#split-view); no-op without a split) |
+| `=` | Toggle synchronized scrolling in a split (see [Synchronized scrolling](#synchronized-scrolling-scrolllock); flashes a hint without a split) |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `F1` | Open the help overlay (also `:help` / `:h` at the colon prompt) |
@@ -286,9 +288,31 @@ The two panes are separated by a vertical divider, and each gets a
 Each pane needs at least 8 usable columns: in a terminal too narrow to fit
 both, the focused pane renders full-width until the window is widened.
 
+#### Synchronized scrolling (`:scrolllock`)
+
+By default the two panes scroll independently. Press `=` (or run `:scrolllock`,
+or start with `--scroll-lock`) to **lock** them together: scrolling the focused
+pane scrolls the other by the same number of logical lines. The focused pane's
+status shows `[lock]`.
+
+The lock is **relative** — the offset between the two panes' top lines is
+captured the moment you enable it. So scroll each pane to the region you want
+beside the other *first*, then press `=` to freeze that alignment and scroll
+together. Coupling is by logical line, so the panes stay aligned by content even
+if they wrap differently. The partner is re-derived from the fixed offset on
+every move, so scrolling one pane to its top/bottom and back **restores** the
+alignment exactly — no drift. `Tab` swaps focus without moving either pane.
+
+While locked, the **focused pane drives**: only it auto-tails under `--follow` /
+`--live`; the other pane's position follows the lock. Press `=` again to unlock
+(the panes stay where they are and become independent); `:only` also clears the
+lock. `=` is remappable as `scroll-lock-toggle` in `~/.config/tess/keys.toml`,
+and `<lock>` is a `--prompt` placeholder (`lock` when on, empty when off).
+
 **v1 limitations.** The split is **2-pane vertical only** — no horizontal
-(stacked) split and no more than two panes. The two views are **independent**:
-there is no synchronized scrolling and no diff alignment. The **second pane
+(stacked) split and no more than two panes. Synchronized scrolling is
+**line-based**; there is no **diff alignment** (aligned hunks, change
+highlighting, filler rows) — that is a separate future cycle. The **second pane
 shows the plain file** — `--filter`, `--grep`, `--format`, and `--display`
 predicates apply to the focused/first pane only. Because the split compositor
 works on rendered cells, **protocol images** (Kitty/Sixel) render as **ASCII**
