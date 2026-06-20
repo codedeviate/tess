@@ -346,6 +346,10 @@ pub struct Viewport {
     /// Set by the app loop before composing each frame when `status_column`
     /// is on. Drives the mark glyph in the status column.
     status_marks: std::collections::HashMap<usize, char>,
+    /// When true, renders `[lock]` in the status line and `lock` in the
+    /// `<lock>` prompt placeholder. Set by the event loop on the focused
+    /// split pane while scroll-lock is active.
+    scroll_lock: bool,
 }
 
 impl Viewport {
@@ -411,6 +415,7 @@ impl Viewport {
             incsearch: false,
             status_column: false,
             status_marks: std::collections::HashMap::new(),
+            scroll_lock: false,
         }
     }
 
@@ -462,6 +467,10 @@ impl Viewport {
     pub fn set_incsearch(&mut self, on: bool) { self.incsearch = on; }
 
     pub fn top_row(&self) -> usize { self.top_row }
+
+    /// Show the `[lock]` status badge / `<lock>` prompt value. Set by the
+    /// event loop on the focused split pane while scroll-lock is active.
+    pub fn set_scroll_lock(&mut self, on: bool) { self.scroll_lock = on; }
 
     /// Set the scroll position directly (logical line + wrap-row within it).
     pub fn set_top(&mut self, line: usize, row: usize) {
@@ -1606,6 +1615,9 @@ impl Viewport {
         if self.or_groups.is_active() {
             s.push_str("  [or]");
         }
+        if self.scroll_lock {
+            s.push_str("  [lock]");
+        }
         if self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active() {
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [hide]" });
         }
@@ -1728,6 +1740,8 @@ impl Viewport {
             _ => String::new(),
         };
 
+        let lock = if self.scroll_lock { "lock".to_string() } else { String::new() };
+
         PromptContext {
             label: self.source_label.clone(),
             top,
@@ -1744,6 +1758,7 @@ impl Viewport {
             filter_tag,
             grep_tag,
             or_tag,
+            lock,
             hide_tag,
             search_tag,
             pretty_tag,
@@ -4170,5 +4185,25 @@ mod tests {
             Cell::Char { ch: 'J', width: 1, style: crate::ansi::Style::default(), hyperlink: None },
             "second cell should be 'J' (display column left_col+1 = 9)"
         );
+    }
+
+    #[test]
+    fn top_line_accessor_reflects_goto() {
+        let (src, mut idx) = setup(b"line0\nline1\nline2\nline3\nline4\n");
+        let mut vp = Viewport::new(40, 6, "f".into());
+        vp.goto_line(3, &src, &mut idx);
+        assert_eq!(vp.top_line(), 3);
+    }
+
+    #[test]
+    fn scroll_lock_badge_in_status() {
+        let (src, mut idx) = setup(b"line0\nline1\nline2\n");
+        let mut vp = Viewport::new(40, 5, "f".into());
+        vp.set_scroll_lock(true);
+        let frame = vp.frame(&src, &mut idx);
+        assert!(frame.status.contains("[lock]"), "status was: {}", frame.status);
+        vp.set_scroll_lock(false);
+        let frame = vp.frame(&src, &mut idx);
+        assert!(!frame.status.contains("[lock]"));
     }
 }
