@@ -28,15 +28,12 @@ impl GrepPredicate {
 
     pub fn is_empty(&self) -> bool { self.regexes.is_empty() }
 
-    /// True iff every compiled pattern matches the line. Empty predicate
-    /// vacuously matches (callers should treat that as "no grep configured"
-    /// via `is_empty` and not even ask).
-    pub fn matches(&self, line: &[u8]) -> bool {
-        let s = match std::str::from_utf8(line) {
-            Ok(s) => s,
-            Err(_) => return false,
-        };
-        self.regexes.iter().all(|r| r.is_match(s))
+    /// True iff every compiled pattern matches the line, decoded via `enc`.
+    /// Empty predicate vacuously matches (callers should treat that as "no
+    /// grep configured" via `is_empty` and not even ask).
+    pub fn matches(&self, line: &[u8], enc: crate::charset::Encoding) -> bool {
+        let s = crate::charset::decode_line(line, enc);
+        self.regexes.iter().all(|r| r.is_match(&s))
     }
 }
 
@@ -53,8 +50,8 @@ mod tests {
     #[test]
     fn single_pattern_matches() {
         let g = GrepPredicate::compile(&["error".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert!(g.matches(b"something failed: error 42"));
-        assert!(!g.matches(b"all good"));
+        assert!(g.matches(b"something failed: error 42", crate::charset::Encoding::utf8()));
+        assert!(!g.matches(b"all good", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -63,9 +60,9 @@ mod tests {
             &["error".to_string(), r"^\[\d{4}".to_string()],
             crate::viewport::CaseMode::Sensitive,
         ).unwrap();
-        assert!(g.matches(b"[2026-05-13] error occurred"));
-        assert!(!g.matches(b"[2026-05-13] all good"));
-        assert!(!g.matches(b"error occurred (no timestamp)"));
+        assert!(g.matches(b"[2026-05-13] error occurred", crate::charset::Encoding::utf8()));
+        assert!(!g.matches(b"[2026-05-13] all good", crate::charset::Encoding::utf8()));
+        assert!(!g.matches(b"error occurred (no timestamp)", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -75,10 +72,11 @@ mod tests {
     }
 
     #[test]
-    fn non_utf8_line_never_matches() {
+    fn non_utf8_line_decoded_lossily_under_utf8() {
         let g = GrepPredicate::compile(&[".".to_string()], crate::viewport::CaseMode::Sensitive).unwrap();
-        // Lone 0xFF is invalid UTF-8.
-        assert!(!g.matches(&[0xFF, b'a', b'b']));
+        // Lone 0xFF is invalid UTF-8 → decode_line produces lossy U+FFFD,
+        // which still matches `.` — the line is no longer silently dropped.
+        assert!(g.matches(&[0xFF, b'a', b'b'], crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -88,9 +86,9 @@ mod tests {
             crate::viewport::CaseMode::Insensitive,
         )
         .unwrap();
-        assert!(g.matches(b"FooBar"));
-        assert!(g.matches(b"FOO"));
-        assert!(g.matches(b"foo"));
+        assert!(g.matches(b"FooBar", crate::charset::Encoding::utf8()));
+        assert!(g.matches(b"FOO", crate::charset::Encoding::utf8()));
+        assert!(g.matches(b"foo", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -100,7 +98,7 @@ mod tests {
             crate::viewport::CaseMode::Smart,
         )
         .unwrap();
-        assert!(g.matches(b"FOO bar"));
+        assert!(g.matches(b"FOO bar", crate::charset::Encoding::utf8()));
     }
 
     #[test]
@@ -110,8 +108,22 @@ mod tests {
             crate::viewport::CaseMode::Smart,
         )
         .unwrap();
-        assert!(g.matches(b"Foo bar"));
-        assert!(!g.matches(b"foo bar"));
-        assert!(!g.matches(b"FOO bar"));
+        assert!(g.matches(b"Foo bar", crate::charset::Encoding::utf8()));
+        assert!(!g.matches(b"foo bar", crate::charset::Encoding::utf8()));
+        assert!(!g.matches(b"FOO bar", crate::charset::Encoding::utf8()));
+    }
+
+    #[test]
+    fn grep_matches_decoded_latin1() {
+        let g = GrepPredicate::compile(
+            &["café".to_string()],
+            crate::viewport::CaseMode::Sensitive,
+        )
+        .unwrap();
+        let l1 = crate::charset::parse_label("iso-8859-1").unwrap();
+        // "café" in latin-1: 0x63='c', 0x61='a', 0x66='f', 0xE9='é'
+        assert!(g.matches(&[0x63, 0x61, 0x66, 0xE9], l1));
+        // Same bytes under UTF-8 decoding: 0xE9 is invalid UTF-8 → lossy replacement → no match
+        assert!(!g.matches(&[0x63, 0x61, 0x66, 0xE9], crate::charset::Encoding::utf8()));
     }
 }

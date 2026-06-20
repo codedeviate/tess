@@ -163,27 +163,22 @@ impl CompiledFilter {
         })
     }
 
-    /// Evaluate the filter against a single logical line of bytes. Decodes the
-    /// line as UTF-8 with a lossy fallback so non-UTF-8 bytes can still flow
-    /// through (they just won't match string-equal predicates).
-    pub fn evaluate(&self, line: &[u8]) -> FilterMatch {
-        self.evaluate_with(&self.format_regex, line)
+    /// Evaluate the filter against a single logical line of bytes, decoded via `enc`.
+    pub fn evaluate(&self, line: &[u8], enc: crate::charset::Encoding) -> FilterMatch {
+        self.evaluate_with(&self.format_regex, line, enc)
     }
 
     /// Records-mode evaluation: runs the format regex with dotall + multi-line
     /// flags enabled against the full multi-line record bytes. Greedy
     /// captures like `(?P<message>.*)$` consume the whole body of the record,
     /// so predicates can match content on any continuation line.
-    pub fn evaluate_record(&self, record: &[u8]) -> FilterMatch {
-        self.evaluate_with(&self.format_regex_record, record)
+    pub fn evaluate_record(&self, record: &[u8], enc: crate::charset::Encoding) -> FilterMatch {
+        self.evaluate_with(&self.format_regex_record, record, enc)
     }
 
-    fn evaluate_with(&self, regex: &Regex, bytes: &[u8]) -> FilterMatch {
-        let line_str = match std::str::from_utf8(bytes) {
-            Ok(s) => s,
-            Err(_) => return FilterMatch::NotParsed,
-        };
-        let Some(caps) = regex.captures(line_str) else {
+    fn evaluate_with(&self, regex: &Regex, bytes: &[u8], enc: crate::charset::Encoding) -> FilterMatch {
+        let line_str = crate::charset::decode_line(bytes, enc);
+        let Some(caps) = regex.captures(&line_str) else {
             return FilterMatch::NotParsed;
         };
         for p in &self.predicates {
@@ -300,24 +295,24 @@ mod tests {
     fn evaluate_eq_matches() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=500").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
     fn evaluate_re_matches_5xx() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status~^5").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
     fn evaluate_ne_excludes_200() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status!=200").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
@@ -332,15 +327,15 @@ mod tests {
             crate::viewport::CaseMode::Sensitive,
         )
         .unwrap();
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
     fn evaluate_unparseable_line_is_not_parsed() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status=200").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(NON_PARSING), FilterMatch::NotParsed);
+        assert_eq!(f.evaluate(NON_PARSING, crate::charset::Encoding::utf8()), FilterMatch::NotParsed);
     }
 
     // ----- Comparison operators -----
@@ -377,16 +372,16 @@ mod tests {
     fn evaluate_ge_numeric() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status>=500").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
     fn evaluate_lt_numeric() {
         let fmt = apache_combined();
         let f = CompiledFilter::compile(&fmt, vec![FilterSpec::parse("status<400").unwrap()], crate::viewport::CaseMode::Sensitive).unwrap();
-        assert_eq!(f.evaluate(SAMPLE_200), FilterMatch::Matched);
-        assert_eq!(f.evaluate(SAMPLE_500), FilterMatch::NotMatched);
+        assert_eq!(f.evaluate(SAMPLE_200, crate::charset::Encoding::utf8()), FilterMatch::Matched);
+        assert_eq!(f.evaluate(SAMPLE_500, crate::charset::Encoding::utf8()), FilterMatch::NotMatched);
     }
 
     #[test]
@@ -411,5 +406,31 @@ mod tests {
     fn parse_rejects_no_op_mentions_new_ops() {
         let err = FilterSpec::parse("status").unwrap_err();
         assert!(err.contains(">=") && err.contains("<="), "{err}");
+    }
+
+    #[test]
+    fn filter_evaluate_decoded_latin1() {
+        // Format with a `user` field that could contain non-ASCII Latin-1 bytes.
+        // We build a simple log format: "<ip> <user>" so the user field is the 2nd token.
+        let fmt = LogFormat::compile(
+            "simple2",
+            r"^(?P<ip>\S+) (?P<user>\S+)$",
+        )
+        .unwrap();
+        let f = CompiledFilter::compile(
+            &fmt,
+            vec![FilterSpec::parse("user=café").unwrap()],
+            crate::viewport::CaseMode::Sensitive,
+        )
+        .unwrap();
+        let l1 = crate::charset::parse_label("iso-8859-1").unwrap();
+        // "127.0.0.1 café" in Latin-1 (0xE9 = é in iso-8859-1)
+        let latin1_line: Vec<u8> = b"127.0.0.1 caf\xE9".to_vec();
+        assert_eq!(f.evaluate(&latin1_line, l1), FilterMatch::Matched);
+        // Same bytes under UTF-8: 0xE9 is invalid → lossy replacement → user field != "café"
+        assert_eq!(
+            f.evaluate(&latin1_line, crate::charset::Encoding::utf8()),
+            FilterMatch::NotMatched
+        );
     }
 }

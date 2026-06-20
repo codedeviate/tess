@@ -785,7 +785,7 @@ impl Viewport {
         let range = idx.line_range(line_n, src);
         let raw = src.bytes(range);
         if let Some(r) = self.display.as_ref() {
-            if let Some(rendered) = r.render_line(&raw) {
+            if let Some(rendered) = r.render_line(&raw, crate::charset::Encoding::utf8()) {
                 return std::borrow::Cow::Owned(rendered.into_bytes());
             }
         }
@@ -1037,11 +1037,11 @@ impl Viewport {
     /// different granularity (filter = header line, grep = whole record).
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
-            Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
+            Some(f) => matches!(f.evaluate(line, crate::charset::Encoding::utf8()), FilterMatch::Matched),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(line),
+            Some(g) => g.matches(line, crate::charset::Encoding::utf8()),
             None => true,
         };
         filter_ok && grep_ok && self.or_groups.matches_line(line)
@@ -1063,13 +1063,13 @@ impl Viewport {
         };
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(
-                f.evaluate_record(bytes.as_deref().unwrap()),
+                f.evaluate_record(bytes.as_deref().unwrap(), crate::charset::Encoding::utf8()),
                 FilterMatch::Matched,
             ),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(bytes.as_deref().unwrap()),
+            Some(g) => g.matches(bytes.as_deref().unwrap(), crate::charset::Encoding::utf8()),
             None => true,
         };
         let or_ok = if self.or_groups.is_active() {
@@ -1300,7 +1300,7 @@ impl Viewport {
             for hl in 0..header_rows {
                 let raw = src.bytes(idx.line_range(hl, src));
                 let display_bytes = if let Some(r) = self.display.as_ref() {
-                    match r.render_line(&raw) {
+                    match r.render_line(&raw, crate::charset::Encoding::utf8()) {
                         Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                         None => raw.clone(),
                     }
@@ -1392,7 +1392,7 @@ impl Viewport {
                 }
             }
             let display_bytes = if let Some(r) = self.display.as_ref() {
-                match r.render_line(&raw) {
+                match r.render_line(&raw, crate::charset::Encoding::utf8()) {
                     Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                     None => raw.clone(),
                 }

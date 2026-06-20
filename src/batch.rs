@@ -185,11 +185,11 @@ fn emit_pending(
             let bytes = src.bytes(range);
             let filter_ok = match filter {
                 None => true,
-                Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
+                Some(f) => matches!(f.evaluate(&bytes, crate::charset::Encoding::utf8()), FilterMatch::Matched),
             };
             let grep_ok = match grep {
                 None => true,
-                Some(g) => g.matches(&bytes),
+                Some(g) => g.matches(&bytes, crate::charset::Encoding::utf8()),
             };
             let or_ok = or_groups.matches_line(&bytes);
             if filter_ok && grep_ok && or_ok {
@@ -219,11 +219,11 @@ fn record_passes_batch(
     }
     let bytes = idx.record_bytes_stripped(r, src);
     let filter_ok = match filter {
-        Some(f) => matches!(f.evaluate_record(&bytes), FilterMatch::Matched),
+        Some(f) => matches!(f.evaluate_record(&bytes, crate::charset::Encoding::utf8()), FilterMatch::Matched),
         None => true,
     };
     let grep_ok = match grep {
-        Some(g) => g.matches(&bytes),
+        Some(g) => g.matches(&bytes, crate::charset::Encoding::utf8()),
         None => true,
     };
     let or_ok = if or_groups.is_active() {
@@ -243,7 +243,7 @@ fn emit_line(
 ) -> Result<()> {
     let range = idx.line_range(line_n, src);
     let bytes = src.bytes(range);
-    match display.and_then(|r| r.render_line(&bytes)) {
+    match display.and_then(|r| r.render_line(&bytes, crate::charset::Encoding::utf8())) {
         Some(rendered) => {
             out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }

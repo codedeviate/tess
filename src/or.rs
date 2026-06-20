@@ -81,8 +81,8 @@ impl OrGroup {
     fn matches_line(&self, line: &[u8]) -> bool {
         self.filters
             .iter()
-            .any(|f| matches!(f.evaluate(line), FilterMatch::Matched))
-            || self.greps.iter().any(|g| g.matches(line))
+            .any(|f| matches!(f.evaluate(line, crate::charset::Encoding::utf8()), FilterMatch::Matched))
+            || self.greps.iter().any(|g| g.matches(line, crate::charset::Encoding::utf8()))
     }
 
     /// OR-filters use `evaluate_record` (dotall + multi-line) so captures span
@@ -93,8 +93,8 @@ impl OrGroup {
     fn matches_record(&self, record: &[u8]) -> bool {
         self.filters
             .iter()
-            .any(|f| matches!(f.evaluate_record(record), FilterMatch::Matched))
-            || self.greps.iter().any(|g| g.matches(record))
+            .any(|f| matches!(f.evaluate_record(record, crate::charset::Encoding::utf8()), FilterMatch::Matched))
+            || self.greps.iter().any(|g| g.matches(record, crate::charset::Encoding::utf8()))
     }
 }
 
