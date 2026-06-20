@@ -115,6 +115,9 @@ enum ColonCommand {
     Only,
     /// `:scrolllock` — toggle synchronized scroll between the two split panes.
     ScrollLock,
+    /// `:encoding [LABEL]` — switch active encoding (e.g. `iso-8859-1`), or
+    /// display the current encoding label when no argument is given.
+    SetEncoding(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -260,6 +263,9 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 }
             }
         }
+        "encoding" => Ok(ColonCommand::SetEncoding(
+            (!rest.is_empty()).then(|| rest.to_string())
+        )),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -916,11 +922,12 @@ fn dispatch_colon_command(
             };
             ColonOutcome::Continue(Some(format!("[case: {label}]")))
         }
-        // Split commands are intercepted in the event loop (they need the
-        // loose `other_pane`/`cols`/`rows`/`focused_left` locals) and never
-        // reach this file-set-only dispatcher.
-        ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock => {
-            unreachable!("split/scroll-lock commands are handled in the run() event loop")
+        // Split commands and encoding are intercepted in the event loop (they
+        // need the loose `other_pane`/`cols`/`rows`/`focused_left` locals or
+        // must apply to both panes) and never reach this file-set-only dispatcher.
+        ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock
+        | ColonCommand::SetEncoding(_) => {
+            unreachable!("split/scroll-lock/encoding commands are handled in the run() event loop")
         }
     }
 }
@@ -1616,6 +1623,30 @@ pub fn run(
                                                     }
                                                 } else {
                                                     viewport.flash("scroll-lock needs a split", 40);
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::SetEncoding(arg)) => {
+                                                match arg {
+                                                    Some(label) => {
+                                                        match crate::charset::parse_label(&label) {
+                                                            Some(enc) => {
+                                                                viewport.set_encoding(enc);
+                                                                if let Some(other) = other_pane.as_mut() {
+                                                                    other.viewport.set_encoding(enc);
+                                                                }
+                                                                needs_redraw = true;
+                                                            }
+                                                            None => viewport.flash(
+                                                                format!("unknown encoding: {label}"),
+                                                                40,
+                                                            ),
+                                                        }
+                                                    }
+                                                    None => viewport.flash(
+                                                        format!("encoding: {}", viewport.encoding_label()),
+                                                        40,
+                                                    ),
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -3508,6 +3539,13 @@ mod tests {
     #[test]
     fn parse_colon_incsearch_toggle() {
         assert_eq!(parse_colon_command("incsearch").unwrap(), ColonCommand::IncSearch);
+    }
+
+    #[test]
+    fn parse_colon_encoding() {
+        assert_eq!(parse_colon_command("encoding iso-8859-1").unwrap(),
+                   ColonCommand::SetEncoding(Some("iso-8859-1".to_string())));
+        assert_eq!(parse_colon_command("encoding").unwrap(), ColonCommand::SetEncoding(None));
     }
 
     #[test]

@@ -754,6 +754,9 @@ impl Viewport {
 
     pub fn set_encoding(&mut self, enc: crate::charset::Encoding) { self.opts.encoding = enc; }
 
+    /// Return the WHATWG name of the active encoding (e.g. `"UTF-8"`, `"windows-1252"`).
+    pub fn encoding_label(&self) -> &'static str { self.opts.encoding.label() }
+
     pub fn set_ansi_mode(&mut self, mode: crate::render::AnsiMode) {
         self.ansi_mode = mode;
     }
