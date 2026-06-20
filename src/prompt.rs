@@ -29,6 +29,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "filter-tag",
     "grep-tag",
     "or-tag",
+    "lock",
     "hide-tag",
     "search-tag",
     "pretty-tag",
@@ -83,6 +84,8 @@ pub struct PromptContext {
     pub filter_tag: String,
     pub grep_tag: String,
     pub or_tag: String,
+    /// Scroll-lock badge for split view: `lock` when on, empty when off.
+    pub lock: String,
     pub hide_tag: String,
     pub search_tag: String,
     pub pretty_tag: String,
@@ -119,6 +122,7 @@ impl PromptContext {
             "filter-tag" => Some(self.filter_tag.clone()),
             "grep-tag" => Some(self.grep_tag.clone()),
             "or-tag" => Some(self.or_tag.clone()),
+            "lock" => Some(self.lock.clone()),
             "hide-tag" => Some(self.hide_tag.clone()),
             "search-tag" => Some(self.search_tag.clone()),
             "pretty-tag" => Some(self.pretty_tag.clone()),
@@ -187,6 +191,15 @@ mod tests {
         let p = ParsedPrompt::parse("<grep-tag><or-tag>").unwrap();
         let ctx = PromptContext { grep_tag: "  [grep]".into(), or_tag: "  [or]".into(), ..Default::default() };
         assert_eq!(p.render(&ctx), "  [grep]  [or]");
+    }
+
+    #[test]
+    fn lock_placeholder_renders_on_and_off() {
+        let on = ParsedPrompt::parse("<lock>").unwrap();
+        let ctx_on = PromptContext { lock: "lock".into(), ..Default::default() };
+        assert_eq!(on.render(&ctx_on), "lock");
+        let ctx_off = PromptContext::default();
+        assert_eq!(on.render(&ctx_off), "");
     }
 
     #[test]
