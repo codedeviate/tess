@@ -113,6 +113,8 @@ enum ColonCommand {
     VSplit(Option<String>),
     /// `:only` / `:close` — collapse a split back to the focused pane.
     Only,
+    /// `:scrolllock` — toggle synchronized scroll between the two split panes.
+    ScrollLock,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,6 +225,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
             }
         }
         "only" | "close" => Ok(ColonCommand::Only),
+        "scrolllock" => Ok(ColonCommand::ScrollLock),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
@@ -916,8 +919,8 @@ fn dispatch_colon_command(
         // Split commands are intercepted in the event loop (they need the
         // loose `other_pane`/`cols`/`rows`/`focused_left` locals) and never
         // reach this file-set-only dispatcher.
-        ColonCommand::VSplit(_) | ColonCommand::Only => {
-            unreachable!("split commands are handled in the run() event loop")
+        ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock => {
+            unreachable!("split/scroll-lock commands are handled in the run() event loop")
         }
     }
 }
@@ -1108,6 +1111,19 @@ pub fn run(
     // left/right placement is decided by this flag in the render/resize
     // branches, so a focus swap must keep each physical side at its own width.
     let mut focused_left = true;
+    let mut scroll_lock = false;
+    let mut lock_offset: isize = 0;
+
+    if args.scroll_lock {
+        if let Some(other) = other_pane.as_ref() {
+            lock_offset = crate::pane::capture_lock_offset(
+                viewport.top_line(),
+                other.viewport.top_line(),
+                focused_left,
+            );
+            scroll_lock = true;
+        }
+    }
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
     // we need to scan the whole source up front to find matching lines.
@@ -1199,7 +1215,17 @@ pub fn run(
                     .collect();
                 viewport.set_status_marks(status_marks);
             }
+            viewport.set_scroll_lock(scroll_lock);
             let mut frame = if let Some(other) = other_pane.as_mut() {
+                if scroll_lock {
+                    let focused_top = viewport.top_line();
+                    let partner_max = other.idx.line_count().saturating_sub(1);
+                    let target = crate::pane::locked_partner_top(
+                        focused_top, lock_offset, focused_left, partner_max,
+                    );
+                    other.viewport.goto_line(target, other.src.as_ref(), &mut other.idx);
+                }
+                other.viewport.set_scroll_lock(false);
                 let (lw, rw) = crate::pane::split_widths(cols);
                 if rw == 0 {
                     viewport.frame(src.as_ref(), &mut idx)
@@ -1565,6 +1591,7 @@ pub fn run(
                                             }
                                             Ok(ColonCommand::Only) => {
                                                 if other_pane.take().is_some() {
+                                                    scroll_lock = false;
                                                     viewport.resize(cols, rows);
                                                     #[cfg(feature = "image")]
                                                     {
@@ -1572,6 +1599,23 @@ pub fn run(
                                                         viewport.set_image_protocol(proto, cell_px);
                                                     }
                                                     focused_left = true;
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::ScrollLock) => {
+                                                if let Some(other) = other_pane.as_ref() {
+                                                    if scroll_lock {
+                                                        scroll_lock = false;
+                                                    } else {
+                                                        lock_offset = crate::pane::capture_lock_offset(
+                                                            viewport.top_line(),
+                                                            other.viewport.top_line(),
+                                                            focused_left,
+                                                        );
+                                                        scroll_lock = true;
+                                                    }
+                                                } else {
+                                                    viewport.flash("scroll-lock needs a split", 40);
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -2057,8 +2101,22 @@ pub fn run(
                         }
                     }
                     Command::ToggleScrollLock => {
-                        // Wiring deferred to the sync-scroll task that adds
-                        // scroll-lock state to the split pane machinery.
+                        if let Some(other) = other_pane.as_ref() {
+                            if scroll_lock {
+                                scroll_lock = false;
+                            } else {
+                                lock_offset = crate::pane::capture_lock_offset(
+                                    viewport.top_line(),
+                                    other.viewport.top_line(),
+                                    focused_left,
+                                );
+                                scroll_lock = true;
+                            }
+                            needs_redraw = true;
+                        } else {
+                            viewport.flash("scroll-lock needs a split", 40);
+                            needs_redraw = true;
+                        }
                     }
                     Command::Refresh => {
                         needs_redraw = true;
@@ -3260,6 +3318,11 @@ mod tests {
         assert_eq!(parse_colon_command("split a.log").unwrap(), ColonCommand::VSplit(Some("a.log".into())));
         assert_eq!(parse_colon_command("only").unwrap(), ColonCommand::Only);
         assert_eq!(parse_colon_command("close").unwrap(), ColonCommand::Only);
+    }
+
+    #[test]
+    fn parse_colon_scrolllock() {
+        assert_eq!(parse_colon_command("scrolllock").unwrap(), ColonCommand::ScrollLock);
     }
 
     #[test]
