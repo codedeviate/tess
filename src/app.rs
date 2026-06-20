@@ -614,10 +614,11 @@ fn switch_file(
     Ok(())
 }
 
-/// Copy the current top logical line's raw bytes (trailing newline already
-/// stripped by `LineIndex::line_range`) to the system clipboard. Returns a
-/// human-facing status string for the caller to flash. When `--clipboard`
-/// wasn't passed, reports that and copies nothing.
+/// Copy the current top logical line to the system clipboard, decoded as UTF-8
+/// via the viewport's active encoding so Latin-1 (and other charsets) are
+/// correctly represented in the clipboard. Returns a human-facing status string
+/// for the caller to flash. When `--clipboard` wasn't passed, reports that and
+/// copies nothing.
 fn yank_current_line(
     clipboard_enabled: bool,
     viewport: &crate::viewport::Viewport,
@@ -631,9 +632,14 @@ fn yank_current_line(
         return "[nothing to copy]".to_string();
     }
     let line = viewport.top_line();
-    let bytes = current_line_bytes(idx, src, line);
-    match crate::clipboard::write(&bytes) {
-        Ok(()) => format!("[copied {} bytes]", bytes.len()),
+    let enc = viewport.encoding();
+    let raw = current_line_bytes(idx, src, line);
+    // Decode from the source encoding into UTF-8 so the clipboard receives
+    // proper Unicode text regardless of the file's charset.
+    let decoded = crate::charset::decode_line(&raw, enc);
+    let utf8_bytes = decoded.as_bytes().to_vec();
+    match crate::clipboard::write(&utf8_bytes) {
+        Ok(()) => format!("[copied {} bytes]", utf8_bytes.len()),
         Err(e) => format!("[{e}]"),
     }
 }

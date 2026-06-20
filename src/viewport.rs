@@ -754,6 +754,9 @@ impl Viewport {
 
     pub fn set_encoding(&mut self, enc: crate::charset::Encoding) { self.opts.encoding = enc; }
 
+    /// Return the active charset encoding (for callers that need to decode line bytes).
+    pub fn encoding(&self) -> crate::charset::Encoding { self.opts.encoding }
+
     /// Return the WHATWG name of the active encoding (e.g. `"UTF-8"`, `"windows-1252"`).
     pub fn encoding_label(&self) -> &'static str { self.opts.encoding.label() }
 
@@ -1488,6 +1491,9 @@ impl Viewport {
                 highlights.push(row_highlights);
                 if raw_passthrough {
                     if first_emitted_for_this_line {
+                        // charset does not apply: raw passthrough emits the
+                        // original source bytes verbatim so the terminal's own
+                        // decoder handles them — intentional bypass of encoding.
                         // Emit the original line bytes verbatim once. Sub-rows
                         // (mid-line wrap continuations) are no-ops — the
                         // terminal will have already consumed enough columns
@@ -1787,6 +1793,8 @@ impl Viewport {
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
 
+        // charset does not apply: hex shows raw source bytes as hex digits —
+        // encoding is meaningless here; the formatter works on byte values directly.
         let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None, encoding: crate::charset::Encoding::utf8() };
 
         for row_idx in 0..body_rows {

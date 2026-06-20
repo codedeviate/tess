@@ -722,6 +722,16 @@ documents can't be parsed)".to_string(),
         }
     }};
 
+    // Resolve --encoding early: needed by the prettify transform and by batch/
+    // interactive paths alike. Peek the first bytes for BOM detection.
+    // Error before entering raw mode so diagnostics print cleanly.
+    let resolved_enc = {
+        let head_len = src.len().min(4);
+        let head = src.bytes(0..head_len);
+        tess::open::resolve_encoding(&args.encoding, &head)
+            .map_err(Error::Runtime)?
+    };
+
     // If the user wants prettification, resolve the mode against the inner
     // source's first bytes + the path (if any) and wrap the source. Failure
     // to detect under `--prettify` (no --content-type given) is a soft fall:
@@ -734,7 +744,7 @@ documents can't be parsed)".to_string(),
             ResolvedType::Mode(PrettifyMode::Off) => (src, None),
             ResolvedType::Mode(mode) => {
                 let label = mode.label().to_string();
-                let wrapped = TransformingSource::wrap(src, mode);
+                let wrapped = TransformingSource::wrap(src, mode, resolved_enc);
                 if let Some(err) = wrapped.last_error() {
                     eprintln!("tess: prettify ({label}) failed: {err} \u{2014} showing raw");
                     (Box::new(wrapped), Some(format!("{label}:err")))
@@ -879,15 +889,6 @@ showing raw (use --content-type=NAME to override)"
             None => tess::or::OrGroups::compile(&or_spec, None, case_mode)
                 .map_err(Error::Runtime)?,
         }
-    };
-
-    // Resolve --encoding: peek the first bytes for BOM detection, then pick
-    // the effective encoding. Error early (before terminal init) on an unknown label.
-    let resolved_enc = {
-        let head_len = src.len().min(4);
-        let head = src.bytes(0..head_len);
-        tess::open::resolve_encoding(&args.encoding, &head)
-            .map_err(Error::Runtime)?
     };
 
     let sigterm = install_signal_flag();

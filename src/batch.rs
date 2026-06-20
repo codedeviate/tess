@@ -249,10 +249,15 @@ fn emit_line(
     let bytes = src.bytes(range);
     match display.and_then(|r| r.render_line(&bytes, enc)) {
         Some(rendered) => {
+            // DisplayRenderer already returns a UTF-8 String.
             out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }
         None => {
-            out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+            // Decode from the source charset to UTF-8 so the export (file,
+            // stdout, clipboard) receives correct Unicode text regardless of
+            // whether the input was Latin-1, Windows-1252, etc.
+            let decoded = crate::charset::decode_line(&bytes, enc);
+            out.write_all(decoded.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }
     }
     out.write_all(b"\n").map_err(|e| Error::Runtime(format!("write: {e}")))?;
@@ -541,5 +546,38 @@ mod tests {
         let mut buf = Vec::new();
         std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
         assert_eq!(buf, b"login failed\naccess denied\n");
+    }
+
+    #[test]
+    fn emit_line_decodes_latin1_to_utf8() {
+        // A Latin-1 encoded line "café résumé" where é = 0xE9.
+        // When emitted with iso-8859-1 encoding the output must be decoded UTF-8.
+        let m = MockSource::new();
+        m.append(b"caf\xe9 r\xe9sum\xe9\n");
+        m.finish();
+
+        let enc = crate::charset::parse_label("iso-8859-1").unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        run(
+            Box::new(m),
+            LineIndex::new(),
+            None,
+            None,
+            OrGroups::default(),
+            None,
+            BatchSpec {
+                destination: BatchDestination::File(path.clone()),
+                follow: false,
+                poll_interval: Duration::from_millis(50),
+            },
+            Arc::new(AtomicBool::new(false)),
+            enc,
+        ).unwrap();
+        let mut buf = Vec::new();
+        std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
+        // Output must be valid UTF-8 containing the decoded text.
+        let s = std::str::from_utf8(&buf).expect("output should be valid UTF-8");
+        assert!(s.contains("café résumé"), "expected decoded text, got: {s:?}");
     }
 }

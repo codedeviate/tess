@@ -434,6 +434,8 @@ pub struct TransformingSource {
     inner: Box<dyn Source>,
     state: Mutex<TransformState>,
     revision: AtomicU64,
+    /// Encoding used to decode bytes to text for the prettify transform.
+    enc: crate::charset::Encoding,
 }
 
 struct TransformState {
@@ -460,14 +462,16 @@ impl TransformingSource {
     /// Build a wrapping source. The inner is read fully via its current bytes
     /// view; the transform runs once. If the transform fails, the cache holds
     /// the raw inner bytes and `last_error()` returns the parse error.
-    pub fn wrap(inner: Box<dyn Source>, mode: PrettifyMode) -> Self {
+    /// `enc` is used to decode bytes to text for the prettify transform.
+    pub fn wrap(inner: Box<dyn Source>, mode: PrettifyMode, enc: crate::charset::Encoding) -> Self {
         let raw = inner.bytes(0..inner.len()).to_vec();
-        let (cached, last_error) = run_transform(mode, &raw);
+        let (cached, last_error) = run_transform(mode, &raw, enc);
         let last_active = if mode.is_active() { mode } else { PrettifyMode::Off };
         Self {
             inner,
             state: Mutex::new(TransformState { mode, last_active, cached, last_error }),
             revision: AtomicU64::new(0),
+            enc,
         }
     }
 
@@ -486,7 +490,7 @@ impl TransformingSource {
     /// can flip back to a non-Off mode.
     fn apply_mode(&self, mode: PrettifyMode) {
         let raw = self.inner.bytes(0..self.inner.len()).to_vec();
-        let (cached, last_error) = run_transform(mode, &raw);
+        let (cached, last_error) = run_transform(mode, &raw, self.enc);
         let mut s = self.state.lock().unwrap();
         s.mode = mode;
         if mode.is_active() && last_error.is_none() {
@@ -499,8 +503,8 @@ impl TransformingSource {
     }
 }
 
-fn run_transform(mode: PrettifyMode, raw: &[u8]) -> (Vec<u8>, Option<String>) {
-    match prettify::prettify(mode, raw) {
+fn run_transform(mode: PrettifyMode, raw: &[u8], enc: crate::charset::Encoding) -> (Vec<u8>, Option<String>) {
+    match prettify::prettify(mode, raw, enc) {
         Ok(out) => (out, None),
         Err(e) => (raw.to_vec(), Some(e)),
     }
@@ -888,11 +892,13 @@ mod tests {
         assert_eq!(&*src.bytes(idx.line_range(2, &src)), b"three");
     }
 
+    fn utf8() -> crate::charset::Encoding { crate::charset::Encoding::utf8() }
+
     #[test]
     fn transforming_source_passes_through_when_off() {
         let inner = MockSource::new();
         inner.append(b"hello\nworld\n");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off, utf8());
         assert_eq!(&*t.bytes(0..t.len()), b"hello\nworld\n");
         assert!(t.last_error().is_none());
         assert_eq!(t.revision(), 0);
@@ -902,7 +908,7 @@ mod tests {
     fn transforming_source_emits_pretty_bytes_when_on() {
         let inner = MockSource::new();
         inner.append(b"{\"a\":1,\"b\":2}");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json, utf8());
         let out = t.bytes(0..t.len()).to_vec();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("\"a\": 1"));
@@ -914,7 +920,7 @@ mod tests {
     fn transforming_source_revision_bumps_on_mode_change() {
         let inner = MockSource::new();
         inner.append(b"{\"x\":1}");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off, utf8());
         let r0 = t.revision();
         t.set_prettify_mode(PrettifyMode::Json);
         assert!(t.revision() > r0);
@@ -927,7 +933,7 @@ mod tests {
     fn transforming_source_falls_back_to_raw_on_parse_error() {
         let inner = MockSource::new();
         inner.append(b"not actually json");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json, utf8());
         // Cache holds raw bytes since the transform failed.
         assert_eq!(&*t.bytes(0..t.len()), b"not actually json");
         let err = t.last_error().expect("expected parse error to be surfaced");
@@ -941,7 +947,7 @@ mod tests {
     fn transforming_source_set_mode_recovers_from_error() {
         let inner = MockSource::new();
         inner.append(b"plain content");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json, utf8());
         assert!(t.last_error().is_some());
         t.set_prettify_mode(PrettifyMode::Off);
         assert!(t.last_error().is_none());
@@ -952,7 +958,7 @@ mod tests {
     fn transforming_source_toggle_flips_between_active_and_off() {
         let inner = MockSource::new();
         inner.append(b"{\"x\":1}");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Json, utf8());
         assert_eq!(t.mode(), PrettifyMode::Json);
         t.toggle_prettify();
         assert_eq!(t.mode(), PrettifyMode::Off);
@@ -965,7 +971,7 @@ mod tests {
     fn transforming_source_redetect_picks_up_format() {
         let inner = MockSource::new();
         inner.append(b"<?xml version=\"1.0\"?><root/>");
-        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off);
+        let t = TransformingSource::wrap(Box::new(inner), PrettifyMode::Off, utf8());
         // Initially raw; after redetect, should be XML.
         t.redetect_prettify();
         assert_eq!(t.mode(), PrettifyMode::Xml);
