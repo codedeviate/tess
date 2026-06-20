@@ -61,6 +61,11 @@ worth eating.
 
 ### Horizontal split & synchronized/diff split — **L**
 
+> **Next up — synchronized scrolling + diff alignment prioritized for the
+> upcoming cycle.** Gets its own brainstorm → spec → plan cycle. The other
+> sub-items below (horizontal/N>2 panes, per-pane predicates, per-pane protocol
+> images) stay deferred.
+
 Vertical 2-pane split shipped in `0.41.0` (`--split`, `:vsplit` / `:split` /
 `:only`). What remains deferred from that feature's v1:
 
