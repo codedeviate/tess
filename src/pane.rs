@@ -36,6 +36,40 @@ pub fn split_widths(cols: u16) -> (u16, u16) {
     (left as u16, (usable - left) as u16)
 }
 
+/// Capture the fixed scroll-lock offset in stable physical terms:
+/// `right_top - left_top`. Independent of which pane is focused, so a `Tab`
+/// focus-swap never disturbs it. Returned as `isize` (the right pane may sit
+/// above the left).
+pub fn capture_lock_offset(focused_top: usize, partner_top: usize, focused_left: bool) -> isize {
+    let (left, right) = if focused_left {
+        (focused_top, partner_top)
+    } else {
+        (partner_top, focused_top)
+    };
+    right as isize - left as isize
+}
+
+/// Re-derive the non-focused pane's top line from the focused pane's current
+/// top line and the fixed `offset` (`right_top - left_top`), clamped to
+/// `0..=partner_max`. Always recomputed from the offset (never accumulated),
+/// so an EOF/top clamp holds without drift and the alignment restores once it
+/// fits again.
+pub fn locked_partner_top(
+    focused_top: usize,
+    offset: isize,
+    focused_left: bool,
+    partner_max: usize,
+) -> usize {
+    let raw = if focused_left {
+        // Focused is physical left; partner is right = left + offset.
+        focused_top as isize + offset
+    } else {
+        // Focused is physical right; partner is left = right - offset.
+        focused_top as isize - offset
+    };
+    raw.clamp(0, partner_max as isize) as usize
+}
+
 fn divider_cell() -> Cell {
     Cell::Char {
         ch: '\u{2502}', // │
@@ -233,5 +267,40 @@ mod tests {
         let div_pos = m.status.find('\u{2502}').expect("divider in status");
         // 4 display columns before the divider (all ASCII here → 4 bytes).
         assert_eq!(div_pos, 4, "left status occupies exactly left_w columns before divider");
+    }
+
+    #[test]
+    fn capture_lock_offset_is_right_minus_left_either_focus() {
+        // Physical: left_top = 100, right_top = 340 → offset 240, regardless
+        // of which side is focused.
+        assert_eq!(super::capture_lock_offset(100, 340, true), 240);  // focused = left
+        assert_eq!(super::capture_lock_offset(340, 100, false), 240); // focused = right
+    }
+
+    #[test]
+    fn locked_partner_top_applies_offset_per_focus_side() {
+        let offset = 240; // right - left
+        assert_eq!(super::locked_partner_top(105, offset, true, 100_000), 345);
+        assert_eq!(super::locked_partner_top(345, offset, false, 100_000), 105);
+    }
+
+    #[test]
+    fn locked_partner_top_clamps_low_and_high() {
+        assert_eq!(super::locked_partner_top(10, 240, false, 100_000), 0);
+        assert_eq!(super::locked_partner_top(5_000, 240, true, 5_100), 5_100);
+    }
+
+    #[test]
+    fn locked_partner_top_restores_after_clamp() {
+        let offset = 240;
+        assert_eq!(super::locked_partner_top(10, offset, false, 100_000), 0);
+        assert_eq!(super::locked_partner_top(300, offset, false, 100_000), 60);
+    }
+
+    #[test]
+    fn locked_partner_top_is_tab_invariant() {
+        let offset = 240;
+        assert_eq!(super::locked_partner_top(100, offset, true, 100_000), 340);
+        assert_eq!(super::locked_partner_top(340, offset, false, 100_000), 100);
     }
 }
