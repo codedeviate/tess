@@ -1222,7 +1222,7 @@ showing raw (use --content-type=NAME to override)"
     // file-backed launch (not stdin/clipboard): the second file is `files[1]`
     // if present, otherwise a second view of `files[0]`. `other_pane_init`
     // inside `app::run` resizes both panes, so `cols`/`rows` are provisional.
-    let second_pane: Option<tess::pane::Pane> = if args.split {
+    let second_pane: Option<tess::pane::Pane> = if args.split || args.diff {
         let second_path = args.files.get(1).or_else(|| args.files.first()).cloned();
         match second_path {
             Some(p) => match build_second_pane(

@@ -1104,6 +1104,144 @@ fn build_runtime_pane(
     })
 }
 
+// ── Diff mode ────────────────────────────────────────────────────────────────
+
+/// Snapshot of the aligned diff computed from the two split panes.
+struct DiffState {
+    pairs: Vec<crate::diff::DiffPair>,
+    /// Scroll position: (pair_index, sub_row within that pair).
+    pos: (usize, usize),
+    ignore_ws: bool,
+    hunk_total: usize,
+}
+
+const DIFF_MAX_LINES: usize = 500_000;
+
+fn build_diff(
+    src: &dyn crate::source::Source,
+    idx: &mut crate::line_index::LineIndex,
+    osrc: &dyn crate::source::Source,
+    oidx: &mut crate::line_index::LineIndex,
+    ignore_ws: bool,
+    force: bool,
+) -> std::result::Result<Vec<crate::diff::DiffPair>, String> {
+    idx.extend_to_line(usize::MAX, src);
+    oidx.extend_to_line(usize::MAX, osrc);
+    let (ln, rn) = (idx.line_count(), oidx.line_count());
+    if !force && (ln > DIFF_MAX_LINES || rn > DIFF_MAX_LINES) {
+        return Err(format!(
+            "diff: files too large (>{}k lines); showing plain split",
+            DIFF_MAX_LINES / 1000
+        ));
+    }
+    let lk: Vec<u64> = (0..ln)
+        .map(|n| crate::diff::line_key(&src.bytes(idx.line_range(n, src)), ignore_ws))
+        .collect();
+    let rk: Vec<u64> = (0..rn)
+        .map(|n| crate::diff::line_key(&osrc.bytes(oidx.line_range(n, osrc)), ignore_ws))
+        .collect();
+    Ok(crate::diff::align(&lk, &rk))
+}
+
+/// Returns the 1-based hunk index of the hunk containing/just-before `d.pos.0`,
+/// or 0 if `pos` is before the first hunk.
+fn current_hunk(d: &DiffState) -> usize {
+    let hs = crate::diff::hunks(&d.pairs);
+    // Find the last hunk whose start <= pos.0
+    hs.iter()
+        .enumerate()
+        .rev()
+        .find(|(_, h)| h.start <= d.pos.0)
+        .map(|(i, _)| i + 1)
+        .unwrap_or(0)
+}
+
+/// Build a `RenderOpts` for diff rendering: wrap=true, encoding from the
+/// focused viewport, tab_width from the viewport's opts, ANSI interpret.
+fn diff_pane_opts(viewport: &crate::viewport::Viewport, cols: u16) -> crate::render::RenderOpts {
+    crate::render::RenderOpts {
+        cols,
+        wrap: true,
+        tab_width: 8,
+        mode: crate::render::AnsiMode::Interpret,
+        encoding: viewport.encoding(),
+        ..Default::default()
+    }
+}
+
+/// Walk `d.pos` by `delta` screen rows (positive = down, negative = up),
+/// clamping at both ends. Uses `pair_height` to compute how many rows each
+/// pair occupies.
+#[allow(clippy::too_many_arguments)]
+fn diff_scroll(
+    d: &mut DiffState,
+    delta: isize,
+    lsrc: &dyn crate::source::Source,
+    lidx: &mut crate::line_index::LineIndex,
+    rsrc: &dyn crate::source::Source,
+    ridx: &mut crate::line_index::LineIndex,
+    lopts: &crate::render::RenderOpts,
+    ropts: &crate::render::RenderOpts,
+) {
+    if d.pairs.is_empty() {
+        return;
+    }
+    if delta == 0 {
+        return;
+    }
+    if delta > 0 {
+        let mut rem = delta as usize;
+        loop {
+            if d.pos.0 >= d.pairs.len() {
+                // Past the end — clamp
+                d.pos.0 = d.pairs.len() - 1;
+                let h = crate::diff_view::pair_height(
+                    &d.pairs[d.pos.0], lsrc, lidx, rsrc, ridx, lopts, ropts,
+                );
+                d.pos.1 = h.saturating_sub(1);
+                break;
+            }
+            let h = crate::diff_view::pair_height(
+                &d.pairs[d.pos.0], lsrc, lidx, rsrc, ridx, lopts, ropts,
+            );
+            let rows_left_in_pair = h.saturating_sub(d.pos.1);
+            if rem < rows_left_in_pair {
+                d.pos.1 += rem;
+                break;
+            }
+            rem -= rows_left_in_pair;
+            d.pos.0 += 1;
+            d.pos.1 = 0;
+            if d.pos.0 >= d.pairs.len() {
+                d.pos.0 = d.pairs.len() - 1;
+                let h2 = crate::diff_view::pair_height(
+                    &d.pairs[d.pos.0], lsrc, lidx, rsrc, ridx, lopts, ropts,
+                );
+                d.pos.1 = h2.saturating_sub(1);
+                break;
+            }
+        }
+    } else {
+        let mut rem = (-delta) as usize;
+        loop {
+            if rem <= d.pos.1 {
+                d.pos.1 -= rem;
+                break;
+            }
+            rem -= d.pos.1 + 1;
+            if d.pos.0 == 0 {
+                d.pos = (0, 0);
+                break;
+            }
+            d.pos.0 -= 1;
+            let h = crate::diff_view::pair_height(
+                &d.pairs[d.pos.0], lsrc, lidx, rsrc, ridx, lopts, ropts,
+            );
+            d.pos.1 = h.saturating_sub(1);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, clippy::collapsible_match)]
 pub fn run(
     mut src: Box<dyn Source>,
@@ -1143,6 +1281,30 @@ pub fn run(
     let mut focused_left = true;
     let mut scroll_lock = false;
     let mut lock_offset: isize = 0;
+
+    // Diff mode: Some when aligned diff is active.
+    let mut diff: Option<DiffState> = None;
+
+    // Startup --diff: build initial diff state if a second pane is available.
+    if args.diff {
+        if let Some(other) = other_pane.as_mut() {
+            let ignore_ws = args.diff_ignore_whitespace;
+            match build_diff(
+                src.as_ref(), &mut idx,
+                other.src.as_ref(), &mut other.idx,
+                ignore_ws, args.diff_force,
+            ) {
+                Ok(pairs) => {
+                    let hunk_total = crate::diff::hunks(&pairs).len();
+                    diff = Some(DiffState { pairs, pos: (0, 0), ignore_ws, hunk_total });
+                }
+                Err(msg) => {
+                    viewport.flash(msg, 60);
+                }
+            }
+        }
+        // If no other_pane: leave diff=None, user will see plain view.
+    }
 
     if args.scroll_lock {
         if let Some(other) = other_pane.as_ref() {
@@ -1246,7 +1408,27 @@ pub fn run(
                 viewport.set_status_marks(status_marks);
             }
             viewport.set_scroll_lock(scroll_lock);
-            let mut frame = if let Some(other) = other_pane.as_mut() {
+            let mut frame = if diff.is_some() && other_pane.is_some() {
+                // Safety: both are Some — borrow them separately to avoid split-borrow issues.
+                let d = diff.as_ref().unwrap();
+                let other = other_pane.as_mut().unwrap();
+                let (lw, _rw) = crate::pane::split_widths(cols);
+                let pane_opts = diff_pane_opts(&viewport, lw);
+                let body_rows = (rows - 1) as usize;
+                let mut f = crate::diff_view::compose_diff(
+                    &d.pairs,
+                    src.as_ref(), &mut idx,
+                    other.src.as_ref(), &mut other.idx,
+                    d.pos, cols, lw, body_rows, &pane_opts, focused_left,
+                );
+                let cur = current_hunk(d);
+                f.status = format!(
+                    "[diff {}/{}]{}",
+                    cur, d.hunk_total,
+                    if d.ignore_ws { " [ws]" } else { "" }
+                );
+                f
+            } else if let Some(other) = other_pane.as_mut() {
                 if scroll_lock {
                     let focused_top = viewport.top_line();
                     let partner_max = other.idx.line_count().saturating_sub(1);
@@ -1574,7 +1756,12 @@ pub fn run(
                     InputMode::BracketClosePending => {
                         // `]c` → DiffNextChange; any other key cancels.
                         if matches!(event, Event::Key(KeyEvent { code: KeyCode::Char('c'), .. })) {
-                            // wired in the diff task
+                            if let Some(d) = diff.as_mut() {
+                                match crate::diff::next_hunk(&d.pairs, d.pos.0) {
+                                    Some(t) => { d.pos = (t, 0); }
+                                    None => { viewport.flash("no more changes", 30); }
+                                }
+                            }
                         }
                         mode = InputMode::Normal;
                         needs_redraw = true;
@@ -1583,7 +1770,12 @@ pub fn run(
                     InputMode::BracketOpenPending => {
                         // `[c` → DiffPrevChange; any other key cancels.
                         if matches!(event, Event::Key(KeyEvent { code: KeyCode::Char('c'), .. })) {
-                            // wired in the diff task
+                            if let Some(d) = diff.as_mut() {
+                                match crate::diff::prev_hunk(&d.pairs, d.pos.0) {
+                                    Some(t) => { d.pos = (t, 0); }
+                                    None => { viewport.flash("no more changes", 30); }
+                                }
+                            }
                         }
                         mode = InputMode::Normal;
                         needs_redraw = true;
@@ -1640,6 +1832,7 @@ pub fn run(
                                             Ok(ColonCommand::Only) => {
                                                 if other_pane.take().is_some() {
                                                     scroll_lock = false;
+                                                    diff = None;
                                                     viewport.resize(cols, rows);
                                                     #[cfg(feature = "image")]
                                                     {
@@ -1687,6 +1880,56 @@ pub fn run(
                                                         format!("encoding: {}", viewport.encoding_label()),
                                                         40,
                                                     ),
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Diff { force }) => {
+                                                if let Some(other) = other_pane.as_mut() {
+                                                    let ignore_ws = diff.as_ref()
+                                                        .map(|d| d.ignore_ws)
+                                                        .unwrap_or(args.diff_ignore_whitespace);
+                                                    match build_diff(
+                                                        src.as_ref(), &mut idx,
+                                                        other.src.as_ref(), &mut other.idx,
+                                                        ignore_ws, force,
+                                                    ) {
+                                                        Ok(pairs) => {
+                                                            let hunk_total = crate::diff::hunks(&pairs).len();
+                                                            diff = Some(DiffState { pairs, pos: (0, 0), ignore_ws, hunk_total });
+                                                        }
+                                                        Err(msg) => {
+                                                            viewport.flash(msg, 60);
+                                                        }
+                                                    }
+                                                } else {
+                                                    viewport.flash("diff needs a split of two files", 40);
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::NoDiff) => {
+                                                diff = None;
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::DiffToggleWs) => {
+                                                if let Some(d) = diff.as_ref() {
+                                                    let new_ws = !d.ignore_ws;
+                                                    if let Some(other) = other_pane.as_mut() {
+                                                        match build_diff(
+                                                            src.as_ref(), &mut idx,
+                                                            other.src.as_ref(), &mut other.idx,
+                                                            new_ws, true,
+                                                        ) {
+                                                            Ok(pairs) => {
+                                                                let hunk_total = crate::diff::hunks(&pairs).len();
+                                                                diff = Some(DiffState { pairs, pos: (0, 0), ignore_ws: new_ws, hunk_total });
+                                                            }
+                                                            Err(msg) => {
+                                                                viewport.flash(msg, 60);
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    viewport.flash("diff: not in diff mode", 40);
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -2075,29 +2318,60 @@ pub fn run(
                         continue;
                     }
                     Command::GotoLine => {
-                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
-                        match prefix_at_cmd {
-                            Some(line) if line > 0 => {
-                                viewport.goto_line(line - 1, src.as_ref(), &mut idx);
-                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if let Some(d) = diff.as_mut() {
+                            // G/gg: go to top (gg) or bottom
+                            match prefix_at_cmd {
+                                Some(_) => {
+                                    // numbered goto: go to top as approximation in diff mode
+                                    d.pos = (0, 0);
+                                }
+                                None => {
+                                    d.pos = (0, 0);
+                                }
                             }
-                            _ => {
-                                viewport.goto_top();
-                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            needs_redraw = true;
+                        } else {
+                            update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
+                            match prefix_at_cmd {
+                                Some(line) if line > 0 => {
+                                    viewport.goto_line(line - 1, src.as_ref(), &mut idx);
+                                    viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                                }
+                                _ => {
+                                    viewport.goto_top();
+                                    viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                                }
                             }
+                            needs_redraw = true;
                         }
-                        needs_redraw = true;
                     }
                     Command::GotoRecord => {
-                        update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
-                        match prefix_at_cmd {
-                            Some(rec) if rec > 0 => {
-                                viewport.goto_record(rec - 1, src.as_ref(), &mut idx);
-                                viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                        if let Some(d) = diff.as_mut() {
+                            // G: go to last pair
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                let last = d.pairs.len().saturating_sub(1);
+                                d.pos.0 = last;
+                                let h = crate::diff_view::pair_height(
+                                    &d.pairs[last], src.as_ref(), &mut idx,
+                                    other.src.as_ref(), &mut other.idx, &lopts, &ropts,
+                                );
+                                d.pos.1 = h.saturating_sub(1);
                             }
-                            _ => viewport.goto_bottom(src.as_ref(), &mut idx),
+                            needs_redraw = true;
+                        } else {
+                            update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
+                            match prefix_at_cmd {
+                                Some(rec) if rec > 0 => {
+                                    viewport.goto_record(rec - 1, src.as_ref(), &mut idx);
+                                    viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                                }
+                                _ => viewport.goto_bottom(src.as_ref(), &mut idx),
+                            }
+                            needs_redraw = true;
                         }
-                        needs_redraw = true;
                     }
                     Command::GotoPercent => {
                         update_prev_position(&mut previous_position, current_file_index, viewport.top_line());
@@ -2119,39 +2393,97 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::ScrollLines(n) => {
-                        viewport.scroll_lines(n, src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                diff_scroll(d, n as isize, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.scroll_lines(n, src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
+                        }
                         needs_redraw = true;
                     }
                     Command::ScrollLogicalLines(n) => {
-                        viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                diff_scroll(d, n as isize, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.scroll_logical_lines(n, src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            if viewport.note_motion_for_eof(n > 0, src.as_ref(), &idx) { break; }
+                        }
                         needs_redraw = true;
                     }
                     Command::PageDown => {
-                        viewport.page_down(src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                let body = (rows - 1) as isize;
+                                diff_scroll(d, body, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.page_down(src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
+                        }
                         needs_redraw = true;
                     }
                     Command::PageUp => {
-                        viewport.page_up(src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        viewport.note_motion_for_eof(false, src.as_ref(), &idx);
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                let body = (rows - 1) as isize;
+                                diff_scroll(d, -body, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.page_up(src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            viewport.note_motion_for_eof(false, src.as_ref(), &idx);
+                        }
                         needs_redraw = true;
                     }
                     Command::HalfPageDown => {
-                        viewport.half_page_down(src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                let half = ((rows - 1) / 2) as isize;
+                                diff_scroll(d, half, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.half_page_down(src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            if viewport.note_motion_for_eof(true, src.as_ref(), &idx) { break; }
+                        }
                         needs_redraw = true;
                     }
                     Command::HalfPageUp => {
-                        viewport.half_page_up(src.as_ref(), &mut idx);
-                        viewport.suspend_follow_if(args.follow_suspend_on_motion);
-                        viewport.note_motion_for_eof(false, src.as_ref(), &idx);
+                        if let Some(d) = diff.as_mut() {
+                            if let Some(other) = other_pane.as_mut() {
+                                let (lw, rw) = crate::pane::split_widths(cols);
+                                let lopts = diff_pane_opts(&viewport, lw);
+                                let ropts = diff_pane_opts(&viewport, rw);
+                                let half = ((rows - 1) / 2) as isize;
+                                diff_scroll(d, -half, src.as_ref(), &mut idx, other.src.as_ref(), &mut other.idx, &lopts, &ropts);
+                            }
+                        } else {
+                            viewport.half_page_up(src.as_ref(), &mut idx);
+                            viewport.suspend_follow_if(args.follow_suspend_on_motion);
+                            viewport.note_motion_for_eof(false, src.as_ref(), &idx);
+                        }
                         needs_redraw = true;
                     }
                     Command::FocusOtherPane => {
@@ -2312,8 +2644,21 @@ pub fn run(
                     Command::BracketOpenPrefix => {
                         mode = InputMode::BracketOpenPending;
                     }
-                    Command::DiffNextChange | Command::DiffPrevChange => {
-                        // wired in the diff task
+                    Command::DiffNextChange => {
+                        if let Some(d) = diff.as_mut() {
+                            match crate::diff::next_hunk(&d.pairs, d.pos.0) {
+                                Some(t) => { d.pos = (t, 0); needs_redraw = true; }
+                                None => { viewport.flash("no more changes", 30); needs_redraw = true; }
+                            }
+                        }
+                    }
+                    Command::DiffPrevChange => {
+                        if let Some(d) = diff.as_mut() {
+                            match crate::diff::prev_hunk(&d.pairs, d.pos.0) {
+                                Some(t) => { d.pos = (t, 0); needs_redraw = true; }
+                                None => { viewport.flash("no more changes", 30); needs_redraw = true; }
+                            }
+                        }
                     }
                     Command::TagPrompt => {
                         if tag_file.is_none() {
@@ -2464,7 +2809,12 @@ pub fn run(
                     if other.viewport.tick(odt) { needs_redraw = true; }
                 }
                 // Timeout — check whether the source has grown or been rewritten.
-                if viewport.live_mode() {
+                // While diff mode is active, skip follow/live pumping: diff shows a
+                // snapshot of both files; live-reloading underneath it would cause
+                // the index to grow while the diff alignment is stale.
+                if diff.is_some() {
+                    // No-op: diff is a snapshot; let the user `:diff` to rebuild.
+                } else if viewport.live_mode() {
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     src.pump();
                     if src.revision() != last_revision {
