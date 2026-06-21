@@ -2635,6 +2635,9 @@ pub fn run(
                             needs_redraw = true;
                         }
                     }
+                    Command::FocusPrevPane => {
+                        // wired in the N-pane refactor task
+                    }
                     Command::ToggleScrollLock => {
                         if let Some(other) = other_pane.as_ref() {
                             if scroll_lock {

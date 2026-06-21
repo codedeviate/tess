@@ -113,6 +113,8 @@ pub enum Command {
     MouseEvent(crossterm::event::MouseEvent),
     /// `Tab` — in split view, swap which pane is focused. No-op single-pane.
     FocusOtherPane,
+    /// `BackTab` (Shift-Tab) — in split view, cycle focus backward. No-op single-pane.
+    FocusPrevPane,
     /// `=` — in split view, toggle synchronized scrolling between panes.
     /// No-op in single-pane mode. Remappable via `scroll-lock-toggle` in keys.toml.
     ToggleScrollLock,
@@ -194,6 +196,7 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Char(','), false) => Command::AnimStepBack,
         (Backspace, _) => Command::AnimRestart,
         (Tab, _) => Command::FocusOtherPane,
+        (BackTab, _) => Command::FocusPrevPane,
         (Char('='), false) => Command::ToggleScrollLock,
         (Char(']'), false) => Command::BracketClosePrefix,
         (Char('['), false) => Command::BracketOpenPrefix,
@@ -394,6 +397,11 @@ mod tests {
     #[test]
     fn tab_is_focus_other_pane() {
         assert_eq!(translate(key(KeyCode::Tab, KeyModifiers::NONE)), Command::FocusOtherPane);
+    }
+
+    #[test]
+    fn backtab_focuses_prev_pane() {
+        assert_eq!(translate(key(KeyCode::BackTab, KeyModifiers::SHIFT)), Command::FocusPrevPane);
     }
 
     #[test]
