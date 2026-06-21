@@ -90,6 +90,79 @@ pub fn line_key(bytes: &[u8], ignore_ws: bool) -> u64 {
     h.finish()
 }
 
+use std::ops::Range;
+
+/// Intra-line diff: byte ranges that differ between two changed lines, one list
+/// per side. Decodes each side via the active charset, diffs over chars (so
+/// multi-byte sequences aren't split mid-codepoint), and reports byte ranges
+/// INTO THE DECODED string (the renderer maps those to columns over the same
+/// decoded text). Empty when identical or when a side has no differing chars.
+pub fn char_spans(
+    left: &[u8],
+    right: &[u8],
+    enc: crate::charset::Encoding,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    use similar::{capture_diff_slices, Algorithm, DiffOp};
+    let ldec = crate::charset::decode_line(left, enc);
+    let rdec = crate::charset::decode_line(right, enc);
+    let ls: Vec<char> = ldec.chars().collect();
+    let rs: Vec<char> = rdec.chars().collect();
+    let lb = char_byte_offsets(&ls);
+    let rb = char_byte_offsets(&rs);
+
+    let mut lspans = Vec::new();
+    let mut rspans = Vec::new();
+    for op in capture_diff_slices(Algorithm::Myers, &ls, &rs) {
+        match op {
+            DiffOp::Equal { .. } => {}
+            DiffOp::Delete { old_index, old_len, .. } => {
+                lspans.push(lb[old_index]..lb[old_index + old_len]);
+            }
+            DiffOp::Insert { new_index, new_len, .. } => {
+                rspans.push(rb[new_index]..rb[new_index + new_len]);
+            }
+            DiffOp::Replace { old_index, old_len, new_index, new_len } => {
+                lspans.push(lb[old_index]..lb[old_index + old_len]);
+                rspans.push(rb[new_index]..rb[new_index + new_len]);
+            }
+        }
+    }
+    (lspans, rspans)
+}
+
+fn char_byte_offsets(chars: &[char]) -> Vec<usize> {
+    let mut offs = Vec::with_capacity(chars.len() + 1);
+    let mut b = 0usize;
+    for &c in chars { offs.push(b); b += c.len_utf8(); }
+    offs.push(b);
+    offs
+}
+
+/// Ranges of pair indices for each contiguous run of non-`Equal` pairs (a hunk).
+pub fn hunks(pairs: &[DiffPair]) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, p) in pairs.iter().enumerate() {
+        if p.class == DiffClass::Equal {
+            if let Some(s) = start.take() { out.push(s..i); }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start { out.push(s..pairs.len()); }
+    out
+}
+
+/// First pair index of the next hunk strictly after `from_pair`, or `None`.
+pub fn next_hunk(pairs: &[DiffPair], from_pair: usize) -> Option<usize> {
+    hunks(pairs).into_iter().map(|h| h.start).find(|&s| s > from_pair)
+}
+
+/// First pair index of the previous hunk strictly before `from_pair`, or `None`.
+pub fn prev_hunk(pairs: &[DiffPair], from_pair: usize) -> Option<usize> {
+    hunks(pairs).into_iter().map(|h| h.start).rev().find(|&s| s < from_pair)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +248,59 @@ mod tests {
     #[test]
     fn ignore_ws_still_distinguishes_real_content() {
         assert_ne!(line_key(b"foo bar", true), line_key(b"foo baz", true));
+    }
+
+    #[test]
+    fn char_spans_marks_only_the_changed_middle() {
+        let (l, r) = char_spans(b"workers 4", b"workers 8", crate::charset::Encoding::utf8());
+        assert_eq!(l, vec![8..9]);
+        assert_eq!(r, vec![8..9]);
+    }
+    #[test]
+    fn char_spans_identical_lines_have_no_spans() {
+        let (l, r) = char_spans(b"same", b"same", crate::charset::Encoding::utf8());
+        assert!(l.is_empty() && r.is_empty());
+    }
+    #[test]
+    fn char_spans_full_change() {
+        let (l, r) = char_spans(b"abc", b"xyz", crate::charset::Encoding::utf8());
+        assert_eq!(l, vec![0..3]);
+        assert_eq!(r, vec![0..3]);
+    }
+    #[test]
+    fn char_spans_decodes_latin1_high_byte() {
+        // 0xE9 is 'é' in latin1 — must decode (not mangle) before diffing.
+        // "caf" + 0xE9 ("café") vs "cafe": the differing last char.
+        let l1 = crate::charset::parse_label("iso-8859-1").unwrap();
+        let (l, r) = char_spans(&[0x63,0x61,0x66,0xE9], b"cafe", l1);
+        // decoded left = "café" (é is 2 bytes 0xC3 0xA9 in the decoded UTF-8 string),
+        // so the left span covers bytes 3..5; right "cafe" covers 3..4.
+        assert_eq!(l, vec![3..5]);
+        assert_eq!(r, vec![3..4]);
+    }
+    #[test]
+    fn hunks_groups_contiguous_nonequal_runs() {
+        let pairs = vec![
+            DiffPair { left: Some(0), right: Some(0), class: DiffClass::Equal },
+            DiffPair { left: Some(1), right: None,    class: DiffClass::Removed },
+            DiffPair { left: None,    right: Some(1), class: DiffClass::Added },
+            DiffPair { left: Some(2), right: Some(2), class: DiffClass::Equal },
+            DiffPair { left: Some(3), right: Some(3), class: DiffClass::Changed },
+        ];
+        assert_eq!(hunks(&pairs), vec![1..3, 4..5]);
+    }
+    #[test]
+    fn next_and_prev_hunk_navigate() {
+        let pairs = vec![
+            DiffPair { left: Some(0), right: Some(0), class: DiffClass::Equal },
+            DiffPair { left: Some(1), right: None,    class: DiffClass::Removed },
+            DiffPair { left: Some(2), right: Some(2), class: DiffClass::Equal },
+            DiffPair { left: Some(3), right: Some(3), class: DiffClass::Changed },
+        ];
+        assert_eq!(next_hunk(&pairs, 0), Some(1));
+        assert_eq!(next_hunk(&pairs, 1), Some(3));
+        assert_eq!(next_hunk(&pairs, 3), None);
+        assert_eq!(prev_hunk(&pairs, 3), Some(1));
+        assert_eq!(prev_hunk(&pairs, 1), None);
     }
 }
