@@ -33,6 +33,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 - **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `=` locks the panes to scroll together; `:only` collapses back.
 - **Non-UTF-8 charsets.** `--encoding iso-8859-1` (or `windows-1252`, `shift_jis`, …) decodes legacy files so they read as text, not `<HH>` bytes — and search/filter match the decoded text. Switch live with `:encoding`.
 - **Side-by-side diff.** `--diff old new` (or `:diff` in a split) aligns the two files line-by-line with filler rows, `+`/`-`/`~` coloring, and intra-line change highlighting; `]c`/`[c` jump between change hunks. A compare view inside the pager.
+- **Live & per-pane filtering.** Change filters at runtime — `:grep`/`:filter`/`:format`/`:display` (+ `:no*`) act on the focused pane, so each split pane can show different lines (`--right-grep`/`--right-filter`/… seed pane B at startup).
 
 It is **not** a log search/correlation tool, structured query engine, or replacement for `lnav`. It's a single-file pager.
 

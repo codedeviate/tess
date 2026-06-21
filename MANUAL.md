@@ -172,6 +172,41 @@ UTF-16 file would misalign after the first line.
 - **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (so what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
+#### Runtime filtering & per-pane predicates
+
+Predicates can also be set live, from the colon prompt — they apply to the
+**focused pane**, so in a split you `Tab` to a pane and give it its own:
+
+| Command | Effect |
+|---|---|
+| `:grep PAT` / `:nogrep` | Set / clear a raw-regex filter (no format needed). |
+| `:filter FIELD<op>VALUE` / `:nofilter` | Set / clear a field filter. Needs a format on the pane (else a hint flashes). Sets a single spec (replaces). |
+| `:format NAME` / `:noformat` | Set / clear the pane's format (enables `:filter`/`:display`). `:noformat` also clears the filter. |
+| `:display TEMPLATE` / `:nodisplay` | Set / clear the display template (needs a format). |
+
+Compile errors (bad regex, unknown format) flash on the status line and leave
+the view unchanged. These work single-pane too. Case sensitivity follows the
+pane's `:case` setting.
+
+For the split view, the second pane can be seeded at startup with its own
+predicates, mirroring the main flags:
+
+- **`--right-grep PATTERN`** (repeatable, AND'd) — pane B raw-regex filter.
+- **`--right-filter FIELD<op>VALUE`** (repeatable, AND'd) — pane B field filter; requires `--right-format`.
+- **`--right-format NAME`** — pane B parse format.
+- **`--right-display TEMPLATE`** — pane B display template.
+
+```sh
+tess --split access.log access.log \
+  --format nginx-combined --filter status=500 \
+  --right-format nginx-combined --right-filter status=404
+# left pane: 500s   right pane: 404s
+```
+
+The `--right-*` flags are independent of the left (no inheritance) and only
+meaningful with `--split` / `--diff`. (OR-groups and `--dim` remain global /
+startup-only; per-pane predicates are inactive while `:diff` is on.)
+
 ### Pretty-printing
 
 - **`--prettify`** — reformat the file's content for human reading. Supports **JSON, YAML, TOML, XML, HTML, CSV**. Type is detected from the filename extension (`.json`, `.yaml`/`.yml`, `.toml`, `.xml`, `.html`/`.htm`, `.csv`) and falls back to a quick byte sniff for unextended files. **Static files only** — not allowed with `--follow`, `--live`, or `--filter` (which would all conflict with reshaping the byte stream). Layout only — no syntax highlighting, so search and `--filter` (when used separately) keep working byte-cleanly.

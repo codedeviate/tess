@@ -10,6 +10,36 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.45.0] — 2026-06-21
+
+### Added
+
+- **Per-pane filter/format predicates + runtime filtering.** Each split pane can
+  now carry its own predicates, and predicates can be changed at runtime (tess
+  previously only accepted them at startup).
+  - **Runtime colon commands** (apply to the focused pane): `:grep PAT` /
+    `:nogrep`, `:filter FIELD<op>VALUE` / `:nofilter`, `:format NAME` /
+    `:noformat`, `:display TEMPLATE` / `:nodisplay`. `:filter`/`:display` need a
+    format on the pane (`:format NAME` sets one); `:noformat` also clears the
+    filter. Compile errors flash on the status line. These work single-pane too
+    — tess gains live filtering in general.
+  - **Per-pane via `Tab`:** because the commands target the focused pane,
+    `Tab` to a pane and set its predicates independently; each pane's
+    half-width status shows its own `[grep]`/filter/format badges.
+  - **Startup `--right-grep` / `--right-filter` / `--right-format` /
+    `--right-display`** seed the split's second pane (pane B), independent of
+    the left. `--right-filter` requires `--right-format`. The existing
+    `--grep`/`--filter`/`--format`/`--display` continue to seed pane A.
+  - Per-pane case sensitivity already works at runtime: `:case` targets the
+    focused pane, and `:grep`/`:filter` compile with that pane's case mode.
+
+### Notes / v1 limitations
+
+- Runtime `:filter` sets a single replacing spec (startup `--filter`/
+  `--right-filter` still repeat and AND). OR-groups remain pane-A/startup-only.
+  `--dim` stays a single global flag. Per-pane predicates are inactive while
+  `:diff` is on (diff works on raw lines). 2-pane vertical only.
+
 ## [0.44.0] — 2026-06-21
 
 ### Added

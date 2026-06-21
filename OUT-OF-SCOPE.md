@@ -59,32 +59,25 @@ worth eating.
 
 ## Deferred
 
-### Per-pane filter/format predicates — **M**
+### Per-pane case sensitivity (`--right-ignore-case`) — **S**
 
 > **Next up — prioritized for the upcoming development cycle.** Gets its own
 > brainstorm → spec → plan cycle when work starts.
 
-In the split view, `--filter` / `--grep` / `--format` / `--display` currently
-apply to the **focused/first pane only** — the second pane shows the plain file.
-This makes each pane able to carry its own predicates, so you can e.g. show
-`status=500` lines on the left and `status=404` on the right of the same (or two
-different) logs.
+Per-pane filter/format predicates shipped in `0.45.0` (runtime `:grep`/`:filter`/
+`:format`/`:display` on the focused pane + startup `--right-grep`/`--right-filter`/
+`--right-format`/`--right-display`). Per-pane **case sensitivity** is the natural
+small follow-on:
 
-Expect the design to grapple with:
-
-- **A "which pane" notion for predicates.** Today filter/format/grep/or are
-  resolved once at startup into the focused viewport + the match paths. The
-  second pane (`main::build_second_pane` / runtime `:vsplit`) deliberately skips
-  them. A per-pane design needs each `Pane` to own its own compiled
-  predicates/format, and the CLI/colon surface needs a way to address them.
-- **CLI surface.** How to specify per-pane predicates on the command line —
-  e.g. a pane-scoped flag form, a `--split`-with-groups syntax, or runtime-only
-  via a colon command that targets the focused pane. Probably lean on the
-  existing runtime `:filter`-style commands applied to the focused pane, plus a
-  startup convenience.
-- **Interaction with diff mode.** Diff operates on raw lines; per-pane
-  predicates are a split-only (non-diff) concern, so they compose by being
-  inactive while `:diff` is on.
+- Add `--right-ignore-case` / `--right-IGNORE-CASE` mirroring `-i`/`-I`, applied
+  to pane B's viewport in `build_second_pane` and threaded into
+  `resolve_pane_predicates`' `case_mode` for pane B (instead of the global one).
+- Note: per-pane case *already works at runtime* — `:case` targets the focused
+  pane and `:grep`/`:filter` compile with that pane's mode. This entry is only
+  the **startup** shorthand.
+- A larger, separate idea (not this entry): a uniform per-pane flag mechanism
+  so *any* flag can be right-scoped (e.g. a `--` argv split, or a general
+  `--right-<flag>` convention) rather than one-off `--right-*` flags.
 
 ### Horizontal split & per-pane refinements — **L**
 
