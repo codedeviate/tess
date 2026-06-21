@@ -31,6 +31,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 - **Cheap on huge files.** mmap'd file source, lazy line indexing, `--tail N` reverse-scans only as far as needed.
 - **Long-line scrolling that actually works.** `j` walks wrap-rows so the last 1000 chars of a 5000-char line are reachable; `J` / `K` jump by whole logical lines when you don't want to scroll through every wrap.
 - **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `=` locks the panes to scroll together; `:only` collapses back.
+- **Non-UTF-8 charsets.** `--encoding iso-8859-1` (or `windows-1252`, `shift_jis`, …) decodes legacy files so they read as text, not `<HH>` bytes — and search/filter match the decoded text. Switch live with `:encoding`.
 
 It is **not** a log search/correlation tool, structured query engine, or replacement for `lnav`. It's a single-file pager.
 

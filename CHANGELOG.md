@@ -10,6 +10,40 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.43.0] — 2026-06-21
+
+### Added
+
+- **Charset support — read non-UTF-8 files.** tess can now decode and display
+  files in legacy/non-UTF-8 encodings (ISO-8859-1, Windows-1252, Shift-JIS, and
+  the rest of the WHATWG family via `encoding_rs`), instead of showing their
+  bytes as `<HH>`.
+  - `--encoding LABEL` selects the input charset (default `utf-8`); a runtime
+    `:encoding LABEL` switches it live (and `:encoding` with no argument shows
+    the current one). An unknown label is a startup error / a status flash at
+    runtime.
+  - **Rendering and matching both operate on the decoded text** — search,
+    `--grep`, `--filter`, `--format`, and OR-groups match what you see, so
+    `/café` finds a Latin-1 `café` on screen.
+  - **BOM:** when the encoding is left at the default, a leading UTF-8 BOM
+    resolves to UTF-8; an explicit `--encoding` always wins over a BOM.
+  - **Copy/export emit UTF-8:** `:yank`, `--to-clipboard`, and `-o`/`--stdout`
+    write the decoded text as correct Unicode regardless of the source encoding.
+  - `-r` raw passthrough and `--hex` are unaffected (they show raw bytes); the
+    UTF-8 default path is byte-identical to before (still `<HH>` for invalid
+    bytes).
+
+### Notes
+
+- The label `iso-8859-1` (and `latin1`) uses the **windows-1252** decoder, per
+  the WHATWG encoding standard — the right behavior for real-world Latin-1 text
+  (the two differ only in the `0x80–0x9F` range, where windows-1252 has
+  printable glyphs).
+- **UTF-16 is not supported:** tess indexes lines by splitting on a lone `0x0A`
+  byte, which UTF-16 code units embed, so a UTF-16 file would misalign after the
+  first line. `--encoding utf-16le`/`utf-16be` and a UTF-16 BOM are rejected with
+  a clear message rather than rendering mojibake.
+
 ## [0.42.0] — 2026-06-21
 
 ### Added

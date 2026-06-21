@@ -65,6 +65,43 @@ cmd | tess [OPTIONS]
   - Requires a file path; not supported on stdin.
 - **`--tail N`** — show only the last `N` logical lines. For files, reverse-scans for the byte offset and only indexes from there forward, so a 10 GB log stays cheap. Mutually exclusive with `--head`. Streaming stdin (`-f` without a file) is not supported. Re-applied on every reload under `--live`.
 - **`--head N`** — cap the visible content to the first `N` logical lines. Mutually exclusive with `--tail`. Re-applied on every reload under `--live`.
+- **`--encoding LABEL`** — decode the input as `LABEL` (a WHATWG charset label) instead of UTF-8. See [Character encoding](#character-encoding).
+
+### Character encoding
+
+By default tess reads input as UTF-8 (invalid bytes show as `<HH>`). For files in
+a legacy or non-UTF-8 charset, `--encoding LABEL` decodes them so they display as
+text:
+
+```sh
+tess --encoding iso-8859-1 legacy.log     # café, not caf<E9>
+tess --encoding windows-1252 report.txt
+tess --encoding shift_jis access.log
+```
+
+`LABEL` is any [WHATWG encoding label](https://encoding.spec.whatwg.org/#names-and-labels)
+(`utf-8`, `iso-8859-1`, `latin1`, `windows-1252`, `shift_jis`, `euc-jp`, `gbk`, …),
+decoded via the `encoding_rs` library. An unknown label is a startup error.
+
+- **Decoding is everywhere.** Rendering *and* matching operate on the decoded
+  text — search (`/`), `--grep`, `--filter`, and `--format` all match what you
+  see, so `/café` finds a Latin-1 `café` on screen.
+- **Runtime switch:** `:encoding LABEL` re-decodes the view live; `:encoding`
+  with no argument shows the current label. The setting is global (both panes of
+  a split share it).
+- **BOM:** with the default encoding, a leading UTF-8 BOM resolves to UTF-8; an
+  explicit `--encoding` always wins over a BOM.
+- **Copy/export emit UTF-8:** `:yank`, `--to-clipboard`, and `-o`/`--stdout`
+  write the decoded text as correct Unicode regardless of the source encoding.
+- **`-r` and `--hex` are unaffected** — raw passthrough emits source bytes
+  verbatim (the terminal decodes), and hex always shows raw byte values.
+
+Two specifics: the label `iso-8859-1` (and `latin1`) uses the **windows-1252**
+decoder per the WHATWG standard — the right choice for real-world Latin-1 text
+(they differ only in the `0x80–0x9F` range). And **UTF-16 is not supported**
+(`--encoding utf-16le`/`utf-16be` and a UTF-16 BOM are rejected with a message):
+tess splits lines on a lone `0x0A` byte, which UTF-16 code units embed, so a
+UTF-16 file would misalign after the first line.
 
 ### Structured logs
 
