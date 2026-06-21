@@ -240,6 +240,10 @@ fn resolve_pane_predicates(
 /// the pane B viewport so the right pane can carry its own grep/filter/format.
 /// `other_pane_init` corrects the size, so the `cols`/`rows` passed here are
 /// provisional.
+///
+/// `apply_right` controls whether `--right-*`/right-case flags are applied.
+/// Pass `true` for the first extra pane (pane B), `false` for additional panes
+/// (panes C, D, …) that share the shared display config but not the right-* flags.
 #[allow(clippy::too_many_arguments)]
 fn build_second_pane(
     path: &std::path::Path,
@@ -251,6 +255,7 @@ fn build_second_pane(
     record_start_regex: Option<&regex::bytes::Regex>,
     enc: tess::charset::Encoding,
     case_mode: tess::viewport::CaseMode,
+    apply_right: bool,
 ) -> Result<tess::pane::Pane> {
     let (src, label, preprocess_failure) =
         tess::open::open_source_for_path(path, args, preprocessor)?;
@@ -374,39 +379,44 @@ fn build_second_pane(
     }
 
     // Pane B's search uses the (independent) right-case mode passed in, matching
-    // the case used to compile its --right-* predicates below.
+    // the case used to compile its --right-* predicates below. For additional
+    // panes (C, D, …) the right-case is not applied; they use Sensitive by
+    // convention (the caller passes the base case_mode instead).
     viewport.set_case_mode(case_mode);
 
-    // Apply --right-* predicates to pane B. The index is pre-scan here, so
-    // set_record_start (the pre-scan setter) is safe. If --right-format sets a
-    // record_start we use that; otherwise fall through to the caller's
-    // record_start_regex (pane A's setting, already applied above if present).
-    let rp = resolve_pane_predicates(
-        &args.right_grep,
-        &args.right_filter,
-        args.right_format.as_deref(),
-        args.right_display.as_deref(),
-        case_mode,
-    )?;
-    if let Some(re) = rp.record_start {
-        idx.set_record_start(re);
-    }
-    viewport.set_format_label(rp.format_label);
-    if let Some(g) = rp.grep {
-        viewport.set_grep(Some(g));
-    }
-    if let Some(f) = rp.filter {
-        viewport.set_filter(Some(f));
-    }
-    if let Some(d) = rp.display {
-        viewport.set_display(Some(d));
-    }
-    // In hide mode, pane B's visible-line cache must be built up front (the
-    // setters cleared it) — otherwise a `--right-grep`/`--right-filter` pane
-    // renders blank on a static source. Mirrors the focused-pane startup scan.
-    if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
-        idx.extend_to_end(src.as_ref());
-        viewport.extend_visible_lines(&idx, src.as_ref());
+    // Apply --right-* predicates to pane B only. Panes C, D, … (apply_right=false)
+    // skip this block; they share the shared display config but not the right-* flags.
+    // The index is pre-scan here, so set_record_start (the pre-scan setter) is safe.
+    // If --right-format sets a record_start we use that; otherwise fall through to the
+    // caller's record_start_regex (pane A's setting, already applied above if present).
+    if apply_right {
+        let rp = resolve_pane_predicates(
+            &args.right_grep,
+            &args.right_filter,
+            args.right_format.as_deref(),
+            args.right_display.as_deref(),
+            case_mode,
+        )?;
+        if let Some(re) = rp.record_start {
+            idx.set_record_start(re);
+        }
+        viewport.set_format_label(rp.format_label);
+        if let Some(g) = rp.grep {
+            viewport.set_grep(Some(g));
+        }
+        if let Some(f) = rp.filter {
+            viewport.set_filter(Some(f));
+        }
+        if let Some(d) = rp.display {
+            viewport.set_display(Some(d));
+        }
+        // In hide mode, pane B's visible-line cache must be built up front (the
+        // setters cleared it) — otherwise a `--right-grep`/`--right-filter` pane
+        // renders blank on a static source. Mirrors the focused-pane startup scan.
+        if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
+            idx.extend_to_end(src.as_ref());
+            viewport.extend_visible_lines(&idx, src.as_ref());
+        }
     }
 
     Ok(tess::pane::Pane {
@@ -417,6 +427,92 @@ fn build_second_pane(
         idx,
         viewport,
     })
+}
+
+/// Build the extra-panes Vec for `--split`/`--diff` startup.
+///
+/// - `--diff`: requires exactly two files; returns one extra pane from `files[1]`
+///   (with `--right-*` applied).
+/// - `--split` with ≥2 files: returns one pane per `files[1..]`; `--right-*`
+///   applies to the first extra pane only (pane B); panes C, D, … get shared
+///   display config only.
+/// - `--split` with 1 file: returns one extra pane from `files[0]` (two views
+///   of the same file), with `--right-*` applied.
+/// - Neither flag active, or no files: returns an empty Vec.
+#[allow(clippy::too_many_arguments)]
+fn build_extra_panes(
+    files: &[std::path::PathBuf],
+    args: &Args,
+    ansi_mode: tess::render::AnsiMode,
+    cols: u16,
+    rows: u16,
+    preprocessor: Option<&tess::preprocess::Preprocessor>,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    enc: tess::charset::Encoding,
+    case_mode: tess::viewport::CaseMode,
+) -> Result<Vec<tess::pane::Pane>> {
+    if args.diff {
+        if files.len() != 2 {
+            return Err(Error::Runtime("--diff takes exactly two files".into()));
+        }
+        let pane = build_second_pane(
+            &files[1],
+            args,
+            ansi_mode,
+            cols,
+            rows,
+            preprocessor,
+            record_start_regex,
+            enc,
+            case_mode,
+            true,
+        )?;
+        return Ok(vec![pane]);
+    }
+
+    if args.split {
+        if files.len() >= 2 {
+            // One pane per files[1..]; --right-* only on the first extra pane.
+            let mut panes = Vec::with_capacity(files.len() - 1);
+            for (i, path) in files[1..].iter().enumerate() {
+                let apply_right = i == 0;
+                // For panes C and beyond, use Sensitive case (right-case is a
+                // pane-B-specific concept; additional panes share shared config only).
+                let pane_case = if apply_right { case_mode } else { tess::viewport::CaseMode::Sensitive };
+                let pane = build_second_pane(
+                    path,
+                    args,
+                    ansi_mode,
+                    cols,
+                    rows,
+                    preprocessor,
+                    record_start_regex,
+                    enc,
+                    pane_case,
+                    apply_right,
+                )?;
+                panes.push(pane);
+            }
+            return Ok(panes);
+        } else if let Some(path) = files.first() {
+            // Single file: two views of the same file.
+            let pane = build_second_pane(
+                path,
+                args,
+                ansi_mode,
+                cols,
+                rows,
+                preprocessor,
+                record_start_regex,
+                enc,
+                case_mode,
+                true,
+            )?;
+            return Ok(vec![pane]);
+        }
+    }
+
+    Ok(vec![])
 }
 
 fn main() -> ExitCode {
@@ -1333,38 +1429,27 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
-    // Build the second pane for `--split` before `args`/`preprocessor`/
-    // `record_start_regex` are moved into `app::run`. Only meaningful for a
-    // file-backed launch (not stdin/clipboard): the second file is `files[1]`
-    // if present, otherwise a second view of `files[0]`. `other_pane_init`
-    // inside `app::run` resizes both panes, so `cols`/`rows` are provisional.
-    // Extra panes for the N-pane model. Today only a single second pane is
-    // built (for `--split`/`--diff`), collected into a Vec; multi-pane startup
-    // is lit up in a later task.
-    let extra_panes: Vec<tess::pane::Pane> = if args.split || args.diff {
-        let second_path = args.files.get(1).or_else(|| args.files.first()).cloned();
-        match second_path {
-            Some(p) => match build_second_pane(
-                &p,
-                &args,
-                ansi_mode,
-                cols,
-                rows,
-                preprocessor.as_ref(),
-                record_start_regex.as_ref(),
-                resolved_enc,
-                right_case_mode,
-            ) {
-                Ok(pane) => vec![pane],
-                Err(e) => {
-                    eprintln!("tess: --split second pane: {e}");
-                    vec![]
-                }
-            },
-            None => vec![],
+    // Build extra panes for `--split`/`--diff` before `args`/`preprocessor`/
+    // `record_start_regex` are moved into `app::run`. For `--split` with N files,
+    // one pane per files[1..] is built; `--right-*` applies only to the first
+    // extra pane (pane B). `other_pane_init` inside `app::run` resizes all panes,
+    // so `cols`/`rows` here are provisional.
+    let extra_panes: Vec<tess::pane::Pane> = match build_extra_panes(
+        &args.files,
+        &args,
+        ansi_mode,
+        cols,
+        rows,
+        preprocessor.as_ref(),
+        record_start_regex.as_ref(),
+        resolved_enc,
+        right_case_mode,
+    ) {
+        Ok(panes) => panes,
+        Err(e) => {
+            eprintln!("tess: --split pane setup: {e}");
+            vec![]
         }
-    } else {
-        vec![]
     };
 
     app::run(
@@ -1513,6 +1598,7 @@ mod tests {
         let mut pane = build_second_pane(
             f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
             tess::charset::Encoding::utf8(), tess::viewport::CaseMode::Sensitive,
+            true,
         ).unwrap();
         let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
         let text: String = frame.body.iter().flat_map(|row| row.iter().filter_map(|c| match c {
@@ -1540,6 +1626,7 @@ mod tests {
         let mut pane = build_second_pane(
             f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
             tess::charset::Encoding::utf8(), right_case,
+            true,
         ).unwrap();
         assert_eq!(pane.viewport.case_mode(), tess::viewport::CaseMode::Insensitive);
         let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
@@ -1548,5 +1635,19 @@ mod tests {
             _ => None,
         })).collect();
         assert!(text.contains("error"), "case-insensitive --right-grep should match 'error'; got {text:?}");
+    }
+
+    #[test]
+    fn build_extra_panes_one_per_file_for_split() {
+        use std::io::Write;
+        let mk = |s: &str| { let mut f = tempfile::NamedTempFile::new().unwrap(); writeln!(f, "{s}").unwrap(); f.flush().unwrap(); f };
+        let (a, b, c) = (mk("A"), mk("B"), mk("C"));
+        let files = vec![a.path().to_path_buf(), b.path().to_path_buf(), c.path().to_path_buf()];
+        let args = Args::parse_from(["tess", "--split", "x", "y", "z"]);
+        let extras = build_extra_panes(
+            &files, &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
+            tess::charset::Encoding::utf8(), tess::viewport::CaseMode::Sensitive,
+        ).unwrap();
+        assert_eq!(extras.len(), 2); // panes for files[1] and files[2]
     }
 }
