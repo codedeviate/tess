@@ -130,6 +130,14 @@ enum ColonCommand {
     /// `:diffws` — toggle whitespace-significance in the diff alignment.
     /// Wired in diff task.
     DiffToggleWs,
+    /// `:grep PAT` (Some) / `:nogrep` (None) — raw-regex predicate on the focused pane.
+    Grep(Option<String>),
+    /// `:filter SPEC` (Some) / `:nofilter` (None) — field filter on the focused pane (needs a format).
+    Filter(Option<String>),
+    /// `:format NAME` (Some) / `:noformat` (None) — set/clear the focused pane's format.
+    Format(Option<String>),
+    /// `:display TMPL` (Some) / `:nodisplay` (None) — set/clear the focused pane's display template.
+    Display(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -282,6 +290,16 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "diff!" => Ok(ColonCommand::Diff { force: true }),
         "nodiff"  => Ok(ColonCommand::NoDiff),
         "diffws"  => Ok(ColonCommand::DiffToggleWs),
+        // Bare `:grep`/`:filter`/`:format`/`:display` with no argument parses to the
+        // None (clear) form, same as the explicit `:nogrep`/`:nofilter`/etc. aliases.
+        "grep" => Ok(ColonCommand::Grep((!rest.is_empty()).then(|| rest.to_string()))),
+        "nogrep" => Ok(ColonCommand::Grep(None)),
+        "filter" => Ok(ColonCommand::Filter((!rest.is_empty()).then(|| rest.to_string()))),
+        "nofilter" => Ok(ColonCommand::Filter(None)),
+        "format" => Ok(ColonCommand::Format((!rest.is_empty()).then(|| rest.to_string()))),
+        "noformat" => Ok(ColonCommand::Format(None)),
+        "display" => Ok(ColonCommand::Display((!rest.is_empty()).then(|| rest.to_string()))),
+        "nodisplay" => Ok(ColonCommand::Display(None)),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -951,6 +969,10 @@ fn dispatch_colon_command(
         | ColonCommand::SetEncoding(_)
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
+        }
+        ColonCommand::Grep(_) | ColonCommand::Filter(_)
+        | ColonCommand::Format(_) | ColonCommand::Display(_) => {
+            ColonOutcome::Continue(None) // wired in the predicate-dispatch tasks
         }
     }
 }
@@ -4125,5 +4147,17 @@ mod tests {
         assert_eq!(parse_colon_command("diff!").unwrap(), ColonCommand::Diff { force: true });
         assert_eq!(parse_colon_command("nodiff").unwrap(), ColonCommand::NoDiff);
         assert_eq!(parse_colon_command("diffws").unwrap(), ColonCommand::DiffToggleWs);
+    }
+
+    #[test]
+    fn parse_colon_predicate_commands() {
+        assert_eq!(parse_colon_command("grep ERROR").unwrap(), ColonCommand::Grep(Some("ERROR".into())));
+        assert_eq!(parse_colon_command("nogrep").unwrap(), ColonCommand::Grep(None));
+        assert_eq!(parse_colon_command("filter status=404").unwrap(), ColonCommand::Filter(Some("status=404".into())));
+        assert_eq!(parse_colon_command("nofilter").unwrap(), ColonCommand::Filter(None));
+        assert_eq!(parse_colon_command("format nginx-combined").unwrap(), ColonCommand::Format(Some("nginx-combined".into())));
+        assert_eq!(parse_colon_command("noformat").unwrap(), ColonCommand::Format(None));
+        assert_eq!(parse_colon_command("display <status>").unwrap(), ColonCommand::Display(Some("<status>".into())));
+        assert_eq!(parse_colon_command("nodisplay").unwrap(), ColonCommand::Display(None));
     }
 }
