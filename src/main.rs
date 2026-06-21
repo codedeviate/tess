@@ -562,6 +562,30 @@ fn build_panes_from_sections(
     Ok(panes)
 }
 
+/// Validate the globals (`args`, from section 0) against the per-pane `--` form.
+/// `section_count` is the total number of panes (sections). The `--` form is
+/// mutually exclusive with `--split`/`--right-*`, and `--diff` requires exactly
+/// two sections.
+fn validate_per_pane_argv(args: &Args, section_count: usize) -> Result<()> {
+    let right_used = !args.right_grep.is_empty()
+        || !args.right_filter.is_empty()
+        || args.right_format.is_some()
+        || args.right_display.is_some()
+        || args.right_ignore_case
+        || args.right_IGNORE_case;
+    if args.split || right_used {
+        return Err(Error::Runtime(
+            "the `--` per-pane form can't be combined with --split or --right-*".to_string(),
+        ));
+    }
+    if args.diff && section_count != 2 {
+        return Err(Error::Runtime(
+            "--diff with the `--` form needs exactly two panes".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     install_panic_hook();
     match real_main() {
@@ -740,17 +764,27 @@ fn real_main() -> Result<()> {
     // `+CMD`s apply in argv order against the viewport just before the
     // event loop starts.
     let raw_argv: Vec<String> = std::env::args().collect();
-    let plus_cmds: Vec<String> = raw_argv
+
+    // Split on standalone `--` into per-pane sections. Zero `--` → one section
+    // (the existing single-view path, unchanged). Each section is prefixed with
+    // argv[0].
+    let sections = tess::cli::split_argv_sections(&raw_argv).map_err(Error::Runtime)?;
+    let per_pane = sections.len() > 1;
+
+    // Section 0 runs the full existing pipeline: +CMD extraction, group
+    // expansion, OR-group extraction, then clap parse → the globals + pane 0.
+    let s0 = &sections[0];
+    let plus_cmds: Vec<String> = s0
         .iter()
         .skip(1)
         .filter(|a| a.starts_with('+') && a.len() > 1)
         .cloned()
         .collect();
-    let cleaned_argv: Vec<String> = raw_argv
-        .into_iter()
+    let cleaned_argv: Vec<String> = s0
+        .iter()
         .enumerate()
         .filter(|(i, a)| *i == 0 || !(a.starts_with('+') && a.len() > 1))
-        .map(|(_, a)| a)
+        .map(|(_, a)| a.clone())
         .collect();
 
     // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
@@ -760,6 +794,25 @@ fn real_main() -> Result<()> {
     let argv = format::expand_argv(cleaned_argv, &groups);
     let or_spec = tess::or::extract_from_argv(&argv);
     let args = Args::parse_from(argv);
+
+    // Sections 1..N: each group-expands and parses into its own per-view `Args`.
+    // OR-groups and `+CMD` are section-0-only (a `+CMD` in a later section is
+    // passed to clap and will error — `+CMD` belongs in section 0).
+    let section_args: Vec<Args> = if per_pane {
+        sections[1..]
+            .iter()
+            .map(|sec| {
+                let expanded = format::expand_argv(sec.clone(), &groups);
+                Args::parse_from(expanded)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    if per_pane {
+        validate_per_pane_argv(&args, sections.len())?;
+    }
 
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
     let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
@@ -1481,20 +1534,30 @@ showing raw (use --content-type=NAME to override)"
     // one pane per files[1..] is built; `--right-*` applies only to the first
     // extra pane (pane B). `other_pane_init` inside `app::run` resizes all panes,
     // so `cols`/`rows` here are provisional.
-    let extra_panes: Vec<tess::pane::Pane> = match build_extra_panes(
-        &args.files,
-        &args,
-        ansi_mode,
-        cols,
-        rows,
-        preprocessor.as_ref(),
-        record_start_regex.as_ref(),
-        right_case_mode,
-    ) {
-        Ok(panes) => panes,
-        Err(e) => {
-            eprintln!("tess: pane setup: {e}");
-            vec![]
+    let extra_panes: Vec<tess::pane::Pane> = if per_pane {
+        build_panes_from_sections(
+            &section_args,
+            ansi_mode,
+            cols,
+            rows,
+            preprocessor.as_ref(),
+        )?
+    } else {
+        match build_extra_panes(
+            &args.files,
+            &args,
+            ansi_mode,
+            cols,
+            rows,
+            preprocessor.as_ref(),
+            record_start_regex.as_ref(),
+            right_case_mode,
+        ) {
+            Ok(panes) => panes,
+            Err(e) => {
+                eprintln!("tess: pane setup: {e}");
+                vec![]
+            }
         }
     };
 
@@ -1548,6 +1611,29 @@ mod tests {
     #[test]
     fn parse_plus_g_is_goto_bottom() {
         assert_eq!(parse_plus_cmd("+G"), Ok(PlusCmd::GotoBottom));
+    }
+
+    #[test]
+    fn per_pane_excludes_split_and_right() {
+        let mut a = Args::parse_from(["tess", "x"]);
+        a.split = true;
+        assert!(validate_per_pane_argv(&a, 2).is_err());
+
+        let mut b = Args::parse_from(["tess", "x"]);
+        b.right_grep = vec!["E".into()];
+        assert!(validate_per_pane_argv(&b, 2).is_err());
+
+        let c = Args::parse_from(["tess", "x"]);
+        assert!(validate_per_pane_argv(&c, 2).is_ok());
+    }
+
+    #[test]
+    fn per_pane_diff_needs_exactly_two_sections() {
+        let mut a = Args::parse_from(["tess", "x"]);
+        a.diff = true;
+        assert!(validate_per_pane_argv(&a, 2).is_ok());
+        assert!(validate_per_pane_argv(&a, 1).is_err());
+        assert!(validate_per_pane_argv(&a, 3).is_err());
     }
 
     #[test]
