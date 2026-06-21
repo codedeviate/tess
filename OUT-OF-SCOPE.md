@@ -61,6 +61,9 @@ worth eating.
 
 ### Uniform per-pane flag mechanism — **M**
 
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
 The split's per-pane surface grew one flag family at a time: `--right-grep`/
 `--right-filter`/`--right-format`/`--right-display` (`0.45.0`) and
 `--right-ignore-case`/`--right-IGNORE-CASE` (`0.46.0`). A larger idea, deferred:
