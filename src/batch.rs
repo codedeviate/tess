@@ -62,6 +62,7 @@ pub fn run(
     display: Option<DisplayRenderer>,
     spec: BatchSpec,
     sigterm: Arc<AtomicBool>,
+    enc: crate::charset::Encoding,
 ) -> Result<()> {
     // Clipboard is a one-shot sink (follow is rejected upstream): buffer the
     // whole filtered result in memory via the same first-pass line-walk that
@@ -72,7 +73,7 @@ pub fn run(
     if matches!(spec.destination, BatchDestination::Clipboard) {
         idx.extend_to_end(src.as_ref());
         let mut buf: Vec<u8> = Vec::new();
-        emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut buf, 0)?;
+        emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut buf, 0, enc)?;
         crate::clipboard::write(&buf).map_err(Error::Runtime)?;
         return Ok(());
     }
@@ -96,7 +97,7 @@ pub fn run(
     // streaming stdin sources whose initial bytes are present do too.
     idx.extend_to_end(src.as_ref());
     let mut next_line = 0usize;
-    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line)?;
+    next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line, enc)?;
     out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
 
     if !spec.follow {
@@ -114,7 +115,7 @@ pub fn run(
         let lines_before = idx.line_count();
         idx.notice_new_bytes(src.as_ref());
         if idx.line_count() != lines_before {
-            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line)?;
+            next_line = emit_pending(src.as_ref(), &mut idx, filter.as_ref(), grep.as_ref(), &or_groups, display.as_ref(), &mut *out, next_line, enc)?;
             out.flush().map_err(|e| Error::Runtime(format!("flush: {e}")))?;
         }
         // For static sources, nothing more will ever arrive — break out so
@@ -153,6 +154,7 @@ fn emit_pending(
     display: Option<&DisplayRenderer>,
     out: &mut dyn Write,
     mut next_line: usize,
+    enc: crate::charset::Encoding,
 ) -> Result<usize> {
     let total = idx.line_count();
     if idx.records_mode() {
@@ -167,13 +169,13 @@ fn emit_pending(
             if range.end <= next_line {
                 continue;
             }
-            let passes = record_passes_batch(idx, src, r, filter, grep, or_groups);
+            let passes = record_passes_batch(idx, src, r, filter, grep, or_groups, enc);
             if passes {
                 for line_n in range.clone() {
                     if line_n < next_line {
                         continue;
                     }
-                    emit_line(src, idx, line_n, display, out)?;
+                    emit_line(src, idx, line_n, display, out, enc)?;
                 }
             }
             next_line = range.end;
@@ -185,15 +187,15 @@ fn emit_pending(
             let bytes = src.bytes(range);
             let filter_ok = match filter {
                 None => true,
-                Some(f) => matches!(f.evaluate(&bytes), FilterMatch::Matched),
+                Some(f) => matches!(f.evaluate(&bytes, enc), FilterMatch::Matched),
             };
             let grep_ok = match grep {
                 None => true,
-                Some(g) => g.matches(&bytes),
+                Some(g) => g.matches(&bytes, enc),
             };
-            let or_ok = or_groups.matches_line(&bytes);
+            let or_ok = or_groups.matches_line(&bytes, enc);
             if filter_ok && grep_ok && or_ok {
-                emit_line(src, idx, next_line, display, out)?;
+                emit_line(src, idx, next_line, display, out, enc)?;
             }
             next_line += 1;
         }
@@ -213,21 +215,22 @@ fn record_passes_batch(
     filter: Option<&CompiledFilter>,
     grep: Option<&GrepPredicate>,
     or_groups: &OrGroups,
+    enc: crate::charset::Encoding,
 ) -> bool {
     if filter.is_none() && grep.is_none() && !or_groups.is_active() {
         return true;
     }
     let bytes = idx.record_bytes_stripped(r, src);
     let filter_ok = match filter {
-        Some(f) => matches!(f.evaluate_record(&bytes), FilterMatch::Matched),
+        Some(f) => matches!(f.evaluate_record(&bytes, enc), FilterMatch::Matched),
         None => true,
     };
     let grep_ok = match grep {
-        Some(g) => g.matches(&bytes),
+        Some(g) => g.matches(&bytes, enc),
         None => true,
     };
     let or_ok = if or_groups.is_active() {
-        or_groups.matches_record(&bytes)
+        or_groups.matches_record(&bytes, enc)
     } else {
         true
     };
@@ -240,15 +243,21 @@ fn emit_line(
     line_n: usize,
     display: Option<&DisplayRenderer>,
     out: &mut dyn Write,
+    enc: crate::charset::Encoding,
 ) -> Result<()> {
     let range = idx.line_range(line_n, src);
     let bytes = src.bytes(range);
-    match display.and_then(|r| r.render_line(&bytes)) {
+    match display.and_then(|r| r.render_line(&bytes, enc)) {
         Some(rendered) => {
+            // DisplayRenderer already returns a UTF-8 String.
             out.write_all(rendered.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }
         None => {
-            out.write_all(&bytes).map_err(|e| Error::Runtime(format!("write: {e}")))?;
+            // Decode from the source charset to UTF-8 so the export (file,
+            // stdout, clipboard) receives correct Unicode text regardless of
+            // whether the input was Latin-1, Windows-1252, etc.
+            let decoded = crate::charset::decode_line(&bytes, enc);
+            out.write_all(decoded.as_bytes()).map_err(|e| Error::Runtime(format!("write: {e}")))?;
         }
     }
     out.write_all(b"\n").map_err(|e| Error::Runtime(format!("write: {e}")))?;
@@ -287,6 +296,7 @@ mod tests {
                 poll_interval: Duration::from_millis(50),
             },
             Arc::new(AtomicBool::new(false)),
+            crate::charset::Encoding::utf8(),
         ).unwrap();
         let mut buf = Vec::new();
         std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
@@ -531,9 +541,43 @@ mod tests {
                 poll_interval: Duration::from_millis(50),
             },
             Arc::new(AtomicBool::new(false)),
+            crate::charset::Encoding::utf8(),
         ).unwrap();
         let mut buf = Vec::new();
         std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
         assert_eq!(buf, b"login failed\naccess denied\n");
+    }
+
+    #[test]
+    fn emit_line_decodes_latin1_to_utf8() {
+        // A Latin-1 encoded line "café résumé" where é = 0xE9.
+        // When emitted with iso-8859-1 encoding the output must be decoded UTF-8.
+        let m = MockSource::new();
+        m.append(b"caf\xe9 r\xe9sum\xe9\n");
+        m.finish();
+
+        let enc = crate::charset::parse_label("iso-8859-1").unwrap();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        run(
+            Box::new(m),
+            LineIndex::new(),
+            None,
+            None,
+            OrGroups::default(),
+            None,
+            BatchSpec {
+                destination: BatchDestination::File(path.clone()),
+                follow: false,
+                poll_interval: Duration::from_millis(50),
+            },
+            Arc::new(AtomicBool::new(false)),
+            enc,
+        ).unwrap();
+        let mut buf = Vec::new();
+        std::fs::File::open(&path).unwrap().read_to_end(&mut buf).unwrap();
+        // Output must be valid UTF-8 containing the decoded text.
+        let s = std::str::from_utf8(&buf).expect("output should be valid UTF-8");
+        assert!(s.contains("café résumé"), "expected decoded text, got: {s:?}");
     }
 }

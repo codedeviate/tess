@@ -218,12 +218,13 @@ impl DisplayRenderer {
 
     pub fn template(&self) -> &DisplayTemplate { &self.template }
 
-    /// Render `line` (raw bytes) through the template. If the line doesn't
-    /// parse against the format regex, returns `None` — the caller decides
-    /// whether to fall back to the raw line, skip it, or show an error.
-    pub fn render_line(&self, line: &[u8]) -> Option<String> {
-        let s = std::str::from_utf8(line).ok()?;
-        let caps = self.regex.captures(s)?;
+    /// Render `line` (raw bytes) through the template, decoded via `enc`. If
+    /// the line doesn't parse against the format regex, returns `None` — the
+    /// caller decides whether to fall back to the raw line, skip it, or show
+    /// an error.
+    pub fn render_line(&self, line: &[u8], enc: crate::charset::Encoding) -> Option<String> {
+        let s = crate::charset::decode_line(line, enc);
+        let caps = self.regex.captures(&s)?;
         Some(self.template.render(|name| {
             caps.name(name).map(|m| m.as_str().to_string())
         }))
@@ -1613,6 +1614,35 @@ regex = "^LOCAL (?P<msg>.+)$"
             Some(v) => std::env::set_var("TESS_GLOBAL_CONFIG_DIR", v),
             None => std::env::remove_var("TESS_GLOBAL_CONFIG_DIR"),
         }
+    }
+
+    #[test]
+    fn display_renderer_decoded_latin1() {
+        // A format with a `msg` field; the display template echoes it.
+        let fmt = LogFormat::compile_with_display(
+            "simple3",
+            r"^(?P<msg>.+)$",
+            Some("<msg>"),
+        )
+        .unwrap();
+        let renderer = DisplayRenderer::new(
+            fmt.display.unwrap(),
+            fmt.regex,
+        );
+        let l1 = crate::charset::parse_label("iso-8859-1").unwrap();
+        // "café" in Latin-1 bytes
+        let latin1_line: &[u8] = b"caf\xE9";
+        // With Latin-1 decoding, "café" → regex matches, msg = "café"
+        assert_eq!(
+            renderer.render_line(latin1_line, l1).as_deref(),
+            Some("café")
+        );
+        // With UTF-8 decoding: 0xE9 alone is invalid UTF-8 → lossy → U+FFFD present
+        // The lossy string won't equal "café", but it WILL match the `.+` pattern → Some(replacement)
+        // We just check it doesn't equal "café":
+        let utf8_result = renderer.render_line(latin1_line, crate::charset::Encoding::utf8());
+        assert!(utf8_result.is_some());
+        assert_ne!(utf8_result.as_deref(), Some("café"));
     }
 
     #[test]

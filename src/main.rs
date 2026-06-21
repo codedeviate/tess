@@ -179,6 +179,7 @@ fn build_second_pane(
     rows: u16,
     preprocessor: Option<&tess::preprocess::Preprocessor>,
     record_start_regex: Option<&regex::bytes::Regex>,
+    enc: tess::charset::Encoding,
 ) -> Result<tess::pane::Pane> {
     let (src, label, preprocess_failure) =
         tess::open::open_source_for_path(path, args, preprocessor)?;
@@ -214,6 +215,7 @@ fn build_second_pane(
             viewport.opts.tab_stops = Some(stops);
         }
     }
+    viewport.set_encoding(enc);
     viewport.set_ansi_mode(ansi_mode);
     if let Some(spec) = args.header.as_deref() {
         let (lines, hcols) = parse_header_spec(spec).map_err(Error::Runtime)?;
@@ -720,6 +722,16 @@ documents can't be parsed)".to_string(),
         }
     }};
 
+    // Resolve --encoding early: needed by the prettify transform and by batch/
+    // interactive paths alike. Peek the first bytes for BOM detection.
+    // Error before entering raw mode so diagnostics print cleanly.
+    let resolved_enc = {
+        let head_len = src.len().min(4);
+        let head = src.bytes(0..head_len);
+        tess::open::resolve_encoding(&args.encoding, &head)
+            .map_err(Error::Runtime)?
+    };
+
     // If the user wants prettification, resolve the mode against the inner
     // source's first bytes + the path (if any) and wrap the source. Failure
     // to detect under `--prettify` (no --content-type given) is a soft fall:
@@ -732,7 +744,7 @@ documents can't be parsed)".to_string(),
             ResolvedType::Mode(PrettifyMode::Off) => (src, None),
             ResolvedType::Mode(mode) => {
                 let label = mode.label().to_string();
-                let wrapped = TransformingSource::wrap(src, mode);
+                let wrapped = TransformingSource::wrap(src, mode, resolved_enc);
                 if let Some(err) = wrapped.last_error() {
                     eprintln!("tess: prettify ({label}) failed: {err} \u{2014} showing raw");
                     (Box::new(wrapped), Some(format!("{label}:err")))
@@ -943,7 +955,7 @@ showing raw (use --content-type=NAME to override)"
             follow: args.follow,
             poll_interval: std::time::Duration::from_millis(250),
         };
-        return batch::run(src, idx, compiled_filter, compiled_grep, compiled_or, display_renderer, spec, sigterm);
+        return batch::run(src, idx, compiled_filter, compiled_grep, compiled_or, display_renderer, spec, sigterm, resolved_enc);
     }
 
     // `-F` / `--quit-if-one-screen`: if the entire source fits in one
@@ -1012,6 +1024,7 @@ showing raw (use --content-type=NAME to override)"
             )))?;
         viewport.set_hex_group_size(bpg);
     }
+    viewport.set_encoding(resolved_enc);
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_case_mode(case_mode);
     viewport.set_hilite_search(!args.no_hilite_search);
@@ -1220,6 +1233,7 @@ showing raw (use --content-type=NAME to override)"
                 rows,
                 preprocessor.as_ref(),
                 record_start_regex.as_ref(),
+                resolved_enc,
             ) {
                 Ok(pane) => Some(pane),
                 Err(e) => {

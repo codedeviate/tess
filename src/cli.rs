@@ -62,6 +62,11 @@ pub struct Args {
     #[arg(long = "display", value_name = "TEMPLATE")]
     pub display: Option<String>,
 
+    /// Input charset (WHATWG label: utf-8, iso-8859-1, windows-1252, shift_jis, …).
+    /// Default utf-8. Ignored under -r (raw passthrough).
+    #[arg(long = "encoding", default_value = "utf-8")]
+    pub encoding: String,
+
     /// Print a curated list of usage examples and exit.
     #[arg(long = "examples")]
     pub examples: bool,
@@ -790,6 +795,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_encoding() {
+        assert_eq!(Args::parse_from(["tess", "--encoding", "iso-8859-1", "f"]).encoding, "iso-8859-1");
+        assert_eq!(Args::parse_from(["tess", "f"]).encoding, "utf-8");
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -806,6 +817,7 @@ mod tests {
             "--content-type",
             "--dim",
             "--display",
+            "--encoding",
             "--examples",
             "--exit-follow-on-close",
             "--filter",

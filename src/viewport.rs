@@ -752,6 +752,14 @@ impl Viewport {
         self.tag_active = info;
     }
 
+    pub fn set_encoding(&mut self, enc: crate::charset::Encoding) { self.opts.encoding = enc; }
+
+    /// Return the active charset encoding (for callers that need to decode line bytes).
+    pub fn encoding(&self) -> crate::charset::Encoding { self.opts.encoding }
+
+    /// Return the WHATWG name of the active encoding (e.g. `"UTF-8"`, `"windows-1252"`).
+    pub fn encoding_label(&self) -> &'static str { self.opts.encoding.label() }
+
     pub fn set_ansi_mode(&mut self, mode: crate::render::AnsiMode) {
         self.ansi_mode = mode;
     }
@@ -785,7 +793,7 @@ impl Viewport {
         let range = idx.line_range(line_n, src);
         let raw = src.bytes(range);
         if let Some(r) = self.display.as_ref() {
-            if let Some(rendered) = r.render_line(&raw) {
+            if let Some(rendered) = r.render_line(&raw, self.opts.encoding) {
                 return std::borrow::Cow::Owned(rendered.into_bytes());
             }
         }
@@ -865,7 +873,7 @@ impl Viewport {
 
         for r in range {
             let bytes = idx.record_bytes_stripped(r, src);
-            let text = String::from_utf8_lossy(&bytes);
+            let text = crate::charset::decode_line(&bytes, self.opts.encoding);
             if pattern.is_match(&text) {
                 let line_range = idx.record_line_range(r);
                 self.top_line = line_range.start;
@@ -881,12 +889,12 @@ impl Viewport {
         // what they can find. With a template active, that's the rendered form;
         // otherwise the raw line. ANSI color sequences are stripped so that
         // `/error` finds a red `error` regardless of escape codes.
+        // Decode via the active charset so non-ASCII text in non-UTF-8 files
+        // is matched as the user typed it (e.g. ISO-8859-1 "café").
         let display = self.line_display_bytes(src, idx, line_n);
         let bytes = crate::ansi::strip_sgr(&display);
-        match std::str::from_utf8(&bytes) {
-            Ok(s) => pattern.is_match(s),
-            Err(_) => false,
-        }
+        let text = crate::charset::decode_line(&bytes, self.opts.encoding);
+        pattern.is_match(&text)
     }
 
     fn search_step_in_logical(&mut self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, forward: bool) -> bool {
@@ -1037,14 +1045,14 @@ impl Viewport {
     /// different granularity (filter = header line, grep = whole record).
     fn line_passes(&self, line: &[u8]) -> bool {
         let filter_ok = match self.filter.as_ref() {
-            Some(f) => matches!(f.evaluate(line), FilterMatch::Matched),
+            Some(f) => matches!(f.evaluate(line, self.opts.encoding), FilterMatch::Matched),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(line),
+            Some(g) => g.matches(line, self.opts.encoding),
             None => true,
         };
-        filter_ok && grep_ok && self.or_groups.matches_line(line)
+        filter_ok && grep_ok && self.or_groups.matches_line(line, self.opts.encoding)
     }
 
     /// Records-mode predicate. Both filter and grep are evaluated against
@@ -1063,17 +1071,17 @@ impl Viewport {
         };
         let filter_ok = match self.filter.as_ref() {
             Some(f) => matches!(
-                f.evaluate_record(bytes.as_deref().unwrap()),
+                f.evaluate_record(bytes.as_deref().unwrap(), self.opts.encoding),
                 FilterMatch::Matched,
             ),
             None => true,
         };
         let grep_ok = match self.grep.as_ref() {
-            Some(g) => g.matches(bytes.as_deref().unwrap()),
+            Some(g) => g.matches(bytes.as_deref().unwrap(), self.opts.encoding),
             None => true,
         };
         let or_ok = if self.or_groups.is_active() {
-            self.or_groups.matches_record(bytes.as_deref().unwrap())
+            self.or_groups.matches_record(bytes.as_deref().unwrap(), self.opts.encoding)
         } else {
             true
         };
@@ -1300,7 +1308,7 @@ impl Viewport {
             for hl in 0..header_rows {
                 let raw = src.bytes(idx.line_range(hl, src));
                 let display_bytes = if let Some(r) = self.display.as_ref() {
-                    match r.render_line(&raw) {
+                    match r.render_line(&raw, self.opts.encoding) {
                         Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                         None => raw.clone(),
                     }
@@ -1392,7 +1400,7 @@ impl Viewport {
                 }
             }
             let display_bytes = if let Some(r) = self.display.as_ref() {
-                match r.render_line(&raw) {
+                match r.render_line(&raw, self.opts.encoding) {
                     Some(s) => std::borrow::Cow::Owned(s.into_bytes()),
                     None => raw.clone(),
                 }
@@ -1483,6 +1491,9 @@ impl Viewport {
                 highlights.push(row_highlights);
                 if raw_passthrough {
                     if first_emitted_for_this_line {
+                        // charset does not apply: raw passthrough emits the
+                        // original source bytes verbatim so the terminal's own
+                        // decoder handles them — intentional bypass of encoding.
                         // Emit the original line bytes verbatim once. Sub-rows
                         // (mid-line wrap continuations) are no-ops — the
                         // terminal will have already consumed enough columns
@@ -1782,7 +1793,9 @@ impl Viewport {
         let mut row_styles: Vec<RowStyle> = Vec::with_capacity(body_rows);
         let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
 
-        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None };
+        // charset does not apply: hex shows raw source bytes as hex digits —
+        // encoding is meaningless here; the formatter works on byte values directly.
+        let opts = RenderOpts { cols: self.cols, wrap: false, tab_width: 1, mode: crate::render::AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None, encoding: crate::charset::Encoding::utf8() };
 
         for row_idx in 0..body_rows {
             let hex_row = self.top_line + row_idx;
@@ -4205,5 +4218,18 @@ mod tests {
         vp.set_scroll_lock(false);
         let frame = vp.frame(&src, &mut idx);
         assert!(!frame.status.contains("[lock]"));
+    }
+
+    #[test]
+    fn search_finds_decoded_latin1_line() {
+        // lines: "alpha", "café" (latin1: 63 61 66 E9), "gamma"
+        let data = [b"alpha\n".as_ref(), &[0x63, 0x61, 0x66, 0xE9, 0x0a], b"gamma\n"].concat();
+        let (m, mut idx) = setup(&data);
+        let mut vp = Viewport::new(20, 5, "f".into());
+        vp.opts.encoding = crate::charset::parse_label("iso-8859-1").unwrap();
+        vp.set_search("caf\u{e9}".into(), SearchDirection::Forward).unwrap();
+        let found = vp.search_repeat(&m, &mut idx, false);
+        assert!(found, "search should find latin-1 encoded 'café' on line 1");
+        assert_eq!(vp.top_line, 1, "viewport should have scrolled to line 1");
     }
 }

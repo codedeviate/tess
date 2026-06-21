@@ -63,6 +63,9 @@ pub struct RenderOpts {
     /// listed column; past the final stop the last interval repeats. `None`
     /// uses uniform `tab_width` spacing.
     pub tab_stops: Option<Vec<usize>>,
+    /// Input charset. UTF-8 (default) keeps the grapheme-cluster + `<HH>`
+    /// path; any other encoding decodes the line first (see render_line).
+    pub encoding: crate::charset::Encoding,
 }
 
 impl Default for RenderOpts {
@@ -72,6 +75,7 @@ impl Default for RenderOpts {
             mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false,
             left_col: 0,
             tab_stops: None,
+            encoding: crate::charset::Encoding::utf8(),
         }
     }
 }
@@ -262,6 +266,20 @@ pub fn render_line(
     opts: &RenderOpts,
     state: Option<&mut RenderState>,
 ) -> Vec<Vec<Cell>> {
+    // Charset decode: for non-UTF-8 encodings, transcode the line to UTF-8 up
+    // front so the existing grapheme/width/tab/control pipeline renders the
+    // decoded glyphs. UTF-8 keeps the original bytes (and its <HH> behavior).
+    // (C1 controls 0x80–0x9F become their codepoints' UTF-8 here; for v1 they
+    // render as glyphs if the control branch only checks single low bytes.)
+    let decoded: std::borrow::Cow<[u8]> = if opts.encoding.is_utf8() {
+        std::borrow::Cow::Borrowed(bytes)
+    } else {
+        std::borrow::Cow::Owned(
+            crate::charset::decode_line(bytes, opts.encoding).into_owned().into_bytes()
+        )
+    };
+    let bytes = decoded.as_ref();
+
     let cols = opts.cols as usize;
     let mut rows: Vec<Vec<Cell>> = Vec::new();
     let mut current: Vec<Cell> = Vec::with_capacity(cols);
@@ -774,7 +792,7 @@ mod tests {
     }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None, encoding: crate::charset::Encoding::utf8() }
     }
 
     fn ch(c: char) -> Cell {
@@ -863,6 +881,31 @@ mod tests {
         assert_eq!(rows[0][1], ch('F'));
         assert_eq!(rows[0][2], ch('F'));
         assert_eq!(rows[0][3], ch('>'));
+    }
+
+    #[test]
+    fn latin1_high_byte_renders_as_glyph() {
+        let mut opts = RenderOpts::default();
+        opts.encoding = crate::charset::parse_label("iso-8859-1").unwrap();
+        opts.cols = 10;
+        let rows = render_line(&[0x63, 0x61, 0x66, 0xE9], &opts, None); // "caf" + 0xE9
+        let text: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        }).collect();
+        assert!(text.starts_with("café"), "got: {text:?}");
+        assert!(!text.contains('<'), "should not show <E9>");
+    }
+
+    #[test]
+    fn utf8_default_path_unchanged_for_invalid_byte() {
+        let opts = RenderOpts::default(); // encoding defaults to utf-8
+        let rows = render_line(&[0xC3], &opts, None); // lone invalid byte
+        let text: String = rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        }).collect();
+        assert!(text.contains("<C3>"), "utf-8 path must keep <HH>; got {text:?}");
     }
 
     #[test]

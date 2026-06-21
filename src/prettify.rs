@@ -149,24 +149,26 @@ pub fn resolve(
     ResolvedType::Undetected
 }
 
-/// Run the transform for `mode` over `input`. `Off` returns the input verbatim
-/// (still allocates — callers can short-circuit if they care). On parse
-/// failure, returns the error string for the status line.
-pub fn prettify(mode: PrettifyMode, input: &[u8]) -> Result<Vec<u8>, String> {
+/// Run the transform for `mode` over `input` using `enc` to decode bytes to
+/// text where required. `Off` returns the input verbatim (still allocates —
+/// callers can short-circuit if they care). On parse failure, returns the
+/// error string for the status line.
+pub fn prettify(mode: PrettifyMode, input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
     match mode {
         PrettifyMode::Off => Ok(input.to_vec()),
-        PrettifyMode::Json => prettify_json(input),
-        PrettifyMode::Yaml => prettify_yaml(input),
-        PrettifyMode::Toml => prettify_toml(input),
+        PrettifyMode::Json => prettify_json(input, enc),
+        PrettifyMode::Yaml => prettify_yaml(input, enc),
+        PrettifyMode::Toml => prettify_toml(input, enc),
         PrettifyMode::Xml => prettify_xml(input, false),
         PrettifyMode::Html => prettify_xml(input, true),
-        PrettifyMode::Csv => prettify_csv(input),
+        PrettifyMode::Csv => prettify_csv(input, enc),
     }
 }
 
-fn prettify_json(input: &[u8]) -> Result<Vec<u8>, String> {
+fn prettify_json(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
+    let s = crate::charset::decode_line(input, enc);
     let value: serde_json::Value =
-        serde_json::from_slice(input).map_err(|e| format!("json parse: {e}"))?;
+        serde_json::from_str(&s).map_err(|e| format!("json parse: {e}"))?;
     let mut out = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;
     if !out.ends_with(b"\n") {
         out.push(b'\n');
@@ -174,17 +176,17 @@ fn prettify_json(input: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn prettify_yaml(input: &[u8]) -> Result<Vec<u8>, String> {
-    let s = std::str::from_utf8(input).map_err(|e| format!("yaml: utf-8: {e}"))?;
+fn prettify_yaml(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
+    let s = crate::charset::decode_line(input, enc);
     let value: serde_yml::Value =
-        serde_yml::from_str(s).map_err(|e| format!("yaml parse: {e}"))?;
+        serde_yml::from_str(&s).map_err(|e| format!("yaml parse: {e}"))?;
     serde_yml::to_string(&value)
         .map(|s| s.into_bytes())
         .map_err(|e| format!("yaml emit: {e}"))
 }
 
-fn prettify_toml(input: &[u8]) -> Result<Vec<u8>, String> {
-    let s = std::str::from_utf8(input).map_err(|e| format!("toml: utf-8: {e}"))?;
+fn prettify_toml(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
+    let s = crate::charset::decode_line(input, enc);
     let value: toml::Value = s.parse().map_err(|e: toml::de::Error| format!("toml parse: {e}"))?;
     toml::to_string_pretty(&value)
         .map(|s| s.into_bytes())
@@ -224,12 +226,15 @@ fn prettify_xml(input: &[u8], lenient: bool) -> Result<Vec<u8>, String> {
 /// Render CSV as a fixed-width aligned table with `|` separators.
 /// Wide cells are truncated at 60 characters with an ellipsis so a single
 /// runaway free-text column doesn't blow up the layout.
-fn prettify_csv(input: &[u8]) -> Result<Vec<u8>, String> {
+fn prettify_csv(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
     const COL_CAP: usize = 60;
+    // Decode via the active charset so non-UTF-8 CSV (e.g. Latin-1) is parsed
+    // as text rather than raw bytes.
+    let decoded = crate::charset::decode_line(input, enc);
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
-        .from_reader(input);
+        .from_reader(decoded.as_bytes());
     let records: Vec<csv::StringRecord> = rdr
         .records()
         .collect::<Result<_, _>>()
@@ -325,9 +330,11 @@ mod tests {
         assert_eq!(detect_from_bytes(b"   \n\t  "), None);
     }
 
+    fn utf8() -> crate::charset::Encoding { crate::charset::Encoding::utf8() }
+
     #[test]
     fn prettify_json_indents_compact_input() {
-        let out = prettify(PrettifyMode::Json, b"{\"a\":1,\"b\":[2,3]}").unwrap();
+        let out = prettify(PrettifyMode::Json, b"{\"a\":1,\"b\":[2,3]}", utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("\"a\": 1"));
         assert!(s.contains("\"b\":"));
@@ -337,12 +344,12 @@ mod tests {
 
     #[test]
     fn prettify_json_returns_error_on_bad_input() {
-        assert!(prettify(PrettifyMode::Json, b"{not json").is_err());
+        assert!(prettify(PrettifyMode::Json, b"{not json", utf8()).is_err());
     }
 
     #[test]
     fn prettify_yaml_round_trips() {
-        let out = prettify(PrettifyMode::Yaml, b"a: 1\nb:\n  - 2\n  - 3\n").unwrap();
+        let out = prettify(PrettifyMode::Yaml, b"a: 1\nb:\n  - 2\n  - 3\n", utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("a:"));
         assert!(s.contains("b:"));
@@ -350,7 +357,7 @@ mod tests {
 
     #[test]
     fn prettify_toml_indents_compact_input() {
-        let out = prettify(PrettifyMode::Toml, b"a=1\nb=2\n[s]\nc=3\n").unwrap();
+        let out = prettify(PrettifyMode::Toml, b"a=1\nb=2\n[s]\nc=3\n", utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("a = 1"));
         assert!(s.contains("[s]"));
@@ -358,7 +365,7 @@ mod tests {
 
     #[test]
     fn prettify_xml_indents_with_text_preservation() {
-        let out = prettify(PrettifyMode::Xml, b"<root><a>x</a><b/></root>").unwrap();
+        let out = prettify(PrettifyMode::Xml, b"<root><a>x</a><b/></root>", utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("<root>"));
         assert!(s.contains("<a>x</a>"));
@@ -371,7 +378,7 @@ mod tests {
         // <br> and <img> are void in HTML but not self-closed in source — strict
         // XML mode would error; html mode (lenient) tolerates it.
         let html = b"<html><body><br><img src=\"x\"></body></html>";
-        let out = prettify(PrettifyMode::Html, html).unwrap();
+        let out = prettify(PrettifyMode::Html, html, utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("<html>"));
         assert!(s.contains("<br"));
@@ -379,7 +386,7 @@ mod tests {
 
     #[test]
     fn prettify_csv_aligns_columns() {
-        let out = prettify(PrettifyMode::Csv, b"name,age\nalice,30\nbob,4\n").unwrap();
+        let out = prettify(PrettifyMode::Csv, b"name,age\nalice,30\nbob,4\n", utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         // Each row should have the same byte width up to the separator.
         let lines: Vec<&str> = s.lines().collect();
@@ -395,7 +402,7 @@ mod tests {
     fn prettify_csv_truncates_long_cells() {
         let big = "x".repeat(200);
         let input = format!("a,{big}\n1,2\n");
-        let out = prettify(PrettifyMode::Csv, input.as_bytes()).unwrap();
+        let out = prettify(PrettifyMode::Csv, input.as_bytes(), utf8()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains('…'), "expected ellipsis truncation, got: {s}");
     }
@@ -403,8 +410,19 @@ mod tests {
     #[test]
     fn prettify_off_passes_through() {
         let raw = b"arbitrary bytes\nwith newlines\n";
-        let out = prettify(PrettifyMode::Off, raw).unwrap();
+        let out = prettify(PrettifyMode::Off, raw, utf8()).unwrap();
         assert_eq!(&out, raw);
+    }
+
+    #[test]
+    fn prettify_json_latin1_decodes_non_ascii() {
+        // JSON value "caf\xe9" encoded as Latin-1 (0xE9 = é).
+        // prettify with iso-8859-1 should decode to "café" before parsing.
+        let enc = crate::charset::parse_label("iso-8859-1").unwrap();
+        let input = b"{\"name\":\"caf\xe9\"}";
+        let out = prettify(PrettifyMode::Json, input, enc).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("café"), "expected café in output, got: {s}");
     }
 
     #[test]

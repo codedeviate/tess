@@ -32,6 +32,7 @@ pub mod pane;
 pub mod tags;
 pub mod keymap;
 pub mod config_path;
+pub mod charset;
 #[cfg(feature = "image")]
 pub mod anim;
 #[cfg(feature = "image")]
