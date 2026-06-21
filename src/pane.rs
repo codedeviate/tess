@@ -133,6 +133,60 @@ fn fit_pane_status(s: &str, w: usize, focused: bool) -> String {
     out
 }
 
+/// Stitch N pre-rendered column frames left-to-right with dividers between them.
+/// `widths[i]` is column i's content width; `focused_idx` marks which pane's
+/// status carries the `*`. Per-row cells concatenated (resized to width), each
+/// frame's highlight ranges shifted by its running column origin, row-level dim
+/// flattened into cells, statuses fit-to-width + joined by the divider char.
+/// Pure; cell-mode only (raw_rows/image_blob = none).
+pub fn compose_panes(frames: &[Frame], widths: &[u16], cols: u16, focused_idx: usize) -> Frame {
+    let body_rows = frames.iter().map(|f| f.body.len()).max().unwrap_or(0);
+    let mut body = Vec::with_capacity(body_rows);
+    let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::with_capacity(body_rows);
+    let mut row_styles = Vec::with_capacity(body_rows);
+    let empty: Vec<Cell> = Vec::new();
+    for r in 0..body_rows {
+        let mut row = Vec::with_capacity(cols as usize);
+        let mut hl: Vec<std::ops::Range<usize>> = Vec::new();
+        let mut origin = 0usize;
+        for (i, f) in frames.iter().enumerate() {
+            let w = widths[i] as usize;
+            let mut cells = f.body.get(r).cloned().unwrap_or_else(|| empty.clone());
+            cells.resize(w, Cell::Empty);
+            if f.row_styles.get(r) == Some(&RowStyle::Dim) {
+                flatten_dim(&mut cells);
+            }
+            row.extend(cells);
+            if let Some(ranges) = f.highlights.get(r) {
+                hl.extend(ranges.iter().map(|x| (x.start + origin)..(x.end + origin)));
+            }
+            origin += w;
+            if i + 1 < frames.len() {
+                row.push(divider_cell());
+                origin += DIVIDER;
+            }
+        }
+        body.push(row);
+        highlights.push(hl);
+        row_styles.push(RowStyle::Normal);
+    }
+    let status: String = frames
+        .iter()
+        .enumerate()
+        .map(|(i, f)| fit_pane_status(&f.status, widths[i] as usize, i == focused_idx))
+        .collect::<Vec<_>>()
+        .join("\u{2502}");
+    Frame {
+        body,
+        row_styles,
+        highlights,
+        status,
+        status_style: frames.get(focused_idx).map(|f| f.status_style).unwrap_or_default(),
+        raw_rows: vec![None; body_rows],
+        image_blob: None,
+    }
+}
+
 /// Stitch two half-width pane frames into one full-width frame:
 /// `left cells | divider | right cells` per body row, per-pane statuses joined,
 /// right pane's highlight ranges shifted past the divider, row-level dim
@@ -346,5 +400,42 @@ mod tests {
     #[test]
     fn split_widths_n_one_is_full_width() {
         assert_eq!(super::split_widths_n(80, 1), vec![80]);
+    }
+
+    #[test]
+    fn compose_panes_stitches_n_with_dividers() {
+        use crate::render::Cell;
+        use crate::viewport::{Frame, RowStyle};
+        let mk = |ch: char, w: usize| Frame {
+            body: vec![vec![Cell::Char { ch, width: 1, style: Default::default(), hyperlink: None }; w]],
+            row_styles: vec![RowStyle::Normal], highlights: vec![vec![]],
+            status: format!("{ch}"), status_style: Default::default(),
+            raw_rows: vec![None], image_blob: None,
+        };
+        let frames = vec![mk('a', 3), mk('b', 3), mk('c', 3)];
+        let widths = vec![3u16, 3, 3];
+        let cols = 3 + 1 + 3 + 1 + 3; // 11
+        let out = super::compose_panes(&frames, &widths, cols as u16, 0);
+        assert!(matches!(out.body[0][3], Cell::Char { ch: '\u{2502}', .. }));
+        assert!(matches!(out.body[0][7], Cell::Char { ch: '\u{2502}', .. }));
+        assert!(matches!(out.body[0][0], Cell::Char { ch: 'a', .. }));
+        assert!(matches!(out.body[0][4], Cell::Char { ch: 'b', .. }));
+        assert!(matches!(out.body[0][8], Cell::Char { ch: 'c', .. }));
+    }
+
+    #[test]
+    fn compose_panes_offsets_right_highlights() {
+        use crate::render::Cell;
+        use crate::viewport::{Frame, RowStyle};
+        let mk = |w: usize, hl: Vec<std::ops::Range<usize>>| Frame {
+            body: vec![vec![Cell::Char { ch: 'x', width: 1, style: Default::default(), hyperlink: None }; w]],
+            row_styles: vec![RowStyle::Normal], highlights: vec![hl],
+            status: String::new(), status_style: Default::default(),
+            raw_rows: vec![None], image_blob: None,
+        };
+        let frames = vec![mk(3, vec![0..1]), mk(3, vec![1..2])];
+        let out = super::compose_panes(&frames, &vec![3u16, 3], 7, 0);
+        assert!(out.highlights[0].contains(&(0..1)));
+        assert!(out.highlights[0].contains(&(5..6))); // right pane offset by 3 + DIVIDER(1) = 4
     }
 }
