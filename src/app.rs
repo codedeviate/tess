@@ -963,8 +963,8 @@ fn dispatch_colon_command(
             ColonOutcome::Continue(Some(format!("[case: {label}]")))
         }
         // Split commands and encoding are intercepted in the event loop (they
-        // need the loose `other_pane`/`cols`/`rows`/`focused_left` locals or
-        // must apply to both panes) and never reach this file-set-only dispatcher.
+        // need the loose `others`/`cols`/`rows`/`focused_pos` locals or must
+        // apply to every pane) and never reach this file-set-only dispatcher.
         ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock
         | ColonCommand::SetEncoding(_)
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
@@ -1074,49 +1074,122 @@ fn force_cell_mode(vp: &mut Viewport) {
     vp.set_ansi_mode_cells();
 }
 
-/// Initialize split layout: size both panes to half-widths and force cell mode.
-/// Returns the stashed other pane (None when not splitting).
-fn other_pane_init(
-    second: Option<crate::pane::Pane>,
-    focused_vp: &mut Viewport,
-    cols: u16,
-    rows: u16,
-) -> Option<crate::pane::Pane> {
-    let mut other = second?;
-    let (lw, rw) = crate::pane::split_widths(cols);
-    if rw == 0 {
-        focused_vp.resize(cols, rows);
-    } else {
-        focused_vp.resize(lw, rows);
-        other.viewport.resize(rw, rows);
-    }
-    force_cell_mode(focused_vp);
-    force_cell_mode(&mut other.viewport);
-    Some(other)
+/// Physical column → `others` slot index. Physical columns include the focused
+/// pane at `focused_pos`; an `others` slot maps to the physical column on its
+/// own side of the focused pane. Caller must ensure `phys != focused_pos`.
+fn other_slot(phys: usize, focused_pos: usize) -> usize {
+    if phys < focused_pos { phys } else { phys - 1 }
 }
 
-/// Resize the focused viewport, sizing the other pane's viewport to the
-/// complementary half-width when a split is active (focused-pane-only fallback
-/// when the terminal is too narrow to split).
-fn resize_split_aware(
+/// `others` slot index → physical column. Inverse of `other_slot`.
+fn phys_of_slot(slot: usize, focused_pos: usize) -> usize {
+    if slot < focused_pos { slot } else { slot + 1 }
+}
+
+/// Initialize split layout: size the focused viewport + every other pane to its
+/// physical column width and force cell mode. With `focused_pos` the focused
+/// pane occupies physical column `focused_pos`. Mirrors the legacy 2-pane
+/// `other_pane_init` when `others.len() == 1`.
+fn panes_init(
+    others: &mut [crate::pane::Pane],
     focused_vp: &mut Viewport,
-    other_pane: &mut Option<crate::pane::Pane>,
+    focused_pos: usize,
     cols: u16,
     rows: u16,
-    focused_left: bool,
 ) {
-    if let Some(other) = other_pane.as_mut() {
-        let (lw, rw) = crate::pane::split_widths(cols);
-        if rw == 0 {
-            focused_vp.resize(cols, rows);
-        } else {
-            let (fw, ow) = if focused_left { (lw, rw) } else { (rw, lw) };
-            focused_vp.resize(fw, rows);
-            other.viewport.resize(ow, rows);
-        }
-    } else {
+    let n = others.len() + 1;
+    let widths = crate::pane::split_widths_n(cols, n);
+    if widths.len() == 1 {
         focused_vp.resize(cols, rows);
+    } else {
+        focused_vp.resize(widths[focused_pos], rows);
+        for (slot, other) in others.iter_mut().enumerate() {
+            let phys = phys_of_slot(slot, focused_pos);
+            other.viewport.resize(widths[phys], rows);
+        }
     }
+    force_cell_mode(focused_vp);
+    for other in others.iter_mut() {
+        force_cell_mode(&mut other.viewport);
+    }
+}
+
+/// Resize the focused viewport, sizing each other pane's viewport to its
+/// physical column width when a split is active (focused-pane-only fallback
+/// when the terminal is too narrow to split into N panes).
+fn resize_split_aware(
+    focused_vp: &mut Viewport,
+    others: &mut [crate::pane::Pane],
+    cols: u16,
+    rows: u16,
+    focused_pos: usize,
+) {
+    if others.is_empty() {
+        focused_vp.resize(cols, rows);
+        return;
+    }
+    let n = others.len() + 1;
+    let widths = crate::pane::split_widths_n(cols, n);
+    if widths.len() == 1 {
+        focused_vp.resize(cols, rows);
+    } else {
+        focused_vp.resize(widths[focused_pos], rows);
+        for (slot, other) in others.iter_mut().enumerate() {
+            let phys = phys_of_slot(slot, focused_pos);
+            other.viewport.resize(widths[phys], rows);
+        }
+    }
+}
+
+/// Capture per-physical-column scroll-lock offsets relative to the leftmost
+/// pane. The focused viewport sits at physical column `focused_pos`; each other
+/// pane at its own physical column. `offsets[i] = top_i - top_0`, so the
+/// leftmost pane's offset is always 0. Independent of which pane is focused, so
+/// a `Tab` rotation never disturbs the captured alignment (Tab-invariant).
+fn capture_lock_offsets(
+    focused_vp: &Viewport,
+    others: &[crate::pane::Pane],
+    focused_pos: usize,
+) -> Vec<isize> {
+    let n = others.len() + 1;
+    let mut tops = vec![0isize; n];
+    tops[focused_pos] = focused_vp.top_line() as isize;
+    for (slot, other) in others.iter().enumerate() {
+        tops[phys_of_slot(slot, focused_pos)] = other.viewport.top_line() as isize;
+    }
+    let base = tops[0];
+    tops.iter().map(|t| t - base).collect()
+}
+
+/// Next physical pane index when cycling focus over `n` panes. `forward` →
+/// Tab (next, wrapping); else BackTab (previous, wrapping). Pure.
+fn rotate_index(focused_pos: usize, n: usize, forward: bool) -> usize {
+    if forward {
+        (focused_pos + 1) % n
+    } else {
+        (focused_pos + n - 1) % n
+    }
+}
+
+/// Rotate focus among the N physical panes. `focused` is the currently-focused
+/// pane (built from the loose locals); `others` are the rest in slot order.
+/// Returns the new focused pane, the new others list, and the new `focused_pos`.
+/// `forward` cycles to the next physical pane (Tab), else previous (BackTab);
+/// both wrap. Move-by-value: no placeholders.
+fn rotate_focus(
+    focused: crate::pane::Pane,
+    others: Vec<crate::pane::Pane>,
+    focused_pos: usize,
+    forward: bool,
+) -> (crate::pane::Pane, Vec<crate::pane::Pane>, usize) {
+    let n = others.len() + 1;
+    // Materialize the full physical order with `focused` reinserted at its slot.
+    let mut all: Vec<crate::pane::Pane> = Vec::with_capacity(n);
+    all.extend(others);
+    all.insert(focused_pos, focused);
+    let next = rotate_index(focused_pos, n, forward);
+    let new_focused = all.remove(next);
+    (new_focused, all, next)
 }
 
 /// Expand a leading `~/` against `$HOME`. Shared by `:e`/`:edit` and the
@@ -1368,7 +1441,7 @@ pub fn run(
     args: crate::cli::Args,
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
-    second_pane: Option<crate::pane::Pane>,
+    extra_panes: Vec<crate::pane::Pane>,
     #[cfg(feature = "image")]
     startup_image_protocol: (crate::viewport::ImageProtocol, Option<(u16, u16)>),
 ) -> Result<()> {
@@ -1387,20 +1460,27 @@ pub fn run(
     let mut last_tick = std::time::Instant::now();
     let mut last_revision = src.revision();
 
-    let mut other_pane = other_pane_init(second_pane, &mut viewport, cols, rows);
-    // `Tab` flips this to swap which logical pane is focused; physical
-    // left/right placement is decided by this flag in the render/resize
-    // branches, so a focus swap must keep each physical side at its own width.
-    let mut focused_left = true;
+    // N-pane model: the focused pane lives in the loose locals
+    // (`src`/`idx`/`viewport`/`last_revision`/`last_tick`); every other pane is
+    // a `Pane` in `others` (0 panes = single view, 1 = 2-pane split). `Tab`
+    // rotates which physical pane is focused; `focused_pos` is its physical
+    // column index (0 = leftmost). Each physical side keeps its own width across
+    // a focus rotation (matters on odd widths where columns differ).
+    let mut others: Vec<crate::pane::Pane> = extra_panes;
+    let mut focused_pos: usize = 0;
+    panes_init(&mut others, &mut viewport, focused_pos, cols, rows);
     let mut scroll_lock = false;
-    let mut lock_offset: isize = 0;
+    // Per-physical-column scroll-lock offsets relative to the leftmost pane,
+    // captured at lock enable. Empty when scroll-lock is off.
+    let mut lock_offsets: Vec<isize> = Vec::new();
 
     // Diff mode: Some when aligned diff is active.
     let mut diff: Option<DiffState> = None;
 
-    // Startup --diff: build initial diff state if a second pane is available.
+    // Startup --diff: build initial diff state if exactly one other pane exists.
     if args.diff {
-        if let Some(other) = other_pane.as_mut() {
+        if others.len() == 1 {
+            let other = &mut others[0];
             let ignore_ws = args.diff_ignore_whitespace;
             match build_diff(
                 src.as_ref(), &mut idx,
@@ -1416,18 +1496,12 @@ pub fn run(
                 }
             }
         }
-        // If no other_pane: leave diff=None, user will see plain view.
+        // If not exactly one other pane: leave diff=None, user will see plain view.
     }
 
-    if args.scroll_lock {
-        if let Some(other) = other_pane.as_ref() {
-            lock_offset = crate::pane::capture_lock_offset(
-                viewport.top_line(),
-                other.viewport.top_line(),
-                focused_left,
-            );
-            scroll_lock = true;
-        }
+    if args.scroll_lock && !others.is_empty() {
+        lock_offsets = capture_lock_offsets(&viewport, &others, focused_pos);
+        scroll_lock = true;
     }
 
     // If hide-mode filtering is active (--filter or --grep without --dim),
@@ -1521,10 +1595,13 @@ pub fn run(
                 viewport.set_status_marks(status_marks);
             }
             viewport.set_scroll_lock(scroll_lock);
-            let mut frame = if diff.is_some() && other_pane.is_some() {
-                // Safety: both are Some — borrow them separately to avoid split-borrow issues.
+            let mut frame = if diff.is_some() && others.len() == 1 {
+                // Diff stays a 2-pane feature: render the focused pane against
+                // the single other pane, ordered by `focused_pos` (0 → focused
+                // left). `compose_diff`'s `focused_left` flag picks the side.
                 let d = diff.as_ref().unwrap();
-                let other = other_pane.as_mut().unwrap();
+                let other = &mut others[0];
+                let focused_left = focused_pos == 0;
                 let (lw, _rw) = crate::pane::split_widths(cols);
                 let pane_opts = diff_pane_opts(&viewport, lw);
                 let body_rows = (rows - 1) as usize;
@@ -1541,31 +1618,48 @@ pub fn run(
                     if d.ignore_ws { " [ws]" } else { "" }
                 );
                 f
-            } else if let Some(other) = other_pane.as_mut() {
-                if scroll_lock {
-                    let focused_top = viewport.top_line();
-                    let partner_max = other.idx.line_count().saturating_sub(1);
-                    let target = crate::pane::locked_partner_top(
-                        focused_top, lock_offset, focused_left, partner_max,
-                    );
-                    other.viewport.goto_line(target, other.src.as_ref(), &mut other.idx);
-                }
-                other.viewport.set_scroll_lock(false);
-                let (lw, rw) = crate::pane::split_widths(cols);
-                if rw == 0 {
+            } else if !others.is_empty() {
+                let n = others.len() + 1;
+                let widths = crate::pane::split_widths_n(cols, n);
+                if widths.len() == 1 {
+                    // Too narrow to split: focused pane full-width.
                     viewport.frame(src.as_ref(), &mut idx)
                 } else {
-                    let ffr = viewport.frame(src.as_ref(), &mut idx);
-                    let ofr = other.viewport.frame(other.src.as_ref(), &mut other.idx);
-                    // Physical-left always renders at `lw`, physical-right at
-                    // `rw`, regardless of focus; `focused_left` only decides
-                    // which logical pane sits on which side (and gets the `*`).
-                    let (left_fr, right_fr) = if focused_left {
-                        (&ffr, &ofr)
-                    } else {
-                        (&ofr, &ffr)
-                    };
-                    crate::pane::compose_split(left_fr, right_fr, lw, cols, focused_left)
+                    // Re-derive each other pane's top under scroll-lock from the
+                    // focused pane's top and the fixed per-column offsets.
+                    if scroll_lock {
+                        let focused_top = viewport.top_line();
+                        for (slot, other) in others.iter_mut().enumerate() {
+                            let phys = phys_of_slot(slot, focused_pos);
+                            let pane_max = other.idx.line_count().saturating_sub(1);
+                            let target = crate::pane::locked_pane_top(
+                                focused_top,
+                                lock_offsets[focused_pos],
+                                lock_offsets[phys],
+                                pane_max,
+                            );
+                            other.viewport.goto_line(target, other.src.as_ref(), &mut other.idx);
+                        }
+                    }
+                    for other in others.iter_mut() {
+                        other.viewport.set_scroll_lock(false);
+                    }
+                    // Render the focused frame first (borrows the loose locals),
+                    // then build the physical-ordered frame list.
+                    let focused_frame = viewport.frame(src.as_ref(), &mut idx);
+                    let other_frames: Vec<Frame> = others
+                        .iter_mut()
+                        .map(|o| o.viewport.frame(o.src.as_ref(), &mut o.idx))
+                        .collect();
+                    let mut frames: Vec<Frame> = Vec::with_capacity(n);
+                    for phys in 0..n {
+                        if phys == focused_pos {
+                            frames.push(focused_frame.clone());
+                        } else {
+                            frames.push(other_frames[other_slot(phys, focused_pos)].clone());
+                        }
+                    }
+                    crate::pane::compose_panes(&frames, &widths, cols, focused_pos)
                 }
             } else {
                 viewport.frame(src.as_ref(), &mut idx)
@@ -1615,7 +1709,7 @@ pub fn run(
         #[cfg(feature = "image")]
         let timeout = {
             let mut d = viewport.anim_deadline();
-            if let Some(other) = other_pane.as_ref() {
+            for other in others.iter() {
                 d = match (d, other.viewport.anim_deadline()) {
                     (Some(a), Some(b)) => Some(a.min(b)),
                     (a, b) => a.or(b),
@@ -1907,7 +2001,7 @@ pub fn run(
                                     } else {
                                         match parse_colon_command(buffer) {
                                             Ok(ColonCommand::VSplit(path_arg)) => {
-                                                if other_pane.is_some() {
+                                                if !others.is_empty() {
                                                     viewport.flash("already split (`:only` first)", 30);
                                                 } else {
                                                     let (lw, rw) = crate::pane::split_widths(cols);
@@ -1931,10 +2025,11 @@ pub fn run(
                                                             Ok(mut pane) => {
                                                                 force_cell_mode(&mut viewport);
                                                                 force_cell_mode(&mut pane.viewport);
-                                                                focused_left = true;
+                                                                // New pane to the right; focused stays leftmost.
+                                                                focused_pos = 0;
                                                                 viewport.resize(lw, rows);
                                                                 pane.viewport.resize(rw, rows);
-                                                                other_pane = Some(pane);
+                                                                others.push(pane);
                                                             }
                                                             Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
                                                         }
@@ -1943,8 +2038,10 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Only) => {
-                                                if other_pane.take().is_some() {
+                                                if !others.is_empty() {
+                                                    others.clear();
                                                     scroll_lock = false;
+                                                    lock_offsets.clear();
                                                     diff = None;
                                                     viewport.resize(cols, rows);
                                                     #[cfg(feature = "image")]
@@ -1952,19 +2049,18 @@ pub fn run(
                                                         let (proto, cell_px) = startup_image_protocol;
                                                         viewport.set_image_protocol(proto, cell_px);
                                                     }
-                                                    focused_left = true;
+                                                    focused_pos = 0;
                                                 }
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::ScrollLock) => {
-                                                if let Some(other) = other_pane.as_ref() {
+                                                if !others.is_empty() {
                                                     if scroll_lock {
                                                         scroll_lock = false;
+                                                        lock_offsets.clear();
                                                     } else {
-                                                        lock_offset = crate::pane::capture_lock_offset(
-                                                            viewport.top_line(),
-                                                            other.viewport.top_line(),
-                                                            focused_left,
+                                                        lock_offsets = capture_lock_offsets(
+                                                            &viewport, &others, focused_pos,
                                                         );
                                                         scroll_lock = true;
                                                     }
@@ -1979,7 +2075,7 @@ pub fn run(
                                                         match crate::charset::parse_label(&label) {
                                                             Some(enc) => {
                                                                 viewport.set_encoding(enc);
-                                                                if let Some(other) = other_pane.as_mut() {
+                                                                for other in others.iter_mut() {
                                                                     other.viewport.set_encoding(enc);
                                                                 }
                                                             }
@@ -1997,7 +2093,10 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Diff { force }) => {
-                                                if let Some(other) = other_pane.as_mut() {
+                                                if others.len() >= 2 {
+                                                    viewport.flash("diff needs exactly 2 panes", 40);
+                                                } else if others.len() == 1 {
+                                                    let other = &mut others[0];
                                                     let ignore_ws = diff.as_ref()
                                                         .map(|d| d.ignore_ws)
                                                         .unwrap_or(args.diff_ignore_whitespace);
@@ -2026,7 +2125,8 @@ pub fn run(
                                             Ok(ColonCommand::DiffToggleWs) => {
                                                 if let Some(d) = diff.as_ref() {
                                                     let new_ws = !d.ignore_ws;
-                                                    if let Some(other) = other_pane.as_mut() {
+                                                    if others.len() == 1 {
+                                                        let other = &mut others[0];
                                                         match build_diff(
                                                             src.as_ref(), &mut idx,
                                                             other.src.as_ref(), &mut other.idx,
@@ -2240,7 +2340,7 @@ pub fn run(
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
-                    resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
+                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
                     }
@@ -2472,7 +2572,8 @@ pub fn run(
                     Command::GotoRecord => {
                         if let Some(d) = diff.as_mut() {
                             // G: go to last pair
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2510,7 +2611,7 @@ pub fn run(
                     Command::Resize(c, r) => {
                         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
-                        resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
+                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }
@@ -2518,7 +2619,8 @@ pub fn run(
                     }
                     Command::ScrollLines(n) => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2533,7 +2635,8 @@ pub fn run(
                     }
                     Command::ScrollLogicalLines(n) => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2548,7 +2651,8 @@ pub fn run(
                     }
                     Command::PageDown => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2564,7 +2668,8 @@ pub fn run(
                     }
                     Command::PageUp => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2580,7 +2685,8 @@ pub fn run(
                     }
                     Command::HalfPageDown => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2596,7 +2702,8 @@ pub fn run(
                     }
                     Command::HalfPageUp => {
                         if let Some(d) = diff.as_mut() {
-                            if let Some(other) = other_pane.as_mut() {
+                            if others.len() == 1 {
+                                let other = &mut others[0];
                                 let (lw, rw) = crate::pane::split_widths(cols);
                                 let lopts = diff_pane_opts(&viewport, lw);
                                 let ropts = diff_pane_opts(&viewport, rw);
@@ -2610,7 +2717,8 @@ pub fn run(
                         }
                         needs_redraw = true;
                     }
-                    Command::FocusOtherPane => {
+                    cmd @ (Command::FocusOtherPane | Command::FocusPrevPane) => {
+                        let forward = cmd == Command::FocusOtherPane;
                         if diff.is_some() {
                             // In diff mode the panes are aligned and scroll as one
                             // unit, so "focus" is meaningless — and a swap would
@@ -2619,35 +2727,47 @@ pub fn run(
                             // panicking on unequal-length files. Lock focus here.
                             viewport.flash("focus is locked in diff mode (:nodiff to exit)", 40);
                             needs_redraw = true;
-                        } else if let Some(other) = other_pane.as_mut() {
-                            std::mem::swap(&mut src, &mut other.src);
-                            std::mem::swap(&mut idx, &mut other.idx);
-                            std::mem::swap(&mut viewport, &mut other.viewport);
-                            std::mem::swap(&mut last_revision, &mut other.last_revision);
+                        } else if !others.is_empty() {
+                            // Rotate focus by value: bundle the loose locals into a
+                            // `Pane`, rotate the full physical order, then unpack the
+                            // new focused pane back into the loose locals. No
+                            // placeholders — `rotate_focus` moves everything.
+                            let focused = crate::pane::Pane {
+                                src,
+                                idx,
+                                viewport,
+                                last_revision,
+                                #[cfg(feature = "image")]
+                                last_tick,
+                            };
+                            let taken = std::mem::take(&mut others);
+                            let (nf, no, np) = rotate_focus(focused, taken, focused_pos, forward);
+                            src = nf.src;
+                            idx = nf.idx;
+                            viewport = nf.viewport;
+                            last_revision = nf.last_revision;
+                            // The newly-focused pane's `last_tick` is intentionally
+                            // dropped: the end-of-input block below resets the
+                            // focused pane's tick clock to `now()` regardless (same
+                            // as the pre-N-pane swap path did).
                             #[cfg(feature = "image")]
-                            std::mem::swap(&mut last_tick, &mut other.last_tick);
-                            focused_left = !focused_left;
-                            // Re-assert physical-side widths: the render/resize
-                            // branches key width off `focused_left`, so after the
-                            // swap+flip each viewport must be resized to the side
-                            // it now occupies (matters on odd widths where lw != rw).
-                            resize_split_aware(&mut viewport, &mut other_pane, cols, rows, focused_left);
+                            let _ = nf.last_tick;
+                            others = no;
+                            focused_pos = np;
+                            // Re-assert physical-side widths: each viewport must be
+                            // resized to the column it now occupies (matters on odd
+                            // widths where columns differ).
+                            resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
                             needs_redraw = true;
                         }
                     }
-                    Command::FocusPrevPane => {
-                        // wired in the N-pane refactor task
-                    }
                     Command::ToggleScrollLock => {
-                        if let Some(other) = other_pane.as_ref() {
+                        if !others.is_empty() {
                             if scroll_lock {
                                 scroll_lock = false;
+                                lock_offsets.clear();
                             } else {
-                                lock_offset = crate::pane::capture_lock_offset(
-                                    viewport.top_line(),
-                                    other.viewport.top_line(),
-                                    focused_left,
-                                );
+                                lock_offsets = capture_lock_offsets(&viewport, &others, focused_pos);
                                 scroll_lock = true;
                             }
                             needs_redraw = true;
@@ -2929,7 +3049,7 @@ pub fn run(
                     last_tick = std::time::Instant::now();
                 }
                 #[cfg(feature = "image")]
-                if let Some(other) = other_pane.as_mut() {
+                for other in others.iter_mut() {
                     other.last_tick = std::time::Instant::now();
                 }
             }
@@ -2944,7 +3064,7 @@ pub fn run(
                     if viewport.tick(dt) { needs_redraw = true; }
                 }
                 #[cfg(feature = "image")]
-                if let Some(other) = other_pane.as_mut() {
+                for other in others.iter_mut() {
                     let odt = other.last_tick.elapsed();
                     other.last_tick = std::time::Instant::now();
                     if other.viewport.tick(odt) { needs_redraw = true; }
@@ -3033,9 +3153,9 @@ pub fn run(
                         needs_redraw = true;
                     }
                 }
-                // Drive follow/live growth for the background pane too, so a
-                // split with two growing files updates both halves.
-                if let Some(other) = other_pane.as_mut() {
+                // Drive follow/live growth for every background pane too, so a
+                // split with growing files updates all halves.
+                for other in others.iter_mut() {
                     if pump_pane(
                         &mut other.src,
                         &mut other.idx,
@@ -3615,6 +3735,33 @@ mod tests {
     fn parse_colon_n() {
         assert_eq!(parse_colon_command("n").unwrap(), ColonCommand::Next);
         assert_eq!(parse_colon_command("next").unwrap(), ColonCommand::Next);
+    }
+
+    #[test]
+    fn pane_phys_slot_mapping_roundtrips() {
+        // focused at physical column 2 over 4 panes (others slots 0,1,2 map to
+        // physical 0,1,3). other_slot is the inverse of phys_of_slot off-focus.
+        for focused_pos in 0..4 {
+            for slot in 0..3 {
+                let phys = phys_of_slot(slot, focused_pos);
+                assert_ne!(phys, focused_pos, "a slot never maps to the focused column");
+                assert_eq!(other_slot(phys, focused_pos), slot, "round-trip slot↔phys");
+            }
+        }
+    }
+
+    #[test]
+    fn rotate_index_wraps_both_directions() {
+        // 3 panes: forward 0→1→2→0; backward 0→2→1→0.
+        assert_eq!(rotate_index(0, 3, true), 1);
+        assert_eq!(rotate_index(2, 3, true), 0);
+        assert_eq!(rotate_index(0, 3, false), 2);
+        assert_eq!(rotate_index(1, 3, false), 0);
+        // 2 panes (the behavior-preserving case): Tab and BackTab both toggle.
+        assert_eq!(rotate_index(0, 2, true), 1);
+        assert_eq!(rotate_index(1, 2, true), 0);
+        assert_eq!(rotate_index(0, 2, false), 1);
+        assert_eq!(rotate_index(1, 2, false), 0);
     }
 
     #[test]

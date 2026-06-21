@@ -517,7 +517,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         stub_args,
         None,
         None,
-        None,
+        vec![],
         #[cfg(feature = "image")]
         (tess::viewport::ImageProtocol::Ascii, None),
     )?;
@@ -1338,7 +1338,10 @@ showing raw (use --content-type=NAME to override)"
     // file-backed launch (not stdin/clipboard): the second file is `files[1]`
     // if present, otherwise a second view of `files[0]`. `other_pane_init`
     // inside `app::run` resizes both panes, so `cols`/`rows` are provisional.
-    let second_pane: Option<tess::pane::Pane> = if args.split || args.diff {
+    // Extra panes for the N-pane model. Today only a single second pane is
+    // built (for `--split`/`--diff`), collected into a Vec; multi-pane startup
+    // is lit up in a later task.
+    let extra_panes: Vec<tess::pane::Pane> = if args.split || args.diff {
         let second_path = args.files.get(1).or_else(|| args.files.first()).cloned();
         match second_path {
             Some(p) => match build_second_pane(
@@ -1352,16 +1355,16 @@ showing raw (use --content-type=NAME to override)"
                 resolved_enc,
                 right_case_mode,
             ) {
-                Ok(pane) => Some(pane),
+                Ok(pane) => vec![pane],
                 Err(e) => {
                     eprintln!("tess: --split second pane: {e}");
-                    None
+                    vec![]
                 }
             },
-            None => None,
+            None => vec![],
         }
     } else {
-        None
+        vec![]
     };
 
     app::run(
@@ -1376,7 +1379,7 @@ showing raw (use --content-type=NAME to override)"
         args,
         preprocessor,
         tag_file,
-        second_pane,
+        extra_panes,
         #[cfg(feature = "image")]
         startup_image_protocol,
     )?;
