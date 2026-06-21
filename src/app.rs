@@ -2072,6 +2072,17 @@ pub fn run(
                                                     &mut tag_stack,
                                                     tag_file.as_ref(),
                                                 );
+                                                // A runtime predicate command (:grep/:filter/:format)
+                                                // clears the focused pane's visible-line cache; rebuild
+                                                // it now so a hide-mode pane isn't left blank on a
+                                                // static source. No-op when not hide-filtering or when
+                                                // the cache is already current.
+                                                if (viewport.filter_active() || viewport.grep_active())
+                                                    && !viewport.dim_mode()
+                                                {
+                                                    idx.extend_to_end(src.as_ref());
+                                                    viewport.extend_visible_lines(&idx, src.as_ref());
+                                                }
                                                 match outcome {
                                                     ColonOutcome::Continue(msg) => {
                                                         transient_status = msg.or(reload_msg);

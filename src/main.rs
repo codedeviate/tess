@@ -397,6 +397,13 @@ fn build_second_pane(
     if let Some(d) = rp.display {
         viewport.set_display(Some(d));
     }
+    // In hide mode, pane B's visible-line cache must be built up front (the
+    // setters cleared it) — otherwise a `--right-grep`/`--right-filter` pane
+    // renders blank on a static source. Mirrors the focused-pane startup scan.
+    if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
+        idx.extend_to_end(src.as_ref());
+        viewport.extend_visible_lines(&idx, src.as_ref());
+    }
 
     Ok(tess::pane::Pane {
         last_revision: src.revision(),
@@ -1474,5 +1481,29 @@ mod tests {
         let r2 = resolve_pane_predicates(&[], &["status=404".to_string()], Some("apache-common"), None, case).unwrap();
         assert!(r2.filter.is_some());
         assert_eq!(r2.format_label.as_deref(), Some("apache-common"));
+    }
+
+    #[test]
+    fn build_second_pane_hide_mode_is_not_blank() {
+        // Regression: a `--right-grep` (hide-mode) pane B must build its
+        // visible-line cache up front, else it renders blank on a static file.
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "alpha").unwrap();
+        writeln!(f, "beta MATCH").unwrap();
+        writeln!(f, "gamma").unwrap();
+        f.flush().unwrap();
+        let args = Args::parse_from(["tess", "--split", "x", "y", "--right-grep", "MATCH"]);
+        let mut pane = build_second_pane(
+            f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
+            tess::charset::Encoding::utf8(), tess::viewport::CaseMode::Sensitive,
+        ).unwrap();
+        let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
+        let text: String = frame.body.iter().flat_map(|row| row.iter().filter_map(|c| match c {
+            tess::render::Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })).collect();
+        assert!(text.contains("MATCH"), "pane B should show the matching line; got {text:?}");
+        assert!(!text.contains("alpha"), "pane B should hide non-matching lines; got {text:?}");
     }
 }
