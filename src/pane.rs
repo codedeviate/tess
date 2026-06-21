@@ -36,39 +36,6 @@ pub fn split_widths(cols: u16) -> (u16, u16) {
     (left as u16, (usable - left) as u16)
 }
 
-/// Capture the fixed scroll-lock offset in stable physical terms:
-/// `right_top - left_top`. Independent of which pane is focused, so a `Tab`
-/// focus-swap never disturbs it. Returned as `isize` (the right pane may sit
-/// above the left).
-pub fn capture_lock_offset(focused_top: usize, partner_top: usize, focused_left: bool) -> isize {
-    let (left, right) = if focused_left {
-        (focused_top, partner_top)
-    } else {
-        (partner_top, focused_top)
-    };
-    right as isize - left as isize
-}
-
-/// Re-derive the non-focused pane's top line from the focused pane's current
-/// top line and the fixed `offset` (`right_top - left_top`), clamped to
-/// `0..=partner_max`. Always recomputed from the offset (never accumulated),
-/// so an EOF/top clamp holds without drift and the alignment restores once it
-/// fits again.
-pub fn locked_partner_top(
-    focused_top: usize,
-    offset: isize,
-    focused_left: bool,
-    partner_max: usize,
-) -> usize {
-    let raw = if focused_left {
-        // Focused is physical left; partner is right = left + offset.
-        focused_top as isize + offset
-    } else {
-        // Focused is physical right; partner is left = right - offset.
-        focused_top as isize - offset
-    };
-    raw.clamp(0, partner_max as isize) as usize
-}
 
 /// Re-derive a pane's top line under scroll-lock. `focused_top` is the focused
 /// pane's current top; `focused_offset`/`pane_offset` are the two panes' offsets
@@ -197,56 +164,6 @@ pub fn compose_panes(frames: &[Frame], widths: &[u16], cols: u16, focused_idx: u
     }
 }
 
-/// Stitch two half-width pane frames into one full-width frame:
-/// `left cells | divider | right cells` per body row, per-pane statuses joined,
-/// right pane's highlight ranges shifted past the divider, row-level dim
-/// flattened into cells. Pure.
-pub fn compose_split(left: &Frame, right: &Frame, left_w: u16, cols: u16, focused_left: bool) -> Frame {
-    let lw = left_w as usize;
-    let rw = (cols as usize).saturating_sub(lw + DIVIDER);
-    let body_rows = left.body.len().max(right.body.len());
-    let mut body = Vec::with_capacity(body_rows);
-    let mut highlights = Vec::with_capacity(body_rows);
-    let empty_row: Vec<Cell> = Vec::new();
-    let no_hl: Vec<std::ops::Range<usize>> = Vec::new();
-    for r in 0..body_rows {
-        let mut lcells = left.body.get(r).cloned().unwrap_or_else(|| empty_row.clone());
-        lcells.resize(lw, Cell::Empty);
-        if left.row_styles.get(r) == Some(&RowStyle::Dim) {
-            flatten_dim(&mut lcells);
-        }
-        let mut rcells = right.body.get(r).cloned().unwrap_or_else(|| empty_row.clone());
-        rcells.resize(rw, Cell::Empty);
-        if right.row_styles.get(r) == Some(&RowStyle::Dim) {
-            flatten_dim(&mut rcells);
-        }
-        let mut row = Vec::with_capacity(cols as usize);
-        row.extend(lcells);
-        row.push(divider_cell());
-        row.extend(rcells);
-        body.push(row);
-
-        let off = lw + DIVIDER;
-        let mut hl = left.highlights.get(r).cloned().unwrap_or_else(|| no_hl.clone());
-        if let Some(rh) = right.highlights.get(r) {
-            hl.extend(rh.iter().map(|x| (x.start + off)..(x.end + off)));
-        }
-        highlights.push(hl);
-    }
-    let lstat = fit_pane_status(&left.status, lw, focused_left);
-    let rstat = fit_pane_status(&right.status, rw, !focused_left);
-    let status = format!("{lstat}\u{2502}{rstat}");
-    Frame {
-        body,
-        row_styles: vec![RowStyle::Normal; body_rows],
-        highlights,
-        status,
-        status_style: left.status_style,
-        raw_rows: vec![None; body_rows],
-        image_blob: None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,119 +193,27 @@ mod tests {
     }
 
     #[test]
-    fn compose_stitches_rows_with_divider() {
-        let l = frame(vec![vec![cell('a'), cell('b')]], "L");
-        let r = frame(vec![vec![cell('x'), cell('y')]], "R");
-        let m = compose_split(&l, &r, 2, 5, true);
-        assert_eq!(m.body.len(), 1);
-        let row = &m.body[0];
-        assert_eq!(row.len(), 5);
-        assert!(matches!(row[0], Cell::Char { ch: 'a', .. }));
-        assert!(matches!(row[1], Cell::Char { ch: 'b', .. }));
-        assert!(matches!(row[2], Cell::Char { ch: '\u{2502}', .. }), "divider at col 2");
-        assert!(matches!(row[3], Cell::Char { ch: 'x', .. }));
-        assert!(matches!(row[4], Cell::Char { ch: 'y', .. }));
-        assert!(m.status.starts_with("*L"), "focused-left status marked: {:?}", m.status);
-        assert!(m.status.contains('\u{2502}'));
-    }
-
-    #[test]
-    fn right_pane_highlights_shifted_past_divider() {
-        let l = frame(vec![vec![cell('a'), cell('b')]], "L");
-        let mut r = frame(vec![vec![cell('x'), cell('y')]], "R");
-        r.highlights[0] = vec![0..1];
-        let m = compose_split(&l, &r, 2, 5, true);
-        assert_eq!(m.highlights[0], vec![3..4]);
-    }
-
-    #[test]
-    fn dim_row_flattened_into_cells() {
-        let mut l = frame(vec![vec![cell('a')]], "L");
-        l.row_styles[0] = RowStyle::Dim;
-        let r = frame(vec![vec![cell('x')]], "R");
-        let m = compose_split(&l, &r, 1, 3, true);
-        match &m.body[0][0] {
-            Cell::Char { style, .. } => assert!(style.dim, "left dim flattened into cell"),
-            _ => panic!(),
+    fn compose_panes_flattens_dim_row_into_cells() {
+        let mut a = frame(vec![vec![cell('a')]], "A");
+        a.row_styles[0] = RowStyle::Dim;
+        let b = frame(vec![vec![cell('b')]], "B");
+        let out = compose_panes(&[a, b], &[1u16, 1], 3, 0);
+        match &out.body[0][0] {
+            Cell::Char { style, .. } => assert!(style.dim, "dim flattened into the cell"),
+            _ => panic!("expected a Char cell"),
         }
-        assert_eq!(m.row_styles[0], RowStyle::Normal, "merged row style is Normal");
+        assert_eq!(out.row_styles[0], RowStyle::Normal, "merged row style is Normal");
     }
 
     #[test]
-    fn focused_right_marks_right_status() {
-        // cols=5 so the right pane has width 2 — room for the `*R` marker.
-        // (At cols=3 the 1-col right pane can only hold `*`, truncating the `R`.)
-        let l = frame(vec![vec![cell('a'), cell('b')]], "L");
-        let r = frame(vec![vec![cell('x'), cell('y')]], "R");
-        let m = compose_split(&l, &r, 2, 5, false);
-        assert!(m.status.contains("\u{2502}*R"), "focused-right status marked: {:?}", m.status);
-    }
-
-    #[test]
-    fn uneven_body_rows_pad_with_empty() {
-        // Left has 2 rows, right has 1: merged row 1's right half must be all Empty,
-        // and every merged row is exactly left_w + divider + right_w cells.
-        let l = frame(vec![vec![cell('a')], vec![cell('b')]], "L"); // 2 rows
-        let r = frame(vec![vec![cell('x')]], "R");                  // 1 row
-        let m = compose_split(&l, &r, 1, 3, true); // lw=1, rw = 3-(1+1)=1
-        assert_eq!(m.body.len(), 2, "merged uses the taller pane's row count");
-        for row in &m.body {
-            assert_eq!(row.len(), 3, "each merged row is lw + divider + rw");
-            assert!(matches!(row[1], Cell::Char { ch: '\u{2502}', .. }), "divider at col 1");
-        }
-        // Row 1: left 'b', divider, right padded Empty.
-        assert!(matches!(m.body[1][0], Cell::Char { ch: 'b', .. }));
-        assert!(matches!(m.body[1][2], Cell::Empty), "missing right row → Empty pad");
-    }
-
-    #[test]
-    fn pane_status_truncates_to_width() {
-        // A status longer than the pane width is fit-truncated by display columns.
-        // lw=4: focused-left status "*LongStatus" truncates to 4 cols → "*Lon".
-        let l = frame(vec![vec![cell('a')]], "LongStatus");
-        let r = frame(vec![vec![cell('x')]], "R");
-        let m = compose_split(&l, &r, 4, 9, true); // lw=4, rw = 9-(4+1)=4
-        // Left status segment is exactly the first 4 cols of the row's status.
-        assert!(m.status.starts_with("*Lon"), "focused-left status truncated to width 4: {:?}", m.status);
-        // The divider separates the two pane statuses; left segment is 4 wide.
-        let div_pos = m.status.find('\u{2502}').expect("divider in status");
-        // 4 display columns before the divider (all ASCII here → 4 bytes).
-        assert_eq!(div_pos, 4, "left status occupies exactly left_w columns before divider");
-    }
-
-    #[test]
-    fn capture_lock_offset_is_right_minus_left_either_focus() {
-        // Physical: left_top = 100, right_top = 340 → offset 240, regardless
-        // of which side is focused.
-        assert_eq!(super::capture_lock_offset(100, 340, true), 240);  // focused = left
-        assert_eq!(super::capture_lock_offset(340, 100, false), 240); // focused = right
-    }
-
-    #[test]
-    fn locked_partner_top_applies_offset_per_focus_side() {
-        let offset = 240; // right - left
-        assert_eq!(super::locked_partner_top(105, offset, true, 100_000), 345);
-        assert_eq!(super::locked_partner_top(345, offset, false, 100_000), 105);
-    }
-
-    #[test]
-    fn locked_partner_top_clamps_low_and_high() {
-        assert_eq!(super::locked_partner_top(10, 240, false, 100_000), 0);
-        assert_eq!(super::locked_partner_top(5_000, 240, true, 5_100), 5_100);
-    }
-
-    #[test]
-    fn locked_partner_top_restores_after_clamp() {
-        let offset = 240;
-        assert_eq!(super::locked_partner_top(10, offset, false, 100_000), 0);
-        assert_eq!(super::locked_partner_top(300, offset, false, 100_000), 60);
-    }
-
-    #[test]
-    fn locked_partner_top_is_tab_invariant() {
-        let offset = 240;
-        assert_eq!(super::locked_partner_top(100, offset, true, 100_000), 340);
-        assert_eq!(super::locked_partner_top(340, offset, false, 100_000), 100);
+    fn compose_panes_status_marks_focused_and_truncates() {
+        // focused pane (index 0) gets `*` and its status fit-truncates to width 4:
+        // "*LongStatus" → "*Lon"; divider at column 4.
+        let a = frame(vec![vec![cell('a')]], "LongStatus");
+        let b = frame(vec![vec![cell('b')]], "B");
+        let out = compose_panes(&[a, b], &[4u16, 4], 9, 0);
+        assert!(out.status.starts_with("*Lon"), "focused status marked + truncated: {:?}", out.status);
+        assert_eq!(out.status.find('\u{2502}'), Some(4), "left status occupies exactly 4 cols");
     }
 
     #[test]

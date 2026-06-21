@@ -1447,7 +1447,7 @@ showing raw (use --content-type=NAME to override)"
     ) {
         Ok(panes) => panes,
         Err(e) => {
-            eprintln!("tess: --split pane setup: {e}");
+            eprintln!("tess: pane setup: {e}");
             vec![]
         }
     };
