@@ -116,6 +116,18 @@ pub enum Command {
     /// `=` — in split view, toggle synchronized scrolling between panes.
     /// No-op in single-pane mode. Remappable via `scroll-lock-toggle` in keys.toml.
     ToggleScrollLock,
+    /// `]` — first half of the `]c` vimdiff-style next-change chord.
+    /// The following `c` triggers DiffNextChange; any other key cancels.
+    BracketClosePrefix,
+    /// `[` — first half of the `[c` vimdiff-style prev-change chord.
+    /// The following `c` triggers DiffPrevChange; any other key cancels.
+    BracketOpenPrefix,
+    /// Jump to the next diff hunk/change (dispatched from BracketClosePending mode).
+    /// Wired to the diff engine in the diff task.
+    DiffNextChange,
+    /// Jump to the previous diff hunk/change (dispatched from BracketOpenPending mode).
+    /// Wired to the diff engine in the diff task.
+    DiffPrevChange,
     Noop,
 }
 
@@ -183,6 +195,8 @@ fn translate_key(code: KeyCode, mods: KeyModifiers) -> Command {
         (Backspace, _) => Command::AnimRestart,
         (Tab, _) => Command::FocusOtherPane,
         (Char('='), false) => Command::ToggleScrollLock,
+        (Char(']'), false) => Command::BracketClosePrefix,
+        (Char('['), false) => Command::BracketOpenPrefix,
         _ => Command::Noop,
     }
 }
@@ -387,6 +401,22 @@ mod tests {
         assert_eq!(
             translate(key(KeyCode::Char('='), KeyModifiers::NONE)),
             Command::ToggleScrollLock
+        );
+    }
+
+    #[test]
+    fn bracket_close_produces_bracket_close_prefix() {
+        assert_eq!(
+            translate(key(KeyCode::Char(']'), KeyModifiers::NONE)),
+            Command::BracketClosePrefix,
+        );
+    }
+
+    #[test]
+    fn bracket_open_produces_bracket_open_prefix() {
+        assert_eq!(
+            translate(key(KeyCode::Char('['), KeyModifiers::NONE)),
+            Command::BracketOpenPrefix,
         );
     }
 

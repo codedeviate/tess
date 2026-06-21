@@ -55,6 +55,10 @@ enum InputMode {
     MarkJumpPending,
     /// First half of the Ctrl-X Ctrl-X chord.
     CtrlXPending,
+    /// User pressed `]`; the next keystroke `c` triggers DiffNextChange.
+    BracketClosePending,
+    /// User pressed `[`; the next keystroke `c` triggers DiffPrevChange.
+    BracketOpenPending,
     /// User pressed `:`. The next keystrokes build a colon command in
     /// `buffer`; Enter dispatches, Esc cancels.
     ColonPrompt { buffer: String, error: Option<String> },
@@ -118,6 +122,14 @@ enum ColonCommand {
     /// `:encoding [LABEL]` — switch active encoding (e.g. `iso-8859-1`), or
     /// display the current encoding label when no argument is given.
     SetEncoding(Option<String>),
+    /// `:diff` / `:diff!` — enter aligned diff mode. `force: true` when `!`
+    /// is appended (re-align even if already in diff mode). Wired in diff task.
+    Diff { force: bool },
+    /// `:nodiff` — exit aligned diff mode. Wired in diff task.
+    NoDiff,
+    /// `:diffws` — toggle whitespace-significance in the diff alignment.
+    /// Wired in diff task.
+    DiffToggleWs,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -266,6 +278,10 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "encoding" => Ok(ColonCommand::SetEncoding(
             (!rest.is_empty()).then(|| rest.to_string())
         )),
+        "diff"  => Ok(ColonCommand::Diff { force: false }),
+        "diff!" => Ok(ColonCommand::Diff { force: true }),
+        "nodiff"  => Ok(ColonCommand::NoDiff),
+        "diffws"  => Ok(ColonCommand::DiffToggleWs),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -932,8 +948,9 @@ fn dispatch_colon_command(
         // need the loose `other_pane`/`cols`/`rows`/`focused_left` locals or
         // must apply to both panes) and never reach this file-set-only dispatcher.
         ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock
-        | ColonCommand::SetEncoding(_) => {
-            unreachable!("split/scroll-lock/encoding commands are handled in the run() event loop")
+        | ColonCommand::SetEncoding(_)
+        | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
+            unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
         }
     }
 }
@@ -1553,6 +1570,24 @@ pub fn run(
                         // Anything else: cancel and fall through to normal dispatch.
                         mode = InputMode::Normal;
                         // Don't `continue` — let the event fall through.
+                    }
+                    InputMode::BracketClosePending => {
+                        // `]c` → DiffNextChange; any other key cancels.
+                        if matches!(event, Event::Key(KeyEvent { code: KeyCode::Char('c'), .. })) {
+                            // wired in the diff task
+                        }
+                        mode = InputMode::Normal;
+                        needs_redraw = true;
+                        continue;
+                    }
+                    InputMode::BracketOpenPending => {
+                        // `[c` → DiffPrevChange; any other key cancels.
+                        if matches!(event, Event::Key(KeyEvent { code: KeyCode::Char('c'), .. })) {
+                            // wired in the diff task
+                        }
+                        mode = InputMode::Normal;
+                        needs_redraw = true;
+                        continue;
                     }
                     InputMode::ColonPrompt { buffer, error } => {
                         if let Event::Key(KeyEvent { code, .. }) = event {
@@ -2270,6 +2305,15 @@ pub fn run(
                     Command::JumpPrevious => {
                         // Resolved inside the CtrlXPending mode intercept; this
                         // arm is defensive and should never fire.
+                    }
+                    Command::BracketClosePrefix => {
+                        mode = InputMode::BracketClosePending;
+                    }
+                    Command::BracketOpenPrefix => {
+                        mode = InputMode::BracketOpenPending;
+                    }
+                    Command::DiffNextChange | Command::DiffPrevChange => {
+                        // wired in the diff task
                     }
                     Command::TagPrompt => {
                         if tag_file.is_none() {
@@ -3707,5 +3751,13 @@ mod tests {
         write_row_with_highlights(&mut buf, &cells, 80, &[], crate::ansi::Style::default(), true).unwrap();
         let s = String::from_utf8_lossy(&buf);
         assert!(s.contains("\x1b]8;;https://example.com\x1b\\"), "got: {s:?}");
+    }
+
+    #[test]
+    fn parse_colon_diff_commands() {
+        assert_eq!(parse_colon_command("diff").unwrap(), ColonCommand::Diff { force: false });
+        assert_eq!(parse_colon_command("diff!").unwrap(), ColonCommand::Diff { force: true });
+        assert_eq!(parse_colon_command("nodiff").unwrap(), ColonCommand::NoDiff);
+        assert_eq!(parse_colon_command("diffws").unwrap(), ColonCommand::DiffToggleWs);
     }
 }
