@@ -494,6 +494,42 @@ pub struct Args {
     pub files: Vec<PathBuf>,
 }
 
+/// Split a full argv (including `argv[0]`) on each standalone `--` token into
+/// one section per pane. Each returned section is prefixed with `argv[0]` so it
+/// can be fed straight to `format::expand_argv` / `Args::parse_from`. Zero `--`
+/// tokens yields a single section equal to the input. An empty section
+/// (leading, trailing, or consecutive `--`) is an error.
+pub fn split_argv_sections(argv: &[String]) -> Result<Vec<Vec<String>>, String> {
+    if argv.is_empty() {
+        return Ok(vec![Vec::new()]);
+    }
+    let prog = argv[0].clone();
+    // No separator → single section, unchanged.
+    if !argv[1..].iter().any(|a| a == "--") {
+        return Ok(vec![argv.to_vec()]);
+    }
+    let mut sections: Vec<Vec<String>> = Vec::new();
+    let mut cur: Vec<String> = vec![prog.clone()];
+    let mut cur_has_token = false;
+    for a in &argv[1..] {
+        if a == "--" {
+            if !cur_has_token {
+                return Err("empty pane section (check for stray or doubled `--`)".to_string());
+            }
+            sections.push(std::mem::replace(&mut cur, vec![prog.clone()]));
+            cur_has_token = false;
+        } else {
+            cur.push(a.clone());
+            cur_has_token = true;
+        }
+    }
+    if !cur_has_token {
+        return Err("empty pane section (check for stray or doubled `--`)".to_string());
+    }
+    sections.push(cur);
+    Ok(sections)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1003,5 +1039,42 @@ mod tests {
             })
             .collect();
         assert_eq!(listed, expected, "help long-flag order should be alphabetical");
+    }
+
+    #[test]
+    fn split_sections_no_separator_is_single() {
+        let v = vec!["tess".to_string(), "a".to_string(), "--grep".to_string(), "x".to_string()];
+        let out = split_argv_sections(&v).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0], v);
+    }
+
+    #[test]
+    fn split_sections_one_separator_splits_two() {
+        let v = ["tess", "a", "--grep", "x", "--", "b", "--grep", "y"]
+            .iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let out = split_argv_sections(&v).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], vec!["tess", "a", "--grep", "x"]);
+        assert_eq!(out[1], vec!["tess", "b", "--grep", "y"]);
+    }
+
+    #[test]
+    fn split_sections_n_separators() {
+        let v = ["tess", "a", "--", "b", "--", "c"]
+            .iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let out = split_argv_sections(&v).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[2], vec!["tess", "c"]);
+    }
+
+    #[test]
+    fn split_sections_empty_section_errs() {
+        let trailing = ["tess", "a", "--"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(split_argv_sections(&trailing).is_err());
+        let consecutive = ["tess", "a", "--", "--", "b"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(split_argv_sections(&consecutive).is_err());
+        let leading = ["tess", "--", "b"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(split_argv_sections(&leading).is_err());
     }
 }
