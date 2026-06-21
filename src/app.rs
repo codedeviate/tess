@@ -130,6 +130,14 @@ enum ColonCommand {
     /// `:diffws` — toggle whitespace-significance in the diff alignment.
     /// Wired in diff task.
     DiffToggleWs,
+    /// `:grep PAT` (Some) / `:nogrep` (None) — raw-regex predicate on the focused pane.
+    Grep(Option<String>),
+    /// `:filter SPEC` (Some) / `:nofilter` (None) — field filter on the focused pane (needs a format).
+    Filter(Option<String>),
+    /// `:format NAME` (Some) / `:noformat` (None) — set/clear the focused pane's format.
+    Format(Option<String>),
+    /// `:display TMPL` (Some) / `:nodisplay` (None) — set/clear the focused pane's display template.
+    Display(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -282,6 +290,16 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "diff!" => Ok(ColonCommand::Diff { force: true }),
         "nodiff"  => Ok(ColonCommand::NoDiff),
         "diffws"  => Ok(ColonCommand::DiffToggleWs),
+        // Bare `:grep`/`:filter`/`:format`/`:display` with no argument parses to the
+        // None (clear) form, same as the explicit `:nogrep`/`:nofilter`/etc. aliases.
+        "grep" => Ok(ColonCommand::Grep((!rest.is_empty()).then(|| rest.to_string()))),
+        "nogrep" => Ok(ColonCommand::Grep(None)),
+        "filter" => Ok(ColonCommand::Filter((!rest.is_empty()).then(|| rest.to_string()))),
+        "nofilter" => Ok(ColonCommand::Filter(None)),
+        "format" => Ok(ColonCommand::Format((!rest.is_empty()).then(|| rest.to_string()))),
+        "noformat" => Ok(ColonCommand::Format(None)),
+        "display" => Ok(ColonCommand::Display((!rest.is_empty()).then(|| rest.to_string()))),
+        "nodisplay" => Ok(ColonCommand::Display(None)),
         other => Err(ColonParseError::UnknownCommand(other.to_string())),
     }
 }
@@ -952,6 +970,99 @@ fn dispatch_colon_command(
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
         }
+        ColonCommand::Grep(arg) => match arg {
+            None => { viewport.set_grep(None); ColonOutcome::Continue(Some("[grep cleared]".into())) }
+            Some(pat) => {
+                match crate::grep::GrepPredicate::compile(&[pat.clone()], viewport.case_mode()) {
+                    Ok(g) => { viewport.set_grep(Some(g)); ColonOutcome::Continue(Some(format!("[grep: {pat}]"))) }
+                    Err(e) => ColonOutcome::Continue(Some(format!("grep: {e}"))),
+                }
+            }
+        },
+        ColonCommand::Display(arg) => match arg {
+            None => { viewport.set_display(None); ColonOutcome::Continue(Some("[display cleared]".into())) }
+            Some(tmpl) => {
+                match viewport.format_label().map(|s| s.to_string()) {
+                    None => ColonOutcome::Continue(Some("display needs a format (:format NAME)".into())),
+                    Some(name) => match crate::format::load_all() {
+                        Err(e) => ColonOutcome::Continue(Some(format!("display: {e}"))),
+                        Ok(formats) => match formats.get(&name) {
+                            None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                            Some(fmt) => match crate::format::DisplayTemplate::compile(&tmpl, &fmt.field_names) {
+                                Ok(t) => {
+                                    viewport.set_display(Some(crate::format::DisplayRenderer::new(t, fmt.regex.clone())));
+                                    ColonOutcome::Continue(Some("[display set]".into()))
+                                }
+                                Err(e) => ColonOutcome::Continue(Some(format!("display: {e}"))),
+                            },
+                        },
+                    },
+                }
+            }
+        },
+        ColonCommand::Format(arg) => match arg {
+            None => {
+                viewport.set_format_label(None);
+                viewport.set_filter(None); // filter depends on the format
+                idx.clear_record_start();
+                ColonOutcome::Continue(Some("[format cleared]".into()))
+            }
+            Some(name) => match crate::format::load_all() {
+                Err(e) => ColonOutcome::Continue(Some(format!("format: {e}"))),
+                Ok(formats) => match formats.get(&name) {
+                    None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                    Some(fmt) => {
+                        // Convert the text-mode `regex::Regex` to `regex::bytes::Regex`
+                        // by round-tripping through the pattern string, matching what
+                        // main.rs does when building the startup record_start_regex.
+                        let bytes_re: Option<regex::bytes::Regex> =
+                            fmt.record_start.as_ref().and_then(|re| {
+                                regex::bytes::Regex::new(re.as_str()).ok()
+                            });
+                        idx.reset_record_start_opt(bytes_re);
+                        viewport.set_format_label(Some(name.clone()));
+                        ColonOutcome::Continue(Some(format!("[format: {name}]")))
+                    }
+                },
+            },
+        },
+        ColonCommand::Filter(arg) => match arg {
+            None => {
+                viewport.set_filter(None);
+                ColonOutcome::Continue(Some("[filter cleared]".into()))
+            }
+            Some(spec_str) => match viewport.format_label().map(|s| s.to_string()) {
+                None => {
+                    ColonOutcome::Continue(Some("filter needs a format (:format NAME)".into()))
+                }
+                Some(name) => match crate::format::load_all() {
+                    Err(e) => ColonOutcome::Continue(Some(format!("filter: {e}"))),
+                    Ok(formats) => match formats.get(&name) {
+                        None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                        Some(fmt) => match crate::filter::FilterSpec::parse(&spec_str) {
+                            Err(e) => ColonOutcome::Continue(Some(format!("filter: {e}"))),
+                            Ok(spec) => {
+                                match crate::filter::CompiledFilter::compile(
+                                    fmt,
+                                    vec![spec],
+                                    viewport.case_mode(),
+                                ) {
+                                    Ok(f) => {
+                                        viewport.set_filter(Some(f));
+                                        ColonOutcome::Continue(Some(format!(
+                                            "[filter: {spec_str}]"
+                                        )))
+                                    }
+                                    Err(e) => {
+                                        ColonOutcome::Continue(Some(format!("filter: {e}")))
+                                    }
+                                }
+                            }
+                        },
+                    },
+                },
+            },
+        },
     }
 }
 
@@ -1961,6 +2072,17 @@ pub fn run(
                                                     &mut tag_stack,
                                                     tag_file.as_ref(),
                                                 );
+                                                // A runtime predicate command (:grep/:filter/:format)
+                                                // clears the focused pane's visible-line cache; rebuild
+                                                // it now so a hide-mode pane isn't left blank on a
+                                                // static source. No-op when not hide-filtering or when
+                                                // the cache is already current.
+                                                if (viewport.filter_active() || viewport.grep_active())
+                                                    && !viewport.dim_mode()
+                                                {
+                                                    idx.extend_to_end(src.as_ref());
+                                                    viewport.extend_visible_lines(&idx, src.as_ref());
+                                                }
                                                 match outcome {
                                                     ColonOutcome::Continue(msg) => {
                                                         transient_status = msg.or(reload_msg);
@@ -4125,5 +4247,17 @@ mod tests {
         assert_eq!(parse_colon_command("diff!").unwrap(), ColonCommand::Diff { force: true });
         assert_eq!(parse_colon_command("nodiff").unwrap(), ColonCommand::NoDiff);
         assert_eq!(parse_colon_command("diffws").unwrap(), ColonCommand::DiffToggleWs);
+    }
+
+    #[test]
+    fn parse_colon_predicate_commands() {
+        assert_eq!(parse_colon_command("grep ERROR").unwrap(), ColonCommand::Grep(Some("ERROR".into())));
+        assert_eq!(parse_colon_command("nogrep").unwrap(), ColonCommand::Grep(None));
+        assert_eq!(parse_colon_command("filter status=404").unwrap(), ColonCommand::Filter(Some("status=404".into())));
+        assert_eq!(parse_colon_command("nofilter").unwrap(), ColonCommand::Filter(None));
+        assert_eq!(parse_colon_command("format nginx-combined").unwrap(), ColonCommand::Format(Some("nginx-combined".into())));
+        assert_eq!(parse_colon_command("noformat").unwrap(), ColonCommand::Format(None));
+        assert_eq!(parse_colon_command("display <status>").unwrap(), ColonCommand::Display(Some("<status>".into())));
+        assert_eq!(parse_colon_command("nodisplay").unwrap(), ColonCommand::Display(None));
     }
 }
