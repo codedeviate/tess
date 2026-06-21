@@ -511,6 +511,57 @@ fn build_extra_panes(
     Ok(vec![])
 }
 
+/// Build one pane per `--`-delimited section (sections 1..N of the per-pane argv
+/// form). Each `Args` here is a fully-parsed section: its file is the first
+/// positional, and its per-view flags (`--grep`/`--filter`/`--format`/
+/// `--display`/`-i`/`-I` + the shared display config) drive the pane. The global
+/// preprocessor (from section 0) is shared. Globals on a section's `Args` are
+/// ignored. Each section resolves its own encoding (inside `build_second_pane`)
+/// and its own record_start (from its `--format`).
+fn build_panes_from_sections(
+    sections: &[Args],
+    ansi_mode: tess::render::AnsiMode,
+    cols: u16,
+    rows: u16,
+    preprocessor: Option<&tess::preprocess::Preprocessor>,
+) -> Result<Vec<tess::pane::Pane>> {
+    let mut panes = Vec::with_capacity(sections.len());
+    for (i, sa) in sections.iter().enumerate() {
+        let pane_no = i + 2; // section 0 = focused pane (pane 1); these start at 2
+        let path = sa.files.first().ok_or_else(|| {
+            Error::Runtime(format!("pane {pane_no}: no file given"))
+        })?;
+        if !sa.filter.is_empty() && sa.format.is_none() {
+            return Err(Error::Runtime(format!(
+                "pane {pane_no}: --filter requires --format"
+            )));
+        }
+        if sa.display.is_some() && sa.format.is_none() {
+            return Err(Error::Runtime(format!(
+                "pane {pane_no}: --display requires --format"
+            )));
+        }
+        let case_mode = if sa.IGNORE_CASE {
+            tess::viewport::CaseMode::Insensitive
+        } else if sa.ignore_case {
+            tess::viewport::CaseMode::Smart
+        } else {
+            tess::viewport::CaseMode::Sensitive
+        };
+        let rp = resolve_pane_predicates(
+            &sa.grep, &sa.filter,
+            sa.format.as_deref(), sa.display.as_deref(),
+            case_mode,
+        )?;
+        let pane = build_second_pane(
+            path, sa, ansi_mode, cols, rows,
+            preprocessor, None, case_mode, rp,
+        )?;
+        panes.push(pane);
+    }
+    Ok(panes)
+}
+
 fn main() -> ExitCode {
     install_panic_hook();
     match real_main() {
@@ -1662,5 +1713,48 @@ mod tests {
             tess::viewport::CaseMode::Sensitive,
         ).unwrap();
         assert_eq!(extras.len(), 2); // panes for files[1] and files[2]
+    }
+
+    #[test]
+    fn sections_build_panes_with_independent_grep() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("tess_sec_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let pa = dir.join("a.txt");
+        let pb = dir.join("b.txt");
+        std::fs::File::create(&pa).unwrap().write_all(b"alpha\nbeta\n").unwrap();
+        std::fs::File::create(&pb).unwrap().write_all(b"gamma\ndelta\n").unwrap();
+
+        let s1 = Args::parse_from(["tess", pa.to_str().unwrap(), "--grep", "alpha"]);
+        let s2 = Args::parse_from(["tess", pb.to_str().unwrap()]);
+        let panes = build_panes_from_sections(
+            &[s1, s2],
+            tess::render::AnsiMode::Interpret,
+            80, 24,
+            None,
+        ).unwrap();
+        assert_eq!(panes.len(), 2);
+        assert!(panes[0].viewport.grep_active());
+        assert!(!panes[1].viewport.grep_active());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sections_filter_without_format_errs() {
+        let dir = std::env::temp_dir().join(format!("tess_secf_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let pa = dir.join("a.txt");
+        std::fs::write(&pa, b"x\n").unwrap();
+        let s = Args::parse_from(["tess", pa.to_str().unwrap(), "--filter", "status=404"]);
+        let err = build_panes_from_sections(&[s], tess::render::AnsiMode::Interpret, 80, 24, None);
+        assert!(err.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn sections_missing_file_errs() {
+        let s = Args::parse_from(["tess", "--grep", "x"]);
+        let err = build_panes_from_sections(&[s], tess::render::AnsiMode::Interpret, 80, 24, None);
+        assert!(err.is_err());
     }
 }
