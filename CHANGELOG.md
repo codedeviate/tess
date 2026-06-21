@@ -10,6 +10,43 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.44.0] — 2026-06-21
+
+### Added
+
+- **Aligned side-by-side diff mode.** Building on the split view, `--diff` /
+  `:diff` compute a line-level alignment of the two panes and render them so
+  matching lines sit beside each other — a real side-by-side compare inside the
+  pager. Completes the split-view series (split → sync-scroll → charset → diff).
+  - `--diff A B` opens the split and aligns in one shot; `:diff` enters diff on
+    an existing split, `:diff!` bypasses the size cap, `:nodiff` returns to the
+    plain split.
+  - **Alignment + fillers:** a Myers diff (via the `similar` crate) classifies
+    each line pair as equal / changed / added / removed; inserts/deletes show a
+    blank filler on the opposite side so the rest stays aligned. Long lines
+    wrap with **pair-padding** (each aligned pair occupies `max(left, right)`
+    rows). Per-line gutter signs `~`/`+`/`-` and colors; **intra-line character
+    highlighting** marks the differing characters within a changed line pair.
+  - **Navigation:** `]c` / `[c` jump to the next / previous change hunk
+    (remappable `diff-next-change` / `diff-prev-change`); the status shows a
+    `[diff i/n]` hunk counter.
+  - **Ignore whitespace:** `--diff-ignore-whitespace` (and runtime `:diffws`)
+    treat lines differing only in whitespace as equal.
+  - **Charset-aware:** the diff honors the active `--encoding`/`:encoding` —
+    decoded text drives both the alignment display and the intra-line char diff.
+  - **Huge files:** diffing reads both files fully and runs an O(ND) diff, so a
+    cap (~500k lines) refuses with a message and stays in the plain
+    (sync-scrollable) split unless `:diff!` / `--diff-force`. Diff is a snapshot
+    — `--follow`/`--live` auto-update is suspended while it's active.
+
+### Notes / v1 limitations
+
+- 2-pane vertical only (no horizontal/N>2). Diff operates on **raw file lines**
+  (no `--filter`/`--format`/`--display`). Intra-line highlighting is computed
+  only for changed lines that fit a single row on their pane. `Tab` (focus
+  swap) is locked while in diff mode — the panes scroll as one. A numbered
+  `<n>G` jumps to the top in diff mode (use `]c`/`[c` to navigate changes).
+
 ## [0.43.0] — 2026-06-21
 
 ### Added

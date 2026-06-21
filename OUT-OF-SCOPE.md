@@ -59,16 +59,18 @@ worth eating.
 
 ## Deferred
 
-### Horizontal split & diff alignment — **L**
+### Horizontal split & per-pane refinements — **L**
 
-Vertical 2-pane split shipped in `0.41.0` (`--split`, `:vsplit` / `:split` /
-`:only`); synchronized scrolling shipped in `0.42.0` (`=` / `:scrolllock` /
-`--scroll-lock`). What remains deferred:
+The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
+scrolling (`0.42.0` — `=` / `:scrolllock`), charset support (`0.43.0`), and
+aligned side-by-side **diff mode** (`0.44.0` — `--diff` / `:diff`, fillers,
+intra-line highlighting, `]c`/`[c`, ignore-whitespace). What remains deferred:
 
 - **Horizontal (stacked) split and N>2 panes.** Split is vertical, 2-pane only.
-- **Diff alignment.** Synchronized scrolling is line-based; a true side-by-side
-  diff (aligned hunks, change highlighting, filler rows for inserts/deletes) is
-  a separate, larger feature — the natural next cycle building on scroll-lock.
+- **Diff refinements.** Diff is 2-pane vertical, raw-line (no `--filter`/
+  `--format`), intra-line highlighting only on single-row changed lines, `Tab`
+  locked, numbered-goto jumps to top. Larger follow-ons: strict ISO-8859-1 (vs
+  WHATWG windows-1252), UTF-16 (needs whole-buffer transcode), 3-way diff.
 - **Format predicates in the second pane.** The second pane currently shows the
   plain file — `--filter` / `--grep` / `--format` / `--display` apply to the
   focused/first pane only. Per-pane predicates need a "which pane" notion

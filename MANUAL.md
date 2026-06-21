@@ -66,6 +66,9 @@ cmd | tess [OPTIONS]
 - **`--tail N`** — show only the last `N` logical lines. For files, reverse-scans for the byte offset and only indexes from there forward, so a 10 GB log stays cheap. Mutually exclusive with `--head`. Streaming stdin (`-f` without a file) is not supported. Re-applied on every reload under `--live`.
 - **`--head N`** — cap the visible content to the first `N` logical lines. Mutually exclusive with `--tail`. Re-applied on every reload under `--live`.
 - **`--encoding LABEL`** — decode the input as `LABEL` (a WHATWG charset label) instead of UTF-8. See [Character encoding](#character-encoding).
+- **`--diff`** — open a side-by-side aligned diff of two files (implies a split). Interactive only. See [Diff mode](#diff-mode---diff--diff). Runtime: `:diff`.
+- **`--diff-force`** — allow `--diff` past the size cap (large files; may be slow / memory-heavy). Runtime: `:diff!`.
+- **`--diff-ignore-whitespace`** — in `--diff`, treat lines differing only in whitespace as equal. Runtime: `:diffws`.
 
 ### Character encoding
 
@@ -264,6 +267,7 @@ tess --clipboard app.log                                # then :yank a line
 | `Backspace` | Animated image: restart from the first frame |
 | `Tab` | Switch the focused pane in a split (see [Split view](#split-view); no-op without a split) |
 | `=` | Toggle synchronized scrolling in a split (see [Synchronized scrolling](#synchronized-scrolling-scrolllock); flashes a hint without a split) |
+| `]c` `[c` | In diff mode, jump to the next / previous change hunk (see [Diff mode](#diff-mode---diff--diff); no-op outside diff) |
 | `r` `Ctrl-L` | Force redraw |
 | `Shift-R` | Force-reload from disk (with `--live`; no-op otherwise) |
 | `F1` | Open the help overlay (also `:help` / `:h` at the colon prompt) |
@@ -347,16 +351,51 @@ lock. `=` is remappable as `scroll-lock-toggle` in `~/.config/tess/keys.toml`,
 and `<lock>` is a `--prompt` placeholder (`lock` when on, empty when off).
 
 **v1 limitations.** The split is **2-pane vertical only** — no horizontal
-(stacked) split and no more than two panes. Synchronized scrolling is
-**line-based**; there is no **diff alignment** (aligned hunks, change
-highlighting, filler rows) — that is a separate future cycle. The **second pane
-shows the plain file** — `--filter`, `--grep`, `--format`, and `--display`
-predicates apply to the focused/first pane only. Because the split compositor
-works on rendered cells, **protocol images** (Kitty/Sixel) render as **ASCII**
-and **`-r` raw** content renders through the cell pipeline (Interpret) while
-split. Runtime `:vsplit` panes also do not apply `--tabs`, `--header`, or
-status-prompt theming (the startup `--split` pane does). Per-pane frozen left
-columns (`--header ,C`) remain deferred. See `OUT-OF-SCOPE.md`.
+(stacked) split and no more than two panes. The **second pane shows the plain
+file** — `--filter`, `--grep`, `--format`, and `--display` predicates apply to
+the focused/first pane only. Because the split compositor works on rendered
+cells, **protocol images** (Kitty/Sixel) render as **ASCII** and **`-r` raw**
+content renders through the cell pipeline (Interpret) while split. Runtime
+`:vsplit` panes also do not apply `--tabs`, `--header`, or status-prompt theming
+(the startup `--split` pane does). Per-pane frozen left columns (`--header ,C`)
+remain deferred. See `OUT-OF-SCOPE.md`.
+
+#### Diff mode (`--diff` / `:diff`)
+
+Diff mode aligns the two panes by a line-level diff so matching lines sit beside
+each other — a side-by-side compare inside the pager.
+
+```sh
+tess --diff old.conf new.conf     # open the split and align in one shot
+```
+
+At runtime, on an existing split: `:diff` enters diff mode, `:diff!` bypasses
+the size cap (below), `:nodiff` returns to the plain split.
+
+- **Alignment + fillers.** A Myers diff classifies each line pair as *equal*,
+  *changed*, *added*, or *removed*. Inserted/deleted lines show a blank **filler**
+  on the opposite side so the rest stays aligned. Gutter signs ` `/`~`/`+`/`-`
+  and colors mark each line; **changed** lines additionally get **intra-line
+  highlighting** of the differing characters. Long lines wrap with pair-padding
+  (each aligned pair occupies as many rows as its taller side).
+- **Navigate changes:** `]c` / `[c` jump to the next / previous change hunk
+  (skipping equal regions); the status shows `[diff i/n]`. Remappable as
+  `diff-next-change` / `diff-prev-change`.
+- **Ignore whitespace:** `--diff-ignore-whitespace`, or toggle live with
+  `:diffws`, treats lines differing only in whitespace as equal.
+- **Charset-aware:** diff honors the active `--encoding` / `:encoding` — the
+  alignment display and the intra-line char diff both run on the decoded text.
+- **Huge files:** diffing loads both files fully and runs an O(ND) diff, so if
+  either exceeds ~500k lines tess refuses with a message and stays in the plain
+  (sync-scrollable) split — unless you force it with `:diff!` / `--diff-force`.
+  Diff is a **snapshot**: `--follow` / `--live` auto-update is suspended while
+  it's active.
+
+**Diff-mode v1 limits.** Diff operates on **raw file lines** (no
+`--filter`/`--format`/`--display`). Intra-line highlighting is computed only for
+changed lines that fit a single row on their pane. `Tab` (focus swap) is locked
+in diff mode — the panes scroll as one. A numbered `<n>G` jumps to the top
+(use `]c`/`[c` to move between changes).
 
 ### Search
 
