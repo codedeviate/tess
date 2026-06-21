@@ -59,25 +59,16 @@ worth eating.
 
 ## Deferred
 
-### Per-pane case sensitivity (`--right-ignore-case`) — **S**
+### Uniform per-pane flag mechanism — **M**
 
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-Per-pane filter/format predicates shipped in `0.45.0` (runtime `:grep`/`:filter`/
-`:format`/`:display` on the focused pane + startup `--right-grep`/`--right-filter`/
-`--right-format`/`--right-display`). Per-pane **case sensitivity** is the natural
-small follow-on:
-
-- Add `--right-ignore-case` / `--right-IGNORE-CASE` mirroring `-i`/`-I`, applied
-  to pane B's viewport in `build_second_pane` and threaded into
-  `resolve_pane_predicates`' `case_mode` for pane B (instead of the global one).
-- Note: per-pane case *already works at runtime* — `:case` targets the focused
-  pane and `:grep`/`:filter` compile with that pane's mode. This entry is only
-  the **startup** shorthand.
-- A larger, separate idea (not this entry): a uniform per-pane flag mechanism
-  so *any* flag can be right-scoped (e.g. a `--` argv split, or a general
-  `--right-<flag>` convention) rather than one-off `--right-*` flags.
+The split's per-pane surface grew one flag family at a time: `--right-grep`/
+`--right-filter`/`--right-format`/`--right-display` (`0.45.0`) and
+`--right-ignore-case`/`--right-IGNORE-CASE` (`0.46.0`). A larger idea, deferred:
+a **uniform** mechanism so *any* flag can be scoped to the right pane rather
+than minting one-off `--right-*` flags — e.g. a `--` argv split
+(`tess a --filter X -- b --filter Y`) where each half is a full view spec, or a
+general `--right-<flag>` convention parsed generically. Would also generalize to
+N>2 / horizontal panes if those land.
 
 ### Horizontal split & per-pane refinements — **L**
 

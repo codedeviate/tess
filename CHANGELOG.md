@@ -10,6 +10,25 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.46.0] — 2026-06-21
+
+### Added
+
+- **Per-pane case sensitivity at startup** for the split's second pane:
+  `--right-ignore-case` (smart-case, the pane-B analog of `-i`) and
+  `--right-IGNORE-CASE` (force insensitive, analog of `-I`), mutually exclusive.
+  Applies to both pane B's `--right-*` predicates and its interactive search.
+  (Per-pane case already worked at runtime via `:case` on the focused pane;
+  this is the startup shorthand.)
+
+### Changed
+
+- **Pane B's case mode is now independent of the global `-i`/`-I`** (defaults to
+  case-sensitive unless `--right-ignore-case`/`--right-IGNORE-CASE` is given),
+  matching the no-inheritance rule of the other `--right-*` flags. Previously
+  pane B's predicates inherited the session case mode. Small pre-1.0 change;
+  use `--right-ignore-case`/`--right-IGNORE-CASE` to set pane B explicitly.
+
 ## [0.45.0] — 2026-06-21
 
 ### Added

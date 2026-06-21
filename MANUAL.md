@@ -195,6 +195,13 @@ predicates, mirroring the main flags:
 - **`--right-filter FIELD<op>VALUE`** (repeatable, AND'd) — pane B field filter; requires `--right-format`.
 - **`--right-format NAME`** — pane B parse format.
 - **`--right-display TEMPLATE`** — pane B display template.
+- **`--right-ignore-case`** — pane B smart-case (analog of `-i`); mutually exclusive with `--right-IGNORE-CASE`.
+- **`--right-IGNORE-CASE`** — pane B force case-insensitive (analog of `-I`).
+
+Pane B's case mode is **independent** of the global `-i`/`-I` (defaults to
+case-sensitive); the `--right-ignore-case`/`--right-IGNORE-CASE` flags set it,
+and it governs both pane B's `--right-*` predicates and its interactive search.
+Per-pane case can also be changed live with `:case` on the focused pane.
 
 ```sh
 tess --split access.log access.log \

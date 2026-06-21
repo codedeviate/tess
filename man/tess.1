@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.45.0" 
+.TH tess 1  "tess 0.46.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-diff\fR] [\fB\-\-diff\-force\fR] [\fB\-\-diff\-ignore\-whitespace\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-encoding\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-protocol\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-animate\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-right\-display\fR] [\fB\-\-right\-filter\fR] [\fB\-\-right\-format\fR] [\fB\-\-right\-grep\fR] [\fB\-\-rscroll\fR] [\fB\-\-scroll\-lock\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-\-split\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-diff\fR] [\fB\-\-diff\-force\fR] [\fB\-\-diff\-ignore\-whitespace\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-encoding\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-protocol\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-animate\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-right\-display\fR] [\fB\-\-right\-filter\fR] [\fB\-\-right\-format\fR] [\fB\-\-right\-grep\fR] [\fB\-\-right\-ignore\-case\fR] [\fB\-\-right\-IGNORE\-CASE\fR] [\fB\-\-rscroll\fR] [\fB\-\-scroll\-lock\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-\-split\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -183,6 +183,12 @@ Pane B: parse format for field filtering. Mirrors \-\-format
 \fB\-\-right\-grep\fR \fI<PATTERN>\fR
 Pane B: raw\-regex filter. Repeatable, AND\*(Aqd. Mirrors \-\-grep
 .TP
+\fB\-\-right\-ignore\-case\fR
+Pane B (`\-\-split`/`\-\-diff`): smart\-case search — insensitive unless the pattern has an uppercase char. Pane\-B analog of \-i. Conflicts with \-\-right\-IGNORE\-CASE
+.TP
+\fB\-\-right\-IGNORE\-CASE\fR
+Pane B: force case\-insensitive search regardless of pattern case. Pane\-B analog of \-I. Conflicts with \-\-right\-ignore\-case
+.TP
 \fB\-\-rscroll\fR \fI<CHAR>\fR [default: >]
 Character to show at the right edge of a chopped line (`\-S` chop mode) indicating "more content right". Default `>`. Pass an empty string to disable. Mirrors `less \-\-rscroll=c`
 .TP
@@ -246,4 +252,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.45.0
+v0.46.0
