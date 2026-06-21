@@ -70,6 +70,29 @@ pub fn locked_partner_top(
     raw.clamp(0, partner_max as isize) as usize
 }
 
+/// Column widths for `n` vertical panes at `cols` columns (n-1 dividers).
+/// Remainder columns go to the rightmost panes (matching the 2-pane legacy
+/// convention where the right pane receives the extra column). Returns a single
+/// `[cols]` entry (the too-narrow fallback — caller renders only the focused
+/// pane full-width) when each pane would fall below the usable minimum.
+pub fn split_widths_n(cols: u16, n: usize) -> Vec<u16> {
+    const MIN: usize = 8;
+    if n <= 1 {
+        return vec![cols];
+    }
+    let c = cols as usize;
+    let dividers = n - 1;
+    if c < n * MIN + dividers {
+        return vec![cols];
+    }
+    let usable = c - dividers;
+    let base = usable / n;
+    let rem = usable % n;
+    // Remainder goes to the rightmost panes, matching split_widths's convention
+    // of giving the right pane the extra column on odd widths.
+    (0..n).map(|i| (base + if i >= n - rem { 1 } else { 0 }) as u16).collect()
+}
+
 fn divider_cell() -> Cell {
     Cell::Char {
         ch: '\u{2502}', // │
@@ -302,5 +325,26 @@ mod tests {
         let offset = 240;
         assert_eq!(super::locked_partner_top(100, offset, true, 100_000), 340);
         assert_eq!(super::locked_partner_top(340, offset, false, 100_000), 100);
+    }
+
+    #[test]
+    fn split_widths_n_even() {
+        // 3 panes, 2 dividers: usable = 32, base 10, remainder 2 → last two get +1
+        // (rightmost-first distribution, matching split_widths's right-gets-extra convention).
+        assert_eq!(super::split_widths_n(34, 3), vec![10, 11, 11]);
+    }
+    #[test]
+    fn split_widths_n_two_matches_legacy() {
+        let (l, r) = super::split_widths(34);
+        assert_eq!(super::split_widths_n(34, 2), vec![l, r]);
+    }
+    #[test]
+    fn split_widths_n_too_narrow_falls_back_to_one() {
+        // 3 panes need >= 3*8 + 2 = 26 cols; at 20 fall back to a single full-width entry.
+        assert_eq!(super::split_widths_n(20, 3), vec![20]);
+    }
+    #[test]
+    fn split_widths_n_one_is_full_width() {
+        assert_eq!(super::split_widths_n(80, 1), vec![80]);
     }
 }
