@@ -61,6 +61,26 @@ impl LineIndex {
         self.record_zero_committed = false;
     }
 
+    /// Clear records mode and reset the index so the source will be rescanned
+    /// without a record-start regex. Preserves `start_byte` and `head_cap`.
+    /// Safe to call at any point (unlike `set_record_start`, which must be
+    /// called before scanning).
+    pub fn clear_record_start(&mut self) {
+        self.reset_record_start_opt(None);
+    }
+
+    /// Reset the index (like `clear_record_start`) and optionally install a new
+    /// record-start regex. The index will rescan from `start_byte` on the next
+    /// access. Safe to call at any point; `head_cap` is preserved.
+    pub fn reset_record_start_opt(&mut self, re: Option<Regex>) {
+        self.record_start_regex = re;
+        self.starts = vec![self.start_byte];
+        self.record_starts = vec![self.start_byte];
+        self.scanned_through = self.start_byte;
+        self.pending_line_start = false;
+        self.record_zero_committed = self.record_start_regex.is_none();
+    }
+
     /// True iff records mode is active (a regex was set).
     pub fn records_mode(&self) -> bool {
         self.record_start_regex.is_some()

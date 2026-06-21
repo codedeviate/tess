@@ -1000,7 +1000,69 @@ fn dispatch_colon_command(
                 }
             }
         },
-        ColonCommand::Format(_) | ColonCommand::Filter(_) => ColonOutcome::Continue(None),
+        ColonCommand::Format(arg) => match arg {
+            None => {
+                viewport.set_format_label(None);
+                viewport.set_filter(None); // filter depends on the format
+                idx.clear_record_start();
+                ColonOutcome::Continue(Some("[format cleared]".into()))
+            }
+            Some(name) => match crate::format::load_all() {
+                Err(e) => ColonOutcome::Continue(Some(format!("format: {e}"))),
+                Ok(formats) => match formats.get(&name) {
+                    None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                    Some(fmt) => {
+                        // Convert the text-mode `regex::Regex` to `regex::bytes::Regex`
+                        // by round-tripping through the pattern string, matching what
+                        // main.rs does when building the startup record_start_regex.
+                        let bytes_re: Option<regex::bytes::Regex> =
+                            fmt.record_start.as_ref().and_then(|re| {
+                                regex::bytes::Regex::new(re.as_str()).ok()
+                            });
+                        idx.reset_record_start_opt(bytes_re);
+                        viewport.set_format_label(Some(name.clone()));
+                        ColonOutcome::Continue(Some(format!("[format: {name}]")))
+                    }
+                },
+            },
+        },
+        ColonCommand::Filter(arg) => match arg {
+            None => {
+                viewport.set_filter(None);
+                ColonOutcome::Continue(Some("[filter cleared]".into()))
+            }
+            Some(spec_str) => match viewport.format_label().map(|s| s.to_string()) {
+                None => {
+                    ColonOutcome::Continue(Some("filter needs a format (:format NAME)".into()))
+                }
+                Some(name) => match crate::format::load_all() {
+                    Err(e) => ColonOutcome::Continue(Some(format!("filter: {e}"))),
+                    Ok(formats) => match formats.get(&name) {
+                        None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                        Some(fmt) => match crate::filter::FilterSpec::parse(&spec_str) {
+                            Err(e) => ColonOutcome::Continue(Some(format!("filter: {e}"))),
+                            Ok(spec) => {
+                                match crate::filter::CompiledFilter::compile(
+                                    fmt,
+                                    vec![spec],
+                                    viewport.case_mode(),
+                                ) {
+                                    Ok(f) => {
+                                        viewport.set_filter(Some(f));
+                                        ColonOutcome::Continue(Some(format!(
+                                            "[filter: {spec_str}]"
+                                        )))
+                                    }
+                                    Err(e) => {
+                                        ColonOutcome::Continue(Some(format!("filter: {e}")))
+                                    }
+                                }
+                            }
+                        },
+                    },
+                },
+            },
+        },
     }
 }
 
