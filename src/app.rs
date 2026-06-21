@@ -1156,8 +1156,10 @@ fn current_hunk(d: &DiffState) -> usize {
         .unwrap_or(0)
 }
 
-/// Build a `RenderOpts` for diff rendering: wrap=true, encoding from the
-/// focused viewport, tab_width from the viewport's opts, ANSI interpret.
+/// Build a `RenderOpts` for diff rendering: wrap=true, ANSI interpret, and the
+/// focused viewport's charset. v1 scoping: `--tabs`/`--tab-width`, `--no-color`
+/// (byte-faithful), and other per-view display flags are NOT carried into diff
+/// mode — only the encoding is, so non-UTF-8 files decode correctly.
 fn diff_pane_opts(viewport: &crate::viewport::Viewport, cols: u16) -> crate::render::RenderOpts {
     crate::render::RenderOpts {
         cols,
@@ -2487,7 +2489,15 @@ pub fn run(
                         needs_redraw = true;
                     }
                     Command::FocusOtherPane => {
-                        if let Some(other) = other_pane.as_mut() {
+                        if diff.is_some() {
+                            // In diff mode the panes are aligned and scroll as one
+                            // unit, so "focus" is meaningless — and a swap would
+                            // re-point src/idx out from under DiffState.pairs (whose
+                            // line numbers are keyed to the original assignment),
+                            // panicking on unequal-length files. Lock focus here.
+                            viewport.flash("focus is locked in diff mode (:nodiff to exit)", 40);
+                            needs_redraw = true;
+                        } else if let Some(other) = other_pane.as_mut() {
                             std::mem::swap(&mut src, &mut other.src);
                             std::mem::swap(&mut idx, &mut other.idx);
                             std::mem::swap(&mut viewport, &mut other.viewport);
@@ -2639,10 +2649,16 @@ pub fn run(
                         // arm is defensive and should never fire.
                     }
                     Command::BracketClosePrefix => {
-                        mode = InputMode::BracketClosePending;
+                        // Only arm the `]c` chord in diff mode; otherwise a bare
+                        // `]` stays a no-op (don't swallow the next keystroke).
+                        if diff.is_some() {
+                            mode = InputMode::BracketClosePending;
+                        }
                     }
                     Command::BracketOpenPrefix => {
-                        mode = InputMode::BracketOpenPending;
+                        if diff.is_some() {
+                            mode = InputMode::BracketOpenPending;
+                        }
                     }
                     Command::DiffNextChange => {
                         if let Some(d) = diff.as_mut() {
