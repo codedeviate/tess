@@ -173,6 +173,20 @@ struct ResolvedPredicates {
     format_label: Option<String>,
 }
 
+impl ResolvedPredicates {
+    /// No-op predicates: a pane that carries the shared display config but no
+    /// grep/filter/format/display of its own (e.g. `--split` panes C, D, …).
+    fn empty() -> Self {
+        ResolvedPredicates {
+            grep: None,
+            filter: None,
+            display: None,
+            record_start: None,
+            format_label: None,
+        }
+    }
+}
+
 /// Resolve a pane's predicates from raw flag values (used for pane B's
 /// `--right-*`). `filter` and `display` require a `format_name`.
 fn resolve_pane_predicates(
@@ -236,14 +250,12 @@ fn resolve_pane_predicates(
 /// same source pipeline as a file-switch (`open::open_source_for_path` — no
 /// prettify/format-specific config) and configures a viewport with the
 /// display-relevant, non-format-specific options the focused pane uses. The
-/// `--right-*` flags are resolved via `resolve_pane_predicates` and applied to
-/// the pane B viewport so the right pane can carry its own grep/filter/format.
+/// pane's grep/filter/format/display predicates are resolved by the CALLER and
+/// passed in as `predicates` (from `--right-*` for `--split` pane B, or from the
+/// section's own flags for the `--` per-pane form). The encoding is resolved
+/// per-pane here from `args.encoding` against this source's own head bytes.
 /// `other_pane_init` corrects the size, so the `cols`/`rows` passed here are
 /// provisional.
-///
-/// `apply_right` controls whether `--right-*`/right-case flags are applied.
-/// Pass `true` for the first extra pane (pane B), `false` for additional panes
-/// (panes C, D, …) that share the shared display config but not the right-* flags.
 #[allow(clippy::too_many_arguments)]
 fn build_second_pane(
     path: &std::path::Path,
@@ -253,9 +265,8 @@ fn build_second_pane(
     rows: u16,
     preprocessor: Option<&tess::preprocess::Preprocessor>,
     record_start_regex: Option<&regex::bytes::Regex>,
-    enc: tess::charset::Encoding,
     case_mode: tess::viewport::CaseMode,
-    apply_right: bool,
+    predicates: ResolvedPredicates,
 ) -> Result<tess::pane::Pane> {
     let (src, label, preprocess_failure) =
         tess::open::open_source_for_path(path, args, preprocessor)?;
@@ -291,6 +302,11 @@ fn build_second_pane(
             viewport.opts.tab_stops = Some(stops);
         }
     }
+    let enc = {
+        let head_len = src.len().min(4);
+        let head = src.bytes(0..head_len);
+        tess::open::resolve_encoding(&args.encoding, &head).map_err(Error::Runtime)?
+    };
     viewport.set_encoding(enc);
     viewport.set_ansi_mode(ansi_mode);
     if let Some(spec) = args.header.as_deref() {
@@ -384,39 +400,30 @@ fn build_second_pane(
     // convention (the caller passes the base case_mode instead).
     viewport.set_case_mode(case_mode);
 
-    // Apply --right-* predicates to pane B only. Panes C, D, … (apply_right=false)
-    // skip this block; they share the shared display config but not the right-* flags.
-    // The index is pre-scan here, so set_record_start (the pre-scan setter) is safe.
-    // If --right-format sets a record_start we use that; otherwise fall through to the
-    // caller's record_start_regex (pane A's setting, already applied above if present).
-    if apply_right {
-        let rp = resolve_pane_predicates(
-            &args.right_grep,
-            &args.right_filter,
-            args.right_format.as_deref(),
-            args.right_display.as_deref(),
-            case_mode,
-        )?;
-        if let Some(re) = rp.record_start {
-            idx.set_record_start(re);
-        }
-        viewport.set_format_label(rp.format_label);
-        if let Some(g) = rp.grep {
-            viewport.set_grep(Some(g));
-        }
-        if let Some(f) = rp.filter {
-            viewport.set_filter(Some(f));
-        }
-        if let Some(d) = rp.display {
-            viewport.set_display(Some(d));
-        }
-        // In hide mode, pane B's visible-line cache must be built up front (the
-        // setters cleared it) — otherwise a `--right-grep`/`--right-filter` pane
-        // renders blank on a static source. Mirrors the focused-pane startup scan.
-        if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
-            idx.extend_to_end(src.as_ref());
-            viewport.extend_visible_lines(&idx, src.as_ref());
-        }
+    // Apply this pane's predicates (resolved by the caller — from `--right-*`
+    // for `--split` pane B, or from the section's own flags for the `--` form).
+    // The index is pre-scan here, so set_record_start (the pre-scan setter) is
+    // safe. A `--right-format`/section `--format` record_start wins; otherwise we
+    // keep the caller's record_start_regex fallback (applied above if present).
+    if let Some(re) = predicates.record_start {
+        idx.set_record_start(re);
+    }
+    viewport.set_format_label(predicates.format_label);
+    if let Some(g) = predicates.grep {
+        viewport.set_grep(Some(g));
+    }
+    if let Some(f) = predicates.filter {
+        viewport.set_filter(Some(f));
+    }
+    if let Some(d) = predicates.display {
+        viewport.set_display(Some(d));
+    }
+    // In hide mode the visible-line cache must be built up front (the setters
+    // cleared it) — otherwise a grep/filter pane renders blank on a static
+    // source. Mirrors the focused-pane startup scan.
+    if (viewport.filter_active() || viewport.grep_active()) && !viewport.dim_mode() {
+        idx.extend_to_end(src.as_ref());
+        viewport.extend_visible_lines(&idx, src.as_ref());
     }
 
     Ok(tess::pane::Pane {
@@ -448,65 +455,54 @@ fn build_extra_panes(
     rows: u16,
     preprocessor: Option<&tess::preprocess::Preprocessor>,
     record_start_regex: Option<&regex::bytes::Regex>,
-    enc: tess::charset::Encoding,
     case_mode: tess::viewport::CaseMode,
 ) -> Result<Vec<tess::pane::Pane>> {
     if args.diff {
         if files.len() != 2 {
             return Err(Error::Runtime("--diff takes exactly two files".into()));
         }
-        let pane = build_second_pane(
-            &files[1],
-            args,
-            ansi_mode,
-            cols,
-            rows,
-            preprocessor,
-            record_start_regex,
-            enc,
+        let rp = resolve_pane_predicates(
+            &args.right_grep, &args.right_filter,
+            args.right_format.as_deref(), args.right_display.as_deref(),
             case_mode,
-            true,
+        )?;
+        let pane = build_second_pane(
+            &files[1], args, ansi_mode, cols, rows,
+            preprocessor, record_start_regex, case_mode, rp,
         )?;
         return Ok(vec![pane]);
     }
 
     if args.split {
         if files.len() >= 2 {
-            // One pane per files[1..]; --right-* only on the first extra pane.
             let mut panes = Vec::with_capacity(files.len() - 1);
             for (i, path) in files[1..].iter().enumerate() {
-                let apply_right = i == 0;
-                // For panes C and beyond, use Sensitive case (right-case is a
-                // pane-B-specific concept; additional panes share shared config only).
-                let pane_case = if apply_right { case_mode } else { tess::viewport::CaseMode::Sensitive };
+                let (rp, pane_case) = if i == 0 {
+                    let rp = resolve_pane_predicates(
+                        &args.right_grep, &args.right_filter,
+                        args.right_format.as_deref(), args.right_display.as_deref(),
+                        case_mode,
+                    )?;
+                    (rp, case_mode)
+                } else {
+                    (ResolvedPredicates::empty(), tess::viewport::CaseMode::Sensitive)
+                };
                 let pane = build_second_pane(
-                    path,
-                    args,
-                    ansi_mode,
-                    cols,
-                    rows,
-                    preprocessor,
-                    record_start_regex,
-                    enc,
-                    pane_case,
-                    apply_right,
+                    path, args, ansi_mode, cols, rows,
+                    preprocessor, record_start_regex, pane_case, rp,
                 )?;
                 panes.push(pane);
             }
             return Ok(panes);
         } else if let Some(path) = files.first() {
-            // Single file: two views of the same file.
-            let pane = build_second_pane(
-                path,
-                args,
-                ansi_mode,
-                cols,
-                rows,
-                preprocessor,
-                record_start_regex,
-                enc,
+            let rp = resolve_pane_predicates(
+                &args.right_grep, &args.right_filter,
+                args.right_format.as_deref(), args.right_display.as_deref(),
                 case_mode,
-                true,
+            )?;
+            let pane = build_second_pane(
+                path, args, ansi_mode, cols, rows,
+                preprocessor, record_start_regex, case_mode, rp,
             )?;
             return Ok(vec![pane]);
         }
@@ -1442,7 +1438,6 @@ showing raw (use --content-type=NAME to override)"
         rows,
         preprocessor.as_ref(),
         record_start_regex.as_ref(),
-        resolved_enc,
         right_case_mode,
     ) {
         Ok(panes) => panes,
@@ -1502,6 +1497,16 @@ mod tests {
     #[test]
     fn parse_plus_g_is_goto_bottom() {
         assert_eq!(parse_plus_cmd("+G"), Ok(PlusCmd::GotoBottom));
+    }
+
+    #[test]
+    fn resolved_predicates_empty_is_all_none() {
+        let rp = ResolvedPredicates::empty();
+        assert!(rp.grep.is_none());
+        assert!(rp.filter.is_none());
+        assert!(rp.display.is_none());
+        assert!(rp.record_start.is_none());
+        assert!(rp.format_label.is_none());
     }
 
     #[cfg(feature = "image")]
@@ -1595,10 +1600,14 @@ mod tests {
         writeln!(f, "gamma").unwrap();
         f.flush().unwrap();
         let args = Args::parse_from(["tess", "--split", "x", "y", "--right-grep", "MATCH"]);
+        let rp = resolve_pane_predicates(
+            &args.right_grep, &args.right_filter,
+            args.right_format.as_deref(), args.right_display.as_deref(),
+            tess::viewport::CaseMode::Sensitive,
+        ).unwrap();
         let mut pane = build_second_pane(
             f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
-            tess::charset::Encoding::utf8(), tess::viewport::CaseMode::Sensitive,
-            true,
+            tess::viewport::CaseMode::Sensitive, rp,
         ).unwrap();
         let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
         let text: String = frame.body.iter().flat_map(|row| row.iter().filter_map(|c| match c {
@@ -1623,10 +1632,14 @@ mod tests {
         let right_case = if args.right_IGNORE_case { tess::viewport::CaseMode::Insensitive }
             else if args.right_ignore_case { tess::viewport::CaseMode::Smart }
             else { tess::viewport::CaseMode::Sensitive };
+        let rp = resolve_pane_predicates(
+            &args.right_grep, &args.right_filter,
+            args.right_format.as_deref(), args.right_display.as_deref(),
+            right_case,
+        ).unwrap();
         let mut pane = build_second_pane(
             f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
-            tess::charset::Encoding::utf8(), right_case,
-            true,
+            right_case, rp,
         ).unwrap();
         assert_eq!(pane.viewport.case_mode(), tess::viewport::CaseMode::Insensitive);
         let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
@@ -1646,7 +1659,7 @@ mod tests {
         let args = Args::parse_from(["tess", "--split", "x", "y", "z"]);
         let extras = build_extra_panes(
             &files, &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
-            tess::charset::Encoding::utf8(), tess::viewport::CaseMode::Sensitive,
+            tess::viewport::CaseMode::Sensitive,
         ).unwrap();
         assert_eq!(extras.len(), 2); // panes for files[1] and files[2]
     }
