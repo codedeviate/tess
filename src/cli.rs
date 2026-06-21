@@ -380,6 +380,17 @@ pub struct Args {
     #[arg(long = "right-grep", value_name = "PATTERN")]
     pub right_grep: Vec<String>,
 
+    /// Pane B (`--split`/`--diff`): smart-case search — insensitive unless
+    /// the pattern has an uppercase char. Pane-B analog of -i.
+    /// Conflicts with --right-IGNORE-CASE.
+    #[arg(long = "right-ignore-case", conflicts_with = "right_IGNORE_case")]
+    pub right_ignore_case: bool,
+
+    /// Pane B: force case-insensitive search regardless of pattern case.
+    /// Pane-B analog of -I. Conflicts with --right-ignore-case.
+    #[arg(long = "right-IGNORE-CASE")]
+    pub right_IGNORE_case: bool,
+
     /// Character to show at the right edge of a chopped line (`-S` chop
     /// mode) indicating "more content right". Default `>`. Pass an empty
     /// string to disable. Mirrors `less --rscroll=c`.
@@ -860,6 +871,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_right_case_flags() {
+        let a = Args::parse_from(["tess", "--split", "x", "y", "--right-ignore-case"]);
+        assert!(a.right_ignore_case && !a.right_IGNORE_case);
+        let b = Args::parse_from(["tess", "--split", "x", "y", "--right-IGNORE-CASE"]);
+        assert!(b.right_IGNORE_case && !b.right_ignore_case);
+        let d = Args::parse_from(["tess", "x"]);
+        assert!(!d.right_ignore_case && !d.right_IGNORE_case);
+    }
+
+    #[test]
+    fn right_case_flags_are_mutually_exclusive() {
+        assert!(Args::try_parse_from(
+            ["tess", "--split", "x", "y", "--right-ignore-case", "--right-IGNORE-CASE"]
+        ).is_err());
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -928,6 +956,8 @@ mod tests {
             "--right-filter",
             "--right-format",
             "--right-grep",
+            "--right-ignore-case",
+            "--right-IGNORE-CASE",
             "--rscroll",
             "--scroll-lock",
             "--shift",
