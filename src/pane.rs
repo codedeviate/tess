@@ -70,6 +70,16 @@ pub fn locked_partner_top(
     raw.clamp(0, partner_max as isize) as usize
 }
 
+/// Re-derive a pane's top line under scroll-lock. `focused_top` is the focused
+/// pane's current top; `focused_offset`/`pane_offset` are the two panes' offsets
+/// relative to the leftmost pane (captured at lock enable). Clamped to
+/// `0..=pane_max`. Recomputed from the fixed offsets each call (no drift;
+/// restores after a clamp). Tab-invariant.
+pub fn locked_pane_top(focused_top: usize, focused_offset: isize, pane_offset: isize, pane_max: usize) -> usize {
+    let raw = focused_top as isize + (pane_offset - focused_offset);
+    raw.clamp(0, pane_max as isize) as usize
+}
+
 /// Column widths for `n` vertical panes at `cols` columns (n-1 dividers).
 /// Remainder columns go to the rightmost panes (matching the 2-pane legacy
 /// convention where the right pane receives the extra column). Returns a single
@@ -421,6 +431,26 @@ mod tests {
         assert!(matches!(out.body[0][0], Cell::Char { ch: 'a', .. }));
         assert!(matches!(out.body[0][4], Cell::Char { ch: 'b', .. }));
         assert!(matches!(out.body[0][8], Cell::Char { ch: 'c', .. }));
+    }
+
+    #[test]
+    fn locked_pane_top_derives_from_offsets() {
+        // offsets relative to pane 0: [0, 240, 100]. Focused = pane 1 (offset 240) at top 345.
+        // pane 0 target = 345 + (0 - 240) = 105; pane 2 = 345 + (100 - 240) = 205.
+        assert_eq!(super::locked_pane_top(345, 240, 0, 1_000_000), 105);
+        assert_eq!(super::locked_pane_top(345, 240, 100, 1_000_000), 205);
+    }
+    #[test]
+    fn locked_pane_top_clamps_and_restores() {
+        assert_eq!(super::locked_pane_top(10, 240, 0, 1_000_000), 0);     // would be negative → 0
+        assert_eq!(super::locked_pane_top(300, 240, 0, 1_000_000), 60);   // restores after clamp (no drift)
+        assert_eq!(super::locked_pane_top(10_000, 0, 240, 5_100), 5_100); // high clamp
+    }
+    #[test]
+    fn locked_pane_top_tab_invariant() {
+        // tops 100/340/200 → offsets 0/240/100. Deriving pane 2 from focused=pane0 vs focused=pane1 agree.
+        assert_eq!(super::locked_pane_top(100, 0, 100, 1_000_000), 200);
+        assert_eq!(super::locked_pane_top(340, 240, 100, 1_000_000), 200);
     }
 
     #[test]
