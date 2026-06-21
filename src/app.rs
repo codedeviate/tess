@@ -970,10 +970,37 @@ fn dispatch_colon_command(
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
         }
-        ColonCommand::Grep(_) | ColonCommand::Filter(_)
-        | ColonCommand::Format(_) | ColonCommand::Display(_) => {
-            ColonOutcome::Continue(None) // wired in the predicate-dispatch tasks
-        }
+        ColonCommand::Grep(arg) => match arg {
+            None => { viewport.set_grep(None); ColonOutcome::Continue(Some("[grep cleared]".into())) }
+            Some(pat) => {
+                match crate::grep::GrepPredicate::compile(&[pat.clone()], viewport.case_mode()) {
+                    Ok(g) => { viewport.set_grep(Some(g)); ColonOutcome::Continue(Some(format!("[grep: {pat}]"))) }
+                    Err(e) => ColonOutcome::Continue(Some(format!("grep: {e}"))),
+                }
+            }
+        },
+        ColonCommand::Display(arg) => match arg {
+            None => { viewport.set_display(None); ColonOutcome::Continue(Some("[display cleared]".into())) }
+            Some(tmpl) => {
+                match viewport.format_label().map(|s| s.to_string()) {
+                    None => ColonOutcome::Continue(Some("display needs a format (:format NAME)".into())),
+                    Some(name) => match crate::format::load_all() {
+                        Err(e) => ColonOutcome::Continue(Some(format!("display: {e}"))),
+                        Ok(formats) => match formats.get(&name) {
+                            None => ColonOutcome::Continue(Some(format!("unknown format: {name}"))),
+                            Some(fmt) => match crate::format::DisplayTemplate::compile(&tmpl, &fmt.field_names) {
+                                Ok(t) => {
+                                    viewport.set_display(Some(crate::format::DisplayRenderer::new(t, fmt.regex.clone())));
+                                    ColonOutcome::Continue(Some("[display set]".into()))
+                                }
+                                Err(e) => ColonOutcome::Continue(Some(format!("display: {e}"))),
+                            },
+                        },
+                    },
+                }
+            }
+        },
+        ColonCommand::Format(_) | ColonCommand::Filter(_) => ColonOutcome::Continue(None),
     }
 }
 

@@ -1163,6 +1163,12 @@ impl Viewport {
         self.format_label = label;
     }
 
+    /// Returns the active format label (the name passed to `set_format_label`),
+    /// or `None` if no named format is active.
+    pub fn format_label(&self) -> Option<&str> {
+        self.format_label.as_deref()
+    }
+
     /// Drop the per-line filter-membership cache without disturbing the filter
     /// itself or scroll position. Used after a `--live` rebuild: line numbering
     /// may have changed, so cached `visible_lines` is stale, but we want to
