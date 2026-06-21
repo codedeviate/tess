@@ -59,6 +59,33 @@ worth eating.
 
 ## Deferred
 
+### Per-pane filter/format predicates — **M**
+
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
+In the split view, `--filter` / `--grep` / `--format` / `--display` currently
+apply to the **focused/first pane only** — the second pane shows the plain file.
+This makes each pane able to carry its own predicates, so you can e.g. show
+`status=500` lines on the left and `status=404` on the right of the same (or two
+different) logs.
+
+Expect the design to grapple with:
+
+- **A "which pane" notion for predicates.** Today filter/format/grep/or are
+  resolved once at startup into the focused viewport + the match paths. The
+  second pane (`main::build_second_pane` / runtime `:vsplit`) deliberately skips
+  them. A per-pane design needs each `Pane` to own its own compiled
+  predicates/format, and the CLI/colon surface needs a way to address them.
+- **CLI surface.** How to specify per-pane predicates on the command line —
+  e.g. a pane-scoped flag form, a `--split`-with-groups syntax, or runtime-only
+  via a colon command that targets the focused pane. Probably lean on the
+  existing runtime `:filter`-style commands applied to the focused pane, plus a
+  startup convenience.
+- **Interaction with diff mode.** Diff operates on raw lines; per-pane
+  predicates are a split-only (non-diff) concern, so they compose by being
+  inactive while `:diff` is on.
+
 ### Horizontal split & per-pane refinements — **L**
 
 The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
@@ -71,10 +98,7 @@ intra-line highlighting, `]c`/`[c`, ignore-whitespace). What remains deferred:
   `--format`), intra-line highlighting only on single-row changed lines, `Tab`
   locked, numbered-goto jumps to top. Larger follow-ons: strict ISO-8859-1 (vs
   WHATWG windows-1252), UTF-16 (needs whole-buffer transcode), 3-way diff.
-- **Format predicates in the second pane.** The second pane currently shows the
-  plain file — `--filter` / `--grep` / `--format` / `--display` apply to the
-  focused/first pane only. Per-pane predicates need a "which pane" notion
-  threaded through the filter/format setup.
+  (Per-pane filter/format predicates are now their own prioritized entry above.)
 - **Protocol images and raw passthrough per pane.** The split compositor is
   cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the
   cell pipeline while split. True per-pane protocol/raw output needs a
