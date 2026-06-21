@@ -373,6 +373,10 @@ fn build_second_pane(
         }
     }
 
+    // Pane B's search uses the (independent) right-case mode passed in, matching
+    // the case used to compile its --right-* predicates below.
+    viewport.set_case_mode(case_mode);
+
     // Apply --right-* predicates to pane B. The index is pre-scan here, so
     // set_record_start (the pre-scan setter) is safe. If --right-format sets a
     // record_start we use that; otherwise fall through to the caller's
@@ -929,6 +933,15 @@ showing raw (use --content-type=NAME to override)"
     } else {
         tess::viewport::CaseMode::Sensitive
     };
+    // Pane B's case mode is INDEPENDENT of the global -i/-I (matches the
+    // no-inheritance rule of the other --right-* flags); default Sensitive.
+    let right_case_mode = if args.right_IGNORE_case {
+        tess::viewport::CaseMode::Insensitive
+    } else if args.right_ignore_case {
+        tess::viewport::CaseMode::Smart
+    } else {
+        tess::viewport::CaseMode::Sensitive
+    };
     let compiled_grep = if !args.grep.is_empty() {
         Some(
             GrepPredicate::compile(&args.grep, case_mode)
@@ -1337,7 +1350,7 @@ showing raw (use --content-type=NAME to override)"
                 preprocessor.as_ref(),
                 record_start_regex.as_ref(),
                 resolved_enc,
-                case_mode,
+                right_case_mode,
             ) {
                 Ok(pane) => Some(pane),
                 Err(e) => {
@@ -1505,5 +1518,32 @@ mod tests {
         })).collect();
         assert!(text.contains("MATCH"), "pane B should show the matching line; got {text:?}");
         assert!(!text.contains("alpha"), "pane B should hide non-matching lines; got {text:?}");
+    }
+
+    #[test]
+    fn build_second_pane_right_ignore_case_matches_insensitively() {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        writeln!(f, "alpha").unwrap();
+        writeln!(f, "an error here").unwrap();   // lowercase "error"
+        writeln!(f, "gamma").unwrap();
+        f.flush().unwrap();
+        let args = Args::parse_from([
+            "tess", "--split", "x", "y", "--right-grep", "ERROR", "--right-IGNORE-CASE",
+        ]);
+        let right_case = if args.right_IGNORE_case { tess::viewport::CaseMode::Insensitive }
+            else if args.right_ignore_case { tess::viewport::CaseMode::Smart }
+            else { tess::viewport::CaseMode::Sensitive };
+        let mut pane = build_second_pane(
+            f.path(), &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
+            tess::charset::Encoding::utf8(), right_case,
+        ).unwrap();
+        assert_eq!(pane.viewport.case_mode(), tess::viewport::CaseMode::Insensitive);
+        let frame = pane.viewport.frame(pane.src.as_ref(), &mut pane.idx);
+        let text: String = frame.body.iter().flat_map(|row| row.iter().filter_map(|c| match c {
+            tess::render::Cell::Char { ch, .. } => Some(*ch),
+            _ => None,
+        })).collect();
+        assert!(text.contains("error"), "case-insensitive --right-grep should match 'error'; got {text:?}");
     }
 }
