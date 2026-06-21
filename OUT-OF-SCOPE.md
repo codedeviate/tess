@@ -76,11 +76,13 @@ N>2 / horizontal panes if those land.
 ### Horizontal split & per-pane refinements — **L**
 
 The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
-scrolling (`0.42.0` — `=` / `:scrolllock`), charset support (`0.43.0`), and
-aligned side-by-side **diff mode** (`0.44.0` — `--diff` / `:diff`, fillers,
-intra-line highlighting, `]c`/`[c`, ignore-whitespace). What remains deferred:
+scrolling (`0.42.0`), charset support (`0.43.0`), aligned **diff mode**
+(`0.44.0`), per-pane predicates (`0.45.0`) + per-pane case (`0.46.0`), and
+**N-pane** vertical split (`0.47.0` — `--split a b c`, Tab/BackTab cycle,
+scroll-lock couples all). What remains deferred:
 
-- **Horizontal (stacked) split and N>2 panes.** Split is vertical, 2-pane only.
+- **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
+  grid layout (and the compositor work for it) is deferred.
 - **Diff refinements.** Diff is 2-pane vertical, raw-line (no `--filter`/
   `--format`), intra-line highlighting only on single-row changed lines, `Tab`
   locked, numbered-goto jumps to top. Larger follow-ons: strict ISO-8859-1 (vs

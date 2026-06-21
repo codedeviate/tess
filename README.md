@@ -30,7 +30,7 @@ tess --prettify config.json                         # auto-detected JSON layout
 - **Live + follow modes.** `--follow` for tail-style appended logs (background reader thread, doesn't fight your tty); `--live` for whole-file rewrites (editor saves, AI agents, build outputs).
 - **Cheap on huge files.** mmap'd file source, lazy line indexing, `--tail N` reverse-scans only as far as needed.
 - **Long-line scrolling that actually works.** `j` walks wrap-rows so the last 1000 chars of a 5000-char line are reachable; `J` / `K` jump by whole logical lines when you don't want to scroll through every wrap.
-- **Side-by-side split view.** `--split` (or runtime `:vsplit`) shows two files — or two views of one — in vertical columns, each scrolling and searching independently. `Tab` switches focus; `=` locks the panes to scroll together; `:only` collapses back.
+- **N-pane split view.** `tess --split a b c` shows files in vertical columns (one per file), each scrolling and searching independently. `Tab`/`BackTab` cycle focus; `=` locks all panes to scroll together; `:only` collapses back.
 - **Non-UTF-8 charsets.** `--encoding iso-8859-1` (or `windows-1252`, `shift_jis`, …) decodes legacy files so they read as text, not `<HH>` bytes — and search/filter match the decoded text. Switch live with `:encoding`.
 - **Side-by-side diff.** `--diff old new` (or `:diff` in a split) aligns the two files line-by-line with filler rows, `+`/`-`/`~` coloring, and intra-line change highlighting; `]c`/`[c` jump between change hunks. A compare view inside the pager.
 - **Live & per-pane filtering.** Change filters at runtime — `:grep`/`:filter`/`:format`/`:display` (+ `:no*`) act on the focused pane, so each split pane can show different lines (`--right-grep`/`--right-filter`/… seed pane B at startup).
@@ -235,14 +235,15 @@ The `image` feature is on by default. Build without it (`--no-default-features`)
 
 ```sh
 tess --split app.log app.log.1      # two files side by side
+tess --split a.log b.log c.log      # N panes — one per file
 tess --split big.log                # one file, two independent views
 ```
 
-Opens a vertical 2-pane split. Each pane is a full viewport with its own
-scroll position, search, and follow/tail state. `Tab` switches the focused
-pane (scroll, search, and colon commands target it); the other pane keeps
-scrolling/tailing on its own. The focused pane's half-width status line is
-prefixed with `*`.
+Opens a vertical split with one pane per file. Each pane is a full viewport with
+its own scroll position, search, and follow/tail state. `Tab`/`BackTab` cycle the
+focused pane (scroll, search, and colon commands target it); the others keep
+scrolling/tailing on their own. Each pane gets its own status segment; the
+focused one is prefixed with `*`.
 
 At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
 duplicates the current file at its scroll position); `:only` / `:close`

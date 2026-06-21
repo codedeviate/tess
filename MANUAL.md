@@ -307,7 +307,7 @@ tess --clipboard app.log                                # then :yank a line
 | `p` | Animated image: pause / resume (revives a finished animation); no-op without an animation |
 | `.` `,` | Animated image: step one frame forward / back (auto-pauses) |
 | `Backspace` | Animated image: restart from the first frame |
-| `Tab` | Switch the focused pane in a split (see [Split view](#split-view); no-op without a split) |
+| `Tab` / `BackTab` | Cycle the focused pane forward / backward in a split (see [Split view](#split-view); no-op without a split) |
 | `=` | Toggle synchronized scrolling in a split (see [Synchronized scrolling](#synchronized-scrolling-scrolllock); flashes a hint without a split) |
 | `]c` `[c` | In diff mode, jump to the next / previous change hunk (see [Diff mode](#diff-mode---diff--diff); no-op outside diff) |
 | `r` `Ctrl-L` | Force redraw |
@@ -342,13 +342,17 @@ Frozen left content-columns (`--header ,C`) remain a future addition.
 
 ### Split view
 
-Open two panes side by side in vertical columns for lightweight compare
+Open multiple panes side by side in vertical columns for lightweight compare
 within the pager.
 
 ```sh
-tess --split app.log app.log.1      # first two file args, side by side
-tess --split big.log                # one file → a second independent view
+tess --split app.log app.log.1          # two files, side by side
+tess --split a.log b.log c.log          # N panes — one per file
+tess --split big.log                    # one file → a second independent view
 ```
+
+`--split` opens **one pane per file argument** (≥2 files → that many panes; a
+single file → 2 views of it).
 
 `--split` is **interactive only** (ignored for `--to-clipboard` / `--stdout`
 batch runs). At runtime:
@@ -361,15 +365,16 @@ batch runs). At runtime:
 - `:only` / `:close` — collapse back to a single pane (the focused one).
 
 Each pane is a full viewport with its **own** scroll position, search, marks,
-and follow/tail state. `Tab` switches the focused pane — scroll, search, and
-colon commands target the focused pane, while the other pane keeps following /
-tailing on its own (including log-rotation re-open). `Tab` is remappable in
-`~/.config/tess/keys.toml` via the command name `focus-other-pane`.
+and follow/tail state. `Tab` cycles the focused pane **forward**, `BackTab`
+(Shift-Tab) cycles **backward** — scroll, search, and colon commands target the
+focused pane, while the others keep following / tailing on their own (including
+log-rotation re-open). The keys are remappable in `~/.config/tess/keys.toml` via
+`focus-other-pane` / `focus-prev-pane`.
 
-The two panes are separated by a vertical divider, and each gets a
-**half-width status line**; the focused pane's status is prefixed with `*`.
-Each pane needs at least 8 usable columns: in a terminal too narrow to fit
-both, the focused pane renders full-width until the window is widened.
+Panes are separated by vertical dividers, and each gets its own status segment
+(`1/N` width); the focused pane's is prefixed with `*`. Each pane needs at least
+8 usable columns: in a terminal too narrow to fit them all, the focused pane
+renders full-width until the window is widened.
 
 #### Synchronized scrolling (`:scrolllock`)
 
@@ -392,10 +397,11 @@ While locked, the **focused pane drives**: only it auto-tails under `--follow` /
 lock. `=` is remappable as `scroll-lock-toggle` in `~/.config/tess/keys.toml`,
 and `<lock>` is a `--prompt` placeholder (`lock` when on, empty when off).
 
-**v1 limitations.** The split is **2-pane vertical only** — no horizontal
-(stacked) split and no more than two panes. The **second pane shows the plain
-file** — `--filter`, `--grep`, `--format`, and `--display` predicates apply to
-the focused/first pane only. Because the split compositor works on rendered
+**v1 limitations.** The split is **vertical only** (columns) — no horizontal
+(stacked) split. Aligned diff (`:diff`) requires **exactly 2 panes**. Per-pane
+predicates: `--filter`/`--grep`/`--format`/`--display` apply to the first pane,
+and `--right-*` to the second; panes 3+ use the shared flags (a uniform per-pane
+mechanism is planned). Because the split compositor works on rendered
 cells, **protocol images** (Kitty/Sixel) render as **ASCII** and **`-r` raw**
 content renders through the cell pipeline (Interpret) while split. Runtime
 `:vsplit` panes also do not apply `--tabs`, `--header`, or status-prompt theming

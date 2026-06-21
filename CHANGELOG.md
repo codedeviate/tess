@@ -10,6 +10,31 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.47.0] — 2026-06-21
+
+### Added
+
+- **N-pane vertical split.** The split view is no longer capped at two panes:
+  `tess --split a b c` opens one vertical pane per file (≥2 files → N panes;
+  one file → 2 views of it, as before). `Tab` cycles focus forward through the
+  panes, **`BackTab` (Shift-Tab)** / `focus-prev-pane` cycles backward. Each pane
+  keeps its own scroll/search/follow state and shows its own status segment.
+  Columns divide evenly with dividers between; if the terminal is too narrow for
+  all panes at a usable minimum, the focused pane renders full-width until
+  there's room.
+- **Scroll-lock generalizes to N panes:** `=` / `:scrolllock` couples *all*
+  panes to the focused one by their captured offsets, scrolling them together
+  (`Tab`-invariant). Aligned diff (`:diff`) still operates on **exactly 2 panes**
+  — with 3+ it flashes a hint and stays in the plain split.
+
+### Changed
+
+- **`--diff` now requires exactly two files** (`--diff a b c` is an error; a
+  single `--diff file` no longer self-diffes). Small pre-1.0 CLI tightening —
+  use `--split` for N-pane viewing. The per-pane `--right-*` flags continue to
+  seed the **second** pane; panes 3+ use the shared flags. (Uniform per-pane
+  flags via a `--` argv split are a planned follow-on.)
+
 ## [0.46.0] — 2026-06-21
 
 ### Added
