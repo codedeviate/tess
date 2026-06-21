@@ -162,14 +162,84 @@ fn build_examples_text() -> String {
     buf
 }
 
+/// Resolved predicates for a single pane: compiled grep, filter, display
+/// renderer, record-start regex, and format label. Used to seed pane B's
+/// `--right-*` flags via `resolve_pane_predicates`.
+struct ResolvedPredicates {
+    grep: Option<GrepPredicate>,
+    filter: Option<CompiledFilter>,
+    display: Option<format::DisplayRenderer>,
+    record_start: Option<regex::bytes::Regex>,
+    format_label: Option<String>,
+}
+
+/// Resolve a pane's predicates from raw flag values (used for pane B's
+/// `--right-*`). `filter` and `display` require a `format_name`.
+fn resolve_pane_predicates(
+    grep: &[String],
+    filter: &[String],
+    format_name: Option<&str>,
+    display: Option<&str>,
+    case_mode: tess::viewport::CaseMode,
+) -> Result<ResolvedPredicates> {
+    let grep_pred = if grep.is_empty() {
+        None
+    } else {
+        Some(GrepPredicate::compile(grep, case_mode).map_err(Error::Runtime)?)
+    };
+    let (filter_pred, display_rend, record_start, label) = match format_name {
+        None => (None, None, None, None),
+        Some(name) => {
+            let formats = format::load_all().map_err(Error::Runtime)?;
+            let fmt = formats.get(name).ok_or_else(|| {
+                Error::Runtime(format!(
+                    "unknown format `{name}` (run --list-formats to see available)"
+                ))
+            })?;
+            let filter_pred = if filter.is_empty() {
+                None
+            } else {
+                let specs: Vec<FilterSpec> = filter
+                    .iter()
+                    .map(|s| FilterSpec::parse(s).map_err(Error::Runtime))
+                    .collect::<Result<_>>()?;
+                Some(CompiledFilter::compile(fmt, specs, case_mode).map_err(Error::Runtime)?)
+            };
+            let display_rend = match display {
+                Some(t) => Some(format::DisplayRenderer::new(
+                    format::DisplayTemplate::compile(t, &fmt.field_names)
+                        .map_err(|e| Error::Runtime(format!("--right-display: {e}")))?,
+                    fmt.regex.clone(),
+                )),
+                None => fmt
+                    .display
+                    .clone()
+                    .map(|t| format::DisplayRenderer::new(t, fmt.regex.clone())),
+            };
+            let rec = fmt
+                .record_start
+                .as_ref()
+                .and_then(|re| regex::bytes::Regex::new(re.as_str()).ok());
+            (filter_pred, display_rend, rec, Some(name.to_string()))
+        }
+    };
+    Ok(ResolvedPredicates {
+        grep: grep_pred,
+        filter: filter_pred,
+        display: display_rend,
+        record_start,
+        format_label: label,
+    })
+}
+
 /// Build the second (background) pane for `--split`. Opens `path` through the
 /// same source pipeline as a file-switch (`open::open_source_for_path` — no
 /// prettify/format-specific config) and configures a viewport with the
 /// display-relevant, non-format-specific options the focused pane uses. The
-/// format-specific compiled predicates (filter/grep/or/display) are consumed
-/// into the focused viewport and intentionally not mirrored here; the second
-/// pane shows the file's plain view. `other_pane_init` corrects the size, so
-/// the `cols`/`rows` passed here are provisional.
+/// `--right-*` flags are resolved via `resolve_pane_predicates` and applied to
+/// the pane B viewport so the right pane can carry its own grep/filter/format.
+/// `other_pane_init` corrects the size, so the `cols`/`rows` passed here are
+/// provisional.
 #[allow(clippy::too_many_arguments)]
 fn build_second_pane(
     path: &std::path::Path,
@@ -180,6 +250,7 @@ fn build_second_pane(
     preprocessor: Option<&tess::preprocess::Preprocessor>,
     record_start_regex: Option<&regex::bytes::Regex>,
     enc: tess::charset::Encoding,
+    case_mode: tess::viewport::CaseMode,
 ) -> Result<tess::pane::Pane> {
     let (src, label, preprocess_failure) =
         tess::open::open_source_for_path(path, args, preprocessor)?;
@@ -300,6 +371,31 @@ fn build_second_pane(
                 viewport.set_image_no_color(args.no_color);
             }
         }
+    }
+
+    // Apply --right-* predicates to pane B. The index is pre-scan here, so
+    // set_record_start (the pre-scan setter) is safe. If --right-format sets a
+    // record_start we use that; otherwise fall through to the caller's
+    // record_start_regex (pane A's setting, already applied above if present).
+    let rp = resolve_pane_predicates(
+        &args.right_grep,
+        &args.right_filter,
+        args.right_format.as_deref(),
+        args.right_display.as_deref(),
+        case_mode,
+    )?;
+    if let Some(re) = rp.record_start {
+        idx.set_record_start(re);
+    }
+    viewport.set_format_label(rp.format_label);
+    if let Some(g) = rp.grep {
+        viewport.set_grep(Some(g));
+    }
+    if let Some(f) = rp.filter {
+        viewport.set_filter(Some(f));
+    }
+    if let Some(d) = rp.display {
+        viewport.set_display(Some(d));
     }
 
     Ok(tess::pane::Pane {
@@ -1234,6 +1330,7 @@ showing raw (use --content-type=NAME to override)"
                 preprocessor.as_ref(),
                 record_start_regex.as_ref(),
                 resolved_enc,
+                case_mode,
             ) {
                 Ok(pane) => Some(pane),
                 Err(e) => {
@@ -1367,5 +1464,15 @@ mod tests {
             parse_plus_cmd("+/"),
             Ok(PlusCmd::SearchForward("".into()))
         );
+    }
+
+    #[test]
+    fn resolve_pane_predicates_grep_and_filter() {
+        let case = tess::viewport::CaseMode::Sensitive;
+        let r = resolve_pane_predicates(&["ERROR".to_string()], &[], None, None, case).unwrap();
+        assert!(r.grep.is_some() && r.filter.is_none());
+        let r2 = resolve_pane_predicates(&[], &["status=404".to_string()], Some("apache-common"), None, case).unwrap();
+        assert!(r2.filter.is_some());
+        assert_eq!(r2.format_label.as_deref(), Some("apache-common"));
     }
 }
