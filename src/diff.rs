@@ -61,6 +61,35 @@ pub fn align<T: std::hash::Hash + Ord + Eq>(left: &[T], right: &[T]) -> Vec<Diff
     pairs
 }
 
+/// Hash a line into a comparison key. With `ignore_ws`, leading/trailing
+/// whitespace is trimmed and internal whitespace runs collapse to one space
+/// *for the hash only* — the displayed text is untouched. Whitespace bytes are
+/// ASCII (space/tab/CR/FF/VT), so this is encoding-invariant.
+///
+/// Hashing means a vanishingly rare collision could mis-classify two lines as
+/// equal; acceptable for a pager diff (same trade-off git makes).
+pub fn line_key(bytes: &[u8], ignore_ws: bool) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if ignore_ws {
+        let mut started = false;
+        let mut prev_ws = false;
+        let mut pending_space = false;
+        for &b in bytes {
+            let is_ws = b == b' ' || b == b'\t' || b == b'\r' || b == 0x0c || b == 0x0b;
+            if is_ws { prev_ws = true; continue; }
+            if started && prev_ws { pending_space = true; }
+            if pending_space { b' '.hash(&mut h); pending_space = false; }
+            b.hash(&mut h);
+            started = true;
+            prev_ws = false;
+        }
+    } else {
+        bytes.hash(&mut h);
+    }
+    h.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +156,24 @@ mod tests {
     #[test]
     fn both_empty_is_empty() {
         assert!(align::<u64>(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn line_key_distinguishes_different_lines() {
+        assert_ne!(line_key(b"hello", false), line_key(b"world", false));
+    }
+    #[test]
+    fn line_key_same_line_is_stable() {
+        assert_eq!(line_key(b"hello", false), line_key(b"hello", false));
+    }
+    #[test]
+    fn ignore_ws_collapses_whitespace_differences() {
+        assert_eq!(line_key(b"  foo  bar", true), line_key(b"foo bar", true));
+        assert_eq!(line_key(b"\tfoo\tbar", true), line_key(b"foo bar", true));
+        assert_ne!(line_key(b"  foo  bar", false), line_key(b"foo bar", false));
+    }
+    #[test]
+    fn ignore_ws_still_distinguishes_real_content() {
+        assert_ne!(line_key(b"foo bar", true), line_key(b"foo baz", true));
     }
 }
