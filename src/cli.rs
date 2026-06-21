@@ -49,6 +49,19 @@ pub struct Args {
     #[arg(long = "content-type", value_name = "TYPE")]
     pub content_type: Option<String>,
 
+    /// Open a side-by-side aligned diff of two files (implies a split).
+    /// Interactive only. See --diff-force, --diff-ignore-whitespace.
+    #[arg(long = "diff")]
+    pub diff: bool,
+
+    /// Allow --diff past the size cap (large files; may be slow / memory-heavy).
+    #[arg(long = "diff-force")]
+    pub diff_force: bool,
+
+    /// In --diff, treat lines differing only in whitespace as equal.
+    #[arg(long = "diff-ignore-whitespace")]
+    pub diff_ignore_whitespace: bool,
+
     /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
     /// surrounding context visible.
     #[arg(long = "dim")]
@@ -801,6 +814,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_diff_flags() {
+        let a = Args::parse_from(["tess", "--diff", "x", "y"]);
+        assert!(a.diff && !a.diff_force && !a.diff_ignore_whitespace);
+        let b = Args::parse_from(["tess", "--diff", "--diff-force", "--diff-ignore-whitespace", "x", "y"]);
+        assert!(b.diff && b.diff_force && b.diff_ignore_whitespace);
+        assert!(!Args::parse_from(["tess", "x"]).diff);
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -815,6 +837,9 @@ mod tests {
             "--chop-long-lines",
             "--clipboard",
             "--content-type",
+            "--diff",
+            "--diff-force",
+            "--diff-ignore-whitespace",
             "--dim",
             "--display",
             "--encoding",
