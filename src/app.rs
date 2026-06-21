@@ -1641,7 +1641,6 @@ pub fn run(
                                                                 if let Some(other) = other_pane.as_mut() {
                                                                     other.viewport.set_encoding(enc);
                                                                 }
-                                                                needs_redraw = true;
                                                             }
                                                             None => viewport.flash(
                                                                 format!("unknown encoding: {label}"),

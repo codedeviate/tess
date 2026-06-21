@@ -62,12 +62,22 @@ pub fn open_source_for_path(
 /// unknown explicit label.
 pub fn resolve_encoding(flag: &str, head: &[u8]) -> std::result::Result<crate::charset::Encoding, String> {
     if flag != "utf-8" {
-        return crate::charset::parse_label(flag)
-            .ok_or_else(|| format!("unknown --encoding label: {flag}"));
+        let enc = crate::charset::parse_label(flag)
+            .ok_or_else(|| format!("unknown --encoding label: {flag}"))?;
+        // The line index splits on a lone 0x0A, and UTF-16 code units embed
+        // 0x00/0x0A, so every line after the first would byte-misalign. Reject
+        // UTF-16 rather than render mojibake (a future enhancement could
+        // transcode the whole buffer to UTF-8 at the source layer).
+        if matches!(enc.label(), "UTF-16LE" | "UTF-16BE") {
+            return Err(format!("encoding {} is not supported (line-oriented decode)", enc.label()));
+        }
+        return Ok(enc);
     }
-    if head.starts_with(&[0xEF, 0xBB, 0xBF]) { return Ok(crate::charset::Encoding::utf8()); }
-    if head.starts_with(&[0xFF, 0xFE]) { return Ok(crate::charset::parse_label("utf-16le").unwrap()); }
-    if head.starts_with(&[0xFE, 0xFF]) { return Ok(crate::charset::parse_label("utf-16be").unwrap()); }
+    // Default path. A UTF-16 BOM cannot be honored for the same reason; error
+    // rather than mojibake. (A UTF-8 BOM just means UTF-8, the default.)
+    if head.starts_with(&[0xFF, 0xFE]) || head.starts_with(&[0xFE, 0xFF]) {
+        return Err("UTF-16 BOM detected; UTF-16 is not supported (line-oriented decode)".to_string());
+    }
     Ok(crate::charset::Encoding::utf8())
 }
 
@@ -81,10 +91,19 @@ mod tests {
         assert_eq!(enc.label(), crate::charset::parse_label("iso-8859-1").unwrap().label());
     }
     #[test]
-    fn resolve_encoding_default_honors_bom() {
+    fn resolve_encoding_plain_default_is_utf8() {
+        assert!(resolve_encoding("utf-8", b"hello").unwrap().is_utf8());
+        // A UTF-8 BOM still resolves to UTF-8 (the default).
         assert!(resolve_encoding("utf-8", &[0xEF,0xBB,0xBF,b'h']).unwrap().is_utf8());
-        let e16 = resolve_encoding("utf-8", &[0xFF,0xFE,b'h',0]).unwrap();
-        assert_eq!(e16.label(), crate::charset::parse_label("utf-16le").unwrap().label());
+    }
+    #[test]
+    fn resolve_encoding_utf16_is_rejected() {
+        // UTF-16 BOM under the default → error (line-oriented decode can't handle it).
+        assert!(resolve_encoding("utf-8", &[0xFF,0xFE,b'h',0]).is_err());
+        assert!(resolve_encoding("utf-8", &[0xFE,0xFF,0,b'h']).is_err());
+        // Explicit UTF-16 label → error too.
+        assert!(resolve_encoding("utf-16le", b"").is_err());
+        assert!(resolve_encoding("utf-16be", b"").is_err());
     }
     #[test]
     fn resolve_encoding_unknown_errs() {
