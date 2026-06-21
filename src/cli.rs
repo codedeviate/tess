@@ -364,6 +364,22 @@ pub struct Args {
     #[arg(long = "record-start", value_name = "REGEX")]
     pub record_start: Option<String>,
 
+    /// Pane B (`--split`/`--diff` second pane): display template. Mirrors --display.
+    #[arg(long = "right-display", value_name = "TEMPLATE")]
+    pub right_display: Option<String>,
+
+    /// Pane B: field filter (needs --right-format). Repeatable, AND'd. Mirrors --filter.
+    #[arg(long = "right-filter", value_name = "FIELD<op>VALUE", requires = "right_format")]
+    pub right_filter: Vec<String>,
+
+    /// Pane B: parse format for field filtering. Mirrors --format.
+    #[arg(long = "right-format", value_name = "NAME")]
+    pub right_format: Option<String>,
+
+    /// Pane B: raw-regex filter. Repeatable, AND'd. Mirrors --grep.
+    #[arg(long = "right-grep", value_name = "PATTERN")]
+    pub right_grep: Vec<String>,
+
     /// Character to show at the right edge of a chopped line (`-S` chop
     /// mode) indicating "more content right". Default `>`. Pass an empty
     /// string to disable. Mirrors `less --rscroll=c`.
@@ -823,6 +839,27 @@ mod tests {
     }
 
     #[test]
+    fn parses_right_predicate_flags() {
+        let a = Args::parse_from([
+            "tess", "--split", "a", "b",
+            "--right-format", "nginx-combined",
+            "--right-filter", "status=404",
+            "--right-grep", "ERROR",
+            "--right-display", "<status>",
+        ]);
+        assert_eq!(a.right_format.as_deref(), Some("nginx-combined"));
+        assert_eq!(a.right_filter, vec!["status=404"]);
+        assert_eq!(a.right_grep, vec!["ERROR"]);
+        assert_eq!(a.right_display.as_deref(), Some("<status>"));
+        assert!(Args::parse_from(["tess", "a"]).right_filter.is_empty());
+    }
+
+    #[test]
+    fn right_filter_requires_right_format() {
+        assert!(Args::try_parse_from(["tess", "--split", "a", "b", "--right-filter", "status=404"]).is_err());
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -887,6 +924,10 @@ mod tests {
             "--raw-control-chars",
             "--RAW-CONTROL-CHARS",
             "--record-start",
+            "--right-display",
+            "--right-filter",
+            "--right-format",
+            "--right-grep",
             "--rscroll",
             "--scroll-lock",
             "--shift",
