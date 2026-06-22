@@ -2467,6 +2467,29 @@ mod tests {
     }
 
     #[test]
+    fn frozen_cols_are_per_viewport_independent() {
+        // Each split pane is a Viewport with its own header_cols, so the freeze
+        // is per-pane. Pane A freezes 3 cols (divider present); pane B doesn't.
+        let content = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123\n";
+        let (m, mut idx) = setup(content);
+
+        let mut a = Viewport::new(12, 3, "a".into());
+        a.toggle_chop();
+        a.set_header(0, 3);
+        for _ in 0..3 { a.hscroll_right_step(); }
+        let fa = a.frame(&m, &mut idx);
+        assert!(fa.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '\u{2502}', .. })),
+            "pane A with header_cols set shows the frozen divider");
+
+        let mut b = Viewport::new(12, 3, "b".into());
+        b.toggle_chop();
+        for _ in 0..3 { b.hscroll_right_step(); }
+        let fb = b.frame(&m, &mut idx);
+        assert!(!fb.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '\u{2502}', .. })),
+            "pane B without header_cols shows no frozen divider");
+    }
+
+    #[test]
     fn status_column_shows_mark_then_search_glyphs() {
         // 3 lines, chop mode (no wrap). Mark line 1 ('a'), search matches
         // "bb" on line 2. Line 0 → blank, line 1 → 'a' (mark), line 2 → '*'.
