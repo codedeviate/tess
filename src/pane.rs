@@ -70,6 +70,32 @@ pub fn split_widths_n(cols: u16, n: usize) -> Vec<u16> {
     (0..n).map(|i| (base + if i >= n - rem { 1 } else { 0 }) as u16).collect()
 }
 
+/// Map a screen column to the 0-based visible pane index, given the per-pane
+/// widths from `split_widths_n`. Panes are laid out left-to-right separated by a
+/// 1-column `DIVIDER` (as in `compose_panes`). A column inside a pane's content
+/// returns that pane; a column on the divider after pane `i` resolves to pane `i`
+/// (the left pane); a column past the end clamps to the last pane. A single-entry
+/// `widths` (single pane / too-narrow fallback) always returns 0.
+pub fn pane_at_column(col: u16, widths: &[u16]) -> usize {
+    let last = widths.len().saturating_sub(1);
+    let mut x = 0usize;
+    let col = col as usize;
+    for (i, &w) in widths.iter().enumerate() {
+        let content_end = x + w as usize; // exclusive
+        if col < content_end {
+            return i;
+        }
+        if i == last {
+            return last; // past the last pane's content → clamp
+        }
+        if col == content_end {
+            return i; // divider column belongs to the pane on its left
+        }
+        x = content_end + DIVIDER;
+    }
+    last
+}
+
 fn divider_cell() -> Cell {
     Cell::Char {
         ch: '\u{2502}', // │
@@ -276,6 +302,46 @@ mod tests {
         // tops 100/340/200 → offsets 0/240/100. Deriving pane 2 from focused=pane0 vs focused=pane1 agree.
         assert_eq!(super::locked_pane_top(100, 0, 100, 1_000_000), 200);
         assert_eq!(super::locked_pane_top(340, 240, 100, 1_000_000), 200);
+    }
+
+    #[test]
+    fn pane_at_column_single_pane_is_always_zero() {
+        let w = vec![80u16];
+        assert_eq!(pane_at_column(0, &w), 0);
+        assert_eq!(pane_at_column(79, &w), 0);
+        assert_eq!(pane_at_column(500, &w), 0);
+    }
+
+    #[test]
+    fn pane_at_column_two_panes_with_divider() {
+        // split_widths_n(80, 2) == [39, 40]: pane0 cols 0..=38, divider at 39,
+        // pane1 cols 40..=79. The divider resolves to the left pane.
+        let w = split_widths_n(80, 2);
+        assert_eq!(w, vec![39, 40]);
+        assert_eq!(pane_at_column(0, &w), 0);
+        assert_eq!(pane_at_column(38, &w), 0);
+        assert_eq!(pane_at_column(39, &w), 0); // divider → left pane
+        assert_eq!(pane_at_column(40, &w), 1);
+        assert_eq!(pane_at_column(79, &w), 1);
+        assert_eq!(pane_at_column(80, &w), 1); // past end → last pane
+        assert_eq!(pane_at_column(999, &w), 1);
+    }
+
+    #[test]
+    fn pane_at_column_three_panes() {
+        // split_widths_n(80, 3) == [26,26,26]: p0 0..=25, div 26, p1 27..=52,
+        // div 53, p2 54..=79.
+        let w = split_widths_n(80, 3);
+        assert_eq!(w, vec![26, 26, 26]);
+        assert_eq!(pane_at_column(0, &w), 0);
+        assert_eq!(pane_at_column(25, &w), 0);
+        assert_eq!(pane_at_column(26, &w), 0); // first divider → left pane (0)
+        assert_eq!(pane_at_column(27, &w), 1);
+        assert_eq!(pane_at_column(52, &w), 1);
+        assert_eq!(pane_at_column(53, &w), 1); // second divider → left pane (1)
+        assert_eq!(pane_at_column(54, &w), 2);
+        assert_eq!(pane_at_column(79, &w), 2);
+        assert_eq!(pane_at_column(200, &w), 2); // past end → last pane
     }
 
     #[test]
