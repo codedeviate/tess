@@ -58,6 +58,10 @@ pub struct RenderOpts {
     /// (`wrap == false`); the first `left_col` columns of each line are skipped
     /// before emitting up to `cols` cells. Ignored in wrap mode. Default 0.
     pub left_col: usize,
+    /// Chop-mode frozen left columns (`--header ,C`). When `> 0`, chop mode, and
+    /// `left_col > 0`, the first `frozen_cols` display columns are pinned and the
+    /// rest of the line scrolls past a dim `│` divider. 0 disables. See render_line.
+    pub frozen_cols: usize,
     /// Explicit tab-stop columns (sorted, ascending, from `--tabs`). When
     /// `Some`, overrides the uniform `tab_width`: tabs advance to the next
     /// listed column; past the final stop the last interval repeats. `None`
@@ -74,6 +78,7 @@ impl Default for RenderOpts {
             tab_width: 8, wrap: true, cols: 80,
             mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false,
             left_col: 0,
+            frozen_cols: 0,
             tab_stops: None,
             encoding: crate::charset::Encoding::utf8(),
         }
@@ -266,6 +271,58 @@ pub fn render_line(
     opts: &RenderOpts,
     state: Option<&mut RenderState>,
 ) -> Vec<Vec<Cell>> {
+    // Frozen left columns (`--header ,C`): when engaged (chop mode, positive
+    // frozen_cols, scrolled, and wide enough to hold the frozen region + a
+    // divider), render the frozen prefix and the scrolled remainder via the
+    // existing machinery (recursively, with frozen_cols=0) and stitch them with
+    // a dim `│` divider. One row (chop mode is always one row).
+    if !opts.wrap
+        && opts.frozen_cols > 0
+        && opts.left_col > 0
+        && (opts.cols as usize) > opts.frozen_cols + 1
+    {
+        // Frozen prefix: cols == frozen_cols, no scroll, no rscroll marker.
+        let frozen_opts = RenderOpts {
+            left_col: 0,
+            cols: opts.frozen_cols as u16,
+            frozen_cols: 0,
+            rscroll_char: None,
+            ..opts.clone()
+        };
+        // Scrolled remainder: skip the frozen region AND the scroll offset,
+        // into the width left after the frozen region + divider.
+        let scrolled_opts = RenderOpts {
+            left_col: opts.frozen_cols + opts.left_col,
+            cols: opts.cols - opts.frozen_cols as u16 - 1,
+            frozen_cols: 0,
+            ..opts.clone()
+        };
+        // The frozen pass must not advance the caller's SGR state twice; clone
+        // for it and let the scrolled pass (same bytes) leave `state` correct.
+        let mut frozen_state = state.as_deref().cloned();
+        let frozen_rows = render_line(bytes, &frozen_opts, frozen_state.as_mut());
+        let scrolled_rows = render_line(bytes, &scrolled_opts, state);
+
+        let mut row = frozen_rows.into_iter().next().unwrap_or_default();
+        row.truncate(opts.frozen_cols);
+        while row.len() < opts.frozen_cols {
+            row.push(Cell::Empty);
+        }
+        row.push(Cell::Char {
+            ch: '\u{2502}',
+            width: 1,
+            style: crate::ansi::Style { dim: true, ..Default::default() },
+            hyperlink: None,
+        });
+        if let Some(scrolled) = scrolled_rows.into_iter().next() {
+            row.extend(scrolled);
+        }
+        while row.len() < opts.cols as usize {
+            row.push(Cell::Empty);
+        }
+        return vec![row];
+    }
+
     // Charset decode: for non-UTF-8 encodings, transcode the line to UTF-8 up
     // front so the existing grapheme/width/tab/control pipeline renders the
     // decoded glyphs. UTF-8 keeps the original bytes (and its <HH> behavior).
@@ -792,7 +849,7 @@ mod tests {
     }
 
     fn opts(cols: u16, wrap: bool) -> RenderOpts {
-        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, tab_stops: None, encoding: crate::charset::Encoding::utf8() }
+        RenderOpts { tab_width: 8, wrap, cols, mode: AnsiMode::Strict, rscroll_char: None, word_wrap: false, left_col: 0, frozen_cols: 0, tab_stops: None, encoding: crate::charset::Encoding::utf8() }
     }
 
     fn ch(c: char) -> Cell {
@@ -1187,6 +1244,47 @@ mod tests {
     fn left_col_does_not_change_count_rows() {
         let opts = RenderOpts { wrap: false, cols: 4, left_col: 3, ..Default::default() };
         assert_eq!(count_rows(b"abcdefgh", &opts, None), 1);
+    }
+
+    fn row_chars(rows: &[Vec<Cell>]) -> String {
+        rows[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect()
+    }
+
+    #[test]
+    fn frozen_cols_zero_is_unchanged() {
+        let opts = RenderOpts { wrap: false, cols: 10, left_col: 3, frozen_cols: 0, ..Default::default() };
+        assert_eq!(row_chars(&render_line(b"abcdefghij", &opts, None)), "defghij");
+    }
+
+    #[test]
+    fn frozen_cols_no_effect_when_not_scrolled() {
+        // left_col == 0 → freeze not engaged; identical to a normal render.
+        let opts = RenderOpts { wrap: false, cols: 10, left_col: 0, frozen_cols: 4, ..Default::default() };
+        assert_eq!(row_chars(&render_line(b"abcdefghij", &opts, None)), "abcdefghij");
+    }
+
+    #[test]
+    fn frozen_cols_engaged_pins_prefix_and_divides() {
+        // C=4, left_col=3, cols=10: first 4 cols frozen, then '│', then the
+        // remainder skipped by frozen(4)+left_col(3)=7 → starts at 'h'.
+        let opts = RenderOpts { wrap: false, cols: 10, left_col: 3, frozen_cols: 4, ..Default::default() };
+        assert_eq!(row_chars(&render_line(b"abcdefghij", &opts, None)), "abcd\u{2502}hij");
+    }
+
+    #[test]
+    fn frozen_cols_too_narrow_falls_back_to_plain_hscroll() {
+        // cols (5) not greater than frozen_cols+1 (5) → no freeze; plain hscroll.
+        let opts = RenderOpts { wrap: false, cols: 5, left_col: 3, frozen_cols: 4, ..Default::default() };
+        assert_eq!(row_chars(&render_line(b"abcdefghij", &opts, None)), "defgh");
+    }
+
+    #[test]
+    fn frozen_cols_noop_in_wrap_mode() {
+        // wrap mode ignores frozen_cols (hscroll is already a no-op there).
+        let opts = RenderOpts { wrap: true, cols: 4, left_col: 3, frozen_cols: 2, ..Default::default() };
+        assert_eq!(render_line(b"abcdefgh", &opts, None)[0].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect::<String>(), "abcd");
     }
 
     #[test]
