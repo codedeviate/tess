@@ -10,6 +10,17 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.49.0] — 2026-06-22
+
+### Changed
+
+- **Mouse wheel scrolls the pane under the cursor.** Under `--mouse` in a split,
+  wheel events (all axes — vertical, Shift+wheel, and native horizontal) now
+  scroll whichever pane the pointer is over, instead of always the focused pane.
+  Keyboard focus is unchanged (the `*`/Tab target stays put). Scroll-locked
+  panes still move together and diff still scrolls as one view; a single pane is
+  unaffected.
+
 ## [0.48.0] — 2026-06-22
 
 ### Added

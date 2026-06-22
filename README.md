@@ -246,7 +246,8 @@ Opens a vertical split with one pane per file. Each pane is a full viewport with
 its own scroll position, search, and follow/tail state. `Tab`/`BackTab` cycle the
 focused pane (scroll, search, and colon commands target it); the others keep
 scrolling/tailing on their own. Each pane gets its own status segment; the
-focused one is prefixed with `*`.
+focused one is prefixed with `*`. Under `--mouse`, the wheel scrolls the pane the
+cursor is over (without changing focus).
 
 At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
 duplicates the current file at its scroll position); `:only` / `:close`

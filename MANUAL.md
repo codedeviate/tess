@@ -405,6 +405,11 @@ Panes are separated by vertical dividers, and each gets its own status segment
 8 usable columns: in a terminal too narrow to fit them all, the focused pane
 renders full-width until the window is widened.
 
+Under `--mouse`, the wheel (vertical, Shift+wheel, and native horizontal) scrolls
+the pane the **cursor is over** — not necessarily the focused one — and does not
+change focus. (Exceptions: while scroll-locked the panes move together, and in
+diff mode the aligned pair scrolls as one view.)
+
 #### Synchronized scrolling (`:scrolllock`)
 
 By default the two panes scroll independently. Press `=` (or run `:scrolllock`,

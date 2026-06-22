@@ -2460,36 +2460,55 @@ pub fn run(
                 if let crossterm::event::Event::Mouse(me) = &event {
                     if mouse_enabled {
                         use crossterm::event::{KeyModifiers, MouseEventKind};
-                        // Shift+wheel = horizontal scroll: the widely-supported
-                        // convention for terminals that don't emit native
-                        // ScrollLeft/ScrollRight (e.g. macOS Terminal.app). Only
-                        // when there's a horizontal axis; otherwise fall through
-                        // to normal vertical scroll.
+                        // Route the wheel to the pane under the cursor when a
+                        // split is active and independent. Scroll-locked panes
+                        // move together and diff scrolls as one view, so those
+                        // bypass routing (drive the focused pane / group as
+                        // before). Single pane → only pane is the focused one.
+                        let route = !others.is_empty() && !scroll_lock && diff.is_none();
+                        let vis = if route {
+                            let widths = crate::pane::split_widths_n(cols, others.len() + 1);
+                            crate::pane::pane_at_column(me.column, &widths)
+                        } else {
+                            focused_pos
+                        };
+                        // Resolve the visible pane index to the focused
+                        // loose-locals or an `others` entry. The focused pane is
+                        // composited in at `focused_pos`, so `others` (focused
+                        // removed) is indexed by `vis` shifted past it.
+                        let (tvp, tidx, tsrc): (&mut Viewport, &mut LineIndex, &dyn Source) =
+                            if vis == focused_pos {
+                                (&mut viewport, &mut idx, src.as_ref())
+                            } else {
+                                let j = vis - if vis > focused_pos { 1 } else { 0 };
+                                let p = &mut others[j];
+                                (&mut p.viewport, &mut p.idx, p.src.as_ref())
+                            };
                         let hshift = me.modifiers.contains(KeyModifiers::SHIFT)
-                            && viewport.hscroll_active();
+                            && tvp.hscroll_active();
                         match me.kind {
                             MouseEventKind::ScrollDown if hshift => {
-                                viewport.hscroll_right_step();
+                                tvp.hscroll_right_step();
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollUp if hshift => {
-                                viewport.hscroll_left_step();
+                                tvp.hscroll_left_step();
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollDown => {
-                                viewport.scroll_lines(wheel_lines as i64, src.as_ref(), &mut idx);
+                                tvp.scroll_lines(wheel_lines as i64, tsrc, tidx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollUp => {
-                                viewport.scroll_lines(-(wheel_lines as i64), src.as_ref(), &mut idx);
+                                tvp.scroll_lines(-(wheel_lines as i64), tsrc, tidx);
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollLeft => {
-                                viewport.hscroll_left_step();
+                                tvp.hscroll_left_step();
                                 needs_redraw = true;
                             }
                             MouseEventKind::ScrollRight => {
-                                viewport.hscroll_right_step();
+                                tvp.hscroll_right_step();
                                 needs_redraw = true;
                             }
                             _ => {}
