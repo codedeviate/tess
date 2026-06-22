@@ -1226,6 +1226,7 @@ impl Viewport {
         o.cols = self.cols.saturating_sub(self.status_col_width() + gutter);
         o.mode = self.ansi_mode;
         o.left_col = self.left_col;   // horizontal scroll offset carried into the kernel
+        o.frozen_cols = self.header_cols; // kernel ignores it in wrap mode
         o
     }
 
@@ -1271,7 +1272,15 @@ impl Viewport {
                     widest = widest.max(crate::render::display_width(&bytes, &width_opts));
                 }
             }
-            self.left_col = self.left_col.min(widest.saturating_sub(avail));
+            let max_left = if self.header_cols > 0 && self.header_cols + 1 < avail {
+                // Frozen engaged: scrollable window = avail - C - 1, scrollable
+                // content = widest - C.
+                widest.saturating_sub(self.header_cols)
+                    .saturating_sub(avail - self.header_cols - 1)
+            } else {
+                widest.saturating_sub(avail)
+            };
+            self.left_col = self.left_col.min(max_left);
         }
 
         let gutter = self.gutter_width(idx);
@@ -1473,7 +1482,7 @@ impl Viewport {
                 // in chop mode, so the user can see that content is off-screen left.
                 // Mirrors the `>` rscroll marker style (dim). Placed at the first
                 // content column (after the status column + gutter, if any).
-                if self.left_col > 0 && !self.opts.wrap {
+                if self.left_col > 0 && !self.opts.wrap && self.header_cols == 0 {
                     let marker_col = (scol + gutter) as usize;
                     if let Some(cell) = full.get_mut(marker_col) {
                         *cell = Cell::Char {
@@ -2421,6 +2430,40 @@ mod tests {
             Some(Cell::Char { ch, .. }) => *ch,
             other => panic!("expected Char in first cell, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn frozen_cols_clamp_reaches_exact_eol_and_shows_divider() {
+        // 30-char line, 10 cols, chop, freeze 3 cols. Scroll far right; left_col
+        // must clamp to the engaged max, the frozen divider '│' appears, no '<'.
+        let content = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123\n"; // 30 chars
+        let (m, mut idx) = setup(content);
+        let mut v = Viewport::new(10, 3, "t".into());
+        v.toggle_chop();
+        v.set_header(0, 3); // freeze 3 left columns
+        for _ in 0..20 { v.hscroll_right_step(); } // scroll way past the end
+        let frame = v.frame(&m, &mut idx);
+        // avail = 10 (no gutter/status col). Engaged clamp:
+        //   max_left_col = (widest - C).saturating_sub(avail - C - 1)
+        //                = (30 - 3) - (10 - 3 - 1) = 27 - 6 = 21
+        assert_eq!(v.left_col(), 21, "left_col should clamp to the engaged max");
+        assert!(frame.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '\u{2502}', .. })),
+            "frozen divider should be present");
+        assert!(!frame.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '<', .. })),
+            "'<' marker should be suppressed when frozen is engaged");
+    }
+
+    #[test]
+    fn frozen_cols_zero_keeps_today_clamp_and_marker() {
+        let content = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123\n"; // 30 chars
+        let (m, mut idx) = setup(content);
+        let mut v = Viewport::new(10, 3, "t".into());
+        v.toggle_chop();
+        for _ in 0..20 { v.hscroll_right_step(); }
+        let frame = v.frame(&m, &mut idx);
+        assert_eq!(v.left_col(), 20, "today's clamp: widest(30) - avail(10) = 20");
+        assert!(frame.body[0].iter().any(|c| matches!(c, Cell::Char { ch: '<', .. })),
+            "'<' marker present without a frozen region");
     }
 
     #[test]
