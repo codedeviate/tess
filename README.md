@@ -237,6 +237,9 @@ The `image` feature is on by default. Build without it (`--no-default-features`)
 tess --split app.log app.log.1      # two files side by side
 tess --split a.log b.log c.log      # N panes — one per file
 tess --split big.log                # one file, two independent views
+
+# Per-pane flags via the `--` form: each section is its own view spec
+tess a.log --grep ERROR -- b.log --grep WARN -- c.log
 ```
 
 Opens a vertical split with one pane per file. Each pane is a full viewport with
@@ -248,6 +251,16 @@ focused one is prefixed with `*`.
 At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
 duplicates the current file at its scroll position); `:only` / `:close`
 collapse back to a single pane. `Tab` is remappable as `focus-other-pane`.
+
+**Per-pane flags (`--` form).** A standalone `--` splits the command line into
+per-pane view sections — `tess a --grep X -- b --grep Y -- c` opens three panes,
+each with its own file and per-view flags (`--grep`/`--filter`/`--format`/
+`--display`/`--encoding`/`-i`/`-I` + display flags). The first section carries
+the session globals; later sections are view-only. `--diff a -- b` (two sections)
+renders the aligned diff. It's mutually exclusive with `--split`/`--right-*`, and
+OR-groups (`--or-*`)/`+CMD` belong in the first section. A `--` that would leave
+an empty section (`tess -- -dash-named-file`) keeps its POSIX end-of-options
+meaning.
 
 **Synchronized scrolling.** Press `=` (or `:scrolllock`, or start with
 `--scroll-lock`) to lock the panes together — scrolling one scrolls the other

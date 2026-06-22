@@ -59,27 +59,15 @@ worth eating.
 
 ## Deferred
 
-### Uniform per-pane flag mechanism — **M**
-
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-The split's per-pane surface grew one flag family at a time: `--right-grep`/
-`--right-filter`/`--right-format`/`--right-display` (`0.45.0`) and
-`--right-ignore-case`/`--right-IGNORE-CASE` (`0.46.0`). A larger idea, deferred:
-a **uniform** mechanism so *any* flag can be scoped to the right pane rather
-than minting one-off `--right-*` flags — e.g. a `--` argv split
-(`tess a --filter X -- b --filter Y`) where each half is a full view spec, or a
-general `--right-<flag>` convention parsed generically. Would also generalize to
-N>2 / horizontal panes if those land.
-
 ### Horizontal split & per-pane refinements — **L**
 
 The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
 scrolling (`0.42.0`), charset support (`0.43.0`), aligned **diff mode**
 (`0.44.0`), per-pane predicates (`0.45.0`) + per-pane case (`0.46.0`), and
 **N-pane** vertical split (`0.47.0` — `--split a b c`, Tab/BackTab cycle,
-scroll-lock couples all). What remains deferred:
+scroll-lock couples all), and the **`--` per-pane argv form** (`0.48.0` —
+`tess a --grep X -- b --grep Y -- c`, each section a full per-pane view spec,
+section 0 carries globals). What remains deferred:
 
 - **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
   grid layout (and the compositor work for it) is deferred.

@@ -10,6 +10,33 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.48.0] — 2026-06-22
+
+### Added
+
+- **`--` per-pane argv form.** A standalone `--` splits the command line into
+  per-pane view sections — `tess a --grep X -- b --grep Y -- c` opens three
+  vertical panes, each with its own file and per-view flags. The first section
+  (before any `--`) carries the session globals plus the focused pane; each
+  later section is its own view spec (`--grep`/`--filter`/`--format`/`--display`/
+  `--encoding`/`-i`/`-I` + display flags). User-defined groups expand
+  per-section. Built on the N-pane split substrate.
+  - `--diff a -- b` (exactly two sections) renders the aligned diff.
+  - Additive and **mutually exclusive** with `--split`/`--right-*` (using both is
+    an error). OR-groups (`--or-*`) and `+CMD` are **first-section-only** (an
+    `--or-*` in a later section is rejected).
+  - A `--` that would leave an empty section (`tess -- -dash-file`, a trailing
+    `tess a --`) keeps its POSIX "end of options" meaning — only all-non-empty
+    splits become per-pane.
+
+### Changed
+
+- **Split panes now resolve their own encoding** from each file's own head bytes
+  rather than inheriting the first pane's BOM detection. Explicit `--encoding`
+  is unchanged (the label wins regardless of content); only default BOM
+  auto-detection across differing files is affected (now per-file — strictly
+  more correct).
+
 ## [0.47.0] — 2026-06-21
 
 ### Added
