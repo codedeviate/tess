@@ -354,6 +354,35 @@ tess --split big.log                    # one file → a second independent view
 `--split` opens **one pane per file argument** (≥2 files → that many panes; a
 single file → 2 views of it).
 
+#### Per-pane flags: the `--` form
+
+When you want each pane to carry **its own** flags, separate the panes with a
+standalone `--`. Each `--`-delimited section is a full per-pane view spec — a
+file plus its per-view flags:
+
+```sh
+tess a.log --grep ERROR -- b.log --grep WARN -- c.log
+tess access.log --format apache-common --filter status=500 -- access.log
+```
+
+Rules:
+
+- The **first** section (before any `--`) carries the **session globals**
+  (`--mouse`, exit/`-X` modes, theming, keybindings, …) plus the focused pane.
+  Later sections are **view-only**: their global flags are ignored.
+- Per-view flags honored per section: the file, `--grep`, `--filter`,
+  `--format`, `--display`, `--encoding`, `-i`/`-I`, and the display flags (`-N`,
+  `-S`, `--wordwrap`, `--tabs`, `--header`, `--hex`, …). User-defined groups
+  (`--<groupname>`) expand per-section.
+- `--diff a -- b` (exactly two sections) renders the **aligned diff**.
+- The `--` form is **mutually exclusive** with `--split` / `--right-*` (using
+  both is an error). OR-groups (`--or-*`) and `+CMD` are **first-section-only**
+  (an `--or-*` in a later section is rejected; put them before the first `--`).
+- The first pane must name **at most one** file (stdin or a single path).
+- A `--` that would leave an **empty** section keeps its POSIX *end of options*
+  meaning rather than splitting — so `tess -- -dash-named-file` opens a file
+  whose name starts with `-`, and a trailing `tess a --` is harmless.
+
 `--split` is **interactive only** (ignored for `--to-clipboard` / `--stdout`
 batch runs). At runtime:
 
