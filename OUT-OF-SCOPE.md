@@ -81,6 +81,11 @@ section 0 carries globals). What remains deferred:
   cell pipeline while split. True per-pane protocol/raw output needs a
   region-addressed compositor.
 - **Frozen left content-columns (`--header ,C`) per pane.**
+- **Mouse-wheel scroll targets the pane under the cursor.** Under `--mouse`,
+  wheel events currently scroll the *focused* pane regardless of where the
+  pointer is. It'd be nicer to scroll whichever pane the cursor is over (without
+  changing focus) — hit-test the mouse column against the per-pane widths /
+  divider positions and route the scroll there.
 
 ### Long tail of `less` flags — **L (cumulative)**
 
