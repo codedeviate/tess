@@ -35,6 +35,24 @@ _Nothing currently._
 
 ## Deferred
 
+### Frozen left content-columns (`--header ,C`) per pane — **M**
+
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
+`--header L,C` pins the top `L` rows and the left `C` content-columns so they
+stay visible while scrolling — it works today in the single-pane view. In the
+split view the per-pane frozen-columns case was deferred when N-pane landed: the
+cell-based split compositor (`pane::compose_panes`) stitches pre-rendered pane
+frames left-to-right, and making each pane honor its own `,C` left-freeze means
+the per-pane render must reserve and re-emit its frozen left columns at each
+horizontal scroll position, then compose those alongside the divider math. The
+natural continuation of the split series (`0.41.0`–`0.49.0`); medium-sized,
+compositor + viewport work, no new subsystem. Open questions for the brainstorm:
+whether the freeze is set per-pane (each section's own `--header`) or inherited,
+and how it interacts with per-pane horizontal scroll and the too-narrow
+full-width fallback.
+
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
@@ -67,9 +85,11 @@ The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
 scrolling (`0.42.0`), charset support (`0.43.0`), aligned **diff mode**
 (`0.44.0`), per-pane predicates (`0.45.0`) + per-pane case (`0.46.0`), and
 **N-pane** vertical split (`0.47.0` — `--split a b c`, Tab/BackTab cycle,
-scroll-lock couples all), and the **`--` per-pane argv form** (`0.48.0` —
+scroll-lock couples all), the **`--` per-pane argv form** (`0.48.0` —
 `tess a --grep X -- b --grep Y -- c`, each section a full per-pane view spec,
-section 0 carries globals). What remains deferred:
+section 0 carries globals), and **mouse-wheel routing to the pane under the
+cursor** (`0.49.0` — all axes, no focus change). What remains deferred (frozen
+left content-columns per pane is now its own prioritized entry above):
 
 - **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
   grid layout (and the compositor work for it) is deferred.
@@ -82,12 +102,6 @@ section 0 carries globals). What remains deferred:
   cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the
   cell pipeline while split. True per-pane protocol/raw output needs a
   region-addressed compositor.
-- **Frozen left content-columns (`--header ,C`) per pane.**
-- **Mouse-wheel scroll targets the pane under the cursor.** Under `--mouse`,
-  wheel events currently scroll the *focused* pane regardless of where the
-  pointer is. It'd be nicer to scroll whichever pane the cursor is over (without
-  changing focus) — hit-test the mouse column against the per-pane widths /
-  divider positions and route the scroll there.
 
 ### Long tail of `less` flags — **L (cumulative)**
 
