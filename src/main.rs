@@ -541,6 +541,13 @@ fn build_panes_from_sections(
                 "pane {pane_no}: --display requires --format"
             )));
         }
+        // OR-groups are section-0-only; a later section that sets them would have
+        // them silently dropped, so reject rather than surprise the user.
+        if !sa.or_filter.is_empty() || !sa.or_grep.is_empty() || !sa.or_group.is_empty() {
+            return Err(Error::Runtime(format!(
+                "pane {pane_no}: --or-filter/--or-grep/--or-group are only allowed before the first `--`"
+            )));
+        }
         let case_mode = if sa.IGNORE_CASE {
             tess::viewport::CaseMode::Insensitive
         } else if sa.ignore_case {
@@ -564,8 +571,9 @@ fn build_panes_from_sections(
 
 /// Validate the globals (`args`, from section 0) against the per-pane `--` form.
 /// `section_count` is the total number of panes (sections). The `--` form is
-/// mutually exclusive with `--split`/`--right-*`, and `--diff` requires exactly
-/// two sections.
+/// mutually exclusive with `--split`/`--right-*`; `--diff` requires exactly two
+/// sections; and section 0 (the first pane) must name at most one file (a stray
+/// extra file there would be a confusing mix of `:n` working-set and panes).
 fn validate_per_pane_argv(args: &Args, section_count: usize) -> Result<()> {
     let right_used = !args.right_grep.is_empty()
         || !args.right_filter.is_empty()
@@ -581,6 +589,11 @@ fn validate_per_pane_argv(args: &Args, section_count: usize) -> Result<()> {
     if args.diff && section_count != 2 {
         return Err(Error::Runtime(
             "--diff with the `--` form needs exactly two panes".to_string(),
+        ));
+    }
+    if args.files.len() > 1 {
+        return Err(Error::Runtime(
+            "the first pane (before `--`) must name at most one file".to_string(),
         ));
     }
     Ok(())
@@ -768,7 +781,7 @@ fn real_main() -> Result<()> {
     // Split on standalone `--` into per-pane sections. Zero `--` → one section
     // (the existing single-view path, unchanged). Each section is prefixed with
     // argv[0].
-    let sections = tess::cli::split_argv_sections(&raw_argv).map_err(Error::Runtime)?;
+    let sections = tess::cli::split_argv_sections(&raw_argv);
     let per_pane = sections.len() > 1;
 
     // Section 0 runs the full existing pipeline: +CMD extraction, group
@@ -796,8 +809,10 @@ fn real_main() -> Result<()> {
     let args = Args::parse_from(argv);
 
     // Sections 1..N: each group-expands and parses into its own per-view `Args`.
-    // OR-groups and `+CMD` are section-0-only (a `+CMD` in a later section is
-    // passed to clap and will error — `+CMD` belongs in section 0).
+    // OR-groups and `+CMD` are section-0-only. `+CMD` is only stripped from
+    // section 0, so a `+token` in a later section reaches clap as a positional
+    // (a second "file") — harmless but ignored; `--or-*` in a later section is
+    // rejected in `build_panes_from_sections`. `+CMD`/OR belong in section 0.
     let section_args: Vec<Args> = if per_pane {
         sections[1..]
             .iter()
@@ -1637,6 +1652,14 @@ mod tests {
     }
 
     #[test]
+    fn per_pane_section0_at_most_one_file() {
+        // stdin (0 files) and a single file are fine; >1 file in section 0 is an error.
+        assert!(validate_per_pane_argv(&Args::parse_from(["tess"]), 2).is_ok());
+        assert!(validate_per_pane_argv(&Args::parse_from(["tess", "a"]), 2).is_ok());
+        assert!(validate_per_pane_argv(&Args::parse_from(["tess", "a", "b"]), 2).is_err());
+    }
+
+    #[test]
     fn resolved_predicates_empty_is_all_none() {
         let rp = ResolvedPredicates::empty();
         assert!(rp.grep.is_none());
@@ -1842,5 +1865,17 @@ mod tests {
         let s = Args::parse_from(["tess", "--grep", "x"]);
         let err = build_panes_from_sections(&[s], tess::render::AnsiMode::Interpret, 80, 24, None);
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn sections_or_flags_rejected() {
+        let dir = std::env::temp_dir().join(format!("tess_secor_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let pa = dir.join("a.txt");
+        std::fs::write(&pa, b"x\n").unwrap();
+        let s = Args::parse_from(["tess", pa.to_str().unwrap(), "--or-grep", "E"]);
+        let err = build_panes_from_sections(&[s], tess::render::AnsiMode::Interpret, 80, 24, None);
+        assert!(err.is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
