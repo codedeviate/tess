@@ -29,13 +29,23 @@ the full changelog.
 
 ## Waiting
 
+_Nothing currently._
+
+---
+
+## Deferred
+
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
-that's where the user base is. Windows isn't actively pursued, but the
-work is well-scoped enough that if someone shows up with a concrete
-use case and is willing to drive the integration testing, it's not a
-hard "no".
+that's where the user base is. The work is well-scoped, but it's
+**deferred on a hard blocker: there is no Windows-based local dev
+environment available to build and test against, and none is expected in
+the foreseeable future.** Windows can't ship without one — the console,
+file-system, and signal behavior all need real on-platform verification
+that a macOS/Linux maintainer can't provide blind. This stays deferred
+until a proper Windows dev environment exists; a concrete use case alone
+isn't enough without somewhere to test.
 
 Technical sketch when the time comes:
 
@@ -50,14 +60,6 @@ Technical sketch when the time comes:
 - File-system semantics around `--follow` rotation/truncation differ
   on NTFS — inode equivalents and file-locking behavior would need
   their own design pass.
-
-Until someone has a real Windows use case, the maintenance cost (CI
-matrix, manual testing on a platform the maintainer doesn't run) isn't
-worth eating.
-
----
-
-## Deferred
 
 ### Horizontal split & per-pane refinements — **L**
 
