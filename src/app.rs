@@ -1498,7 +1498,7 @@ pub fn run(
     let mut diff: Option<DiffState> = None;
 
     // Startup --diff: build initial diff state if exactly one other pane exists.
-    if args.diff {
+    if args.diff || args.gitdiff {
         if others.len() == 1 {
             let other = &mut others[0];
             let ignore_ws = args.diff_ignore_whitespace;

@@ -10,6 +10,23 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.52.0] — 2026-06-23
+
+### Added
+
+- **`--gitdiff FILE`** — open the aligned side-by-side diff of a file's committed
+  `HEAD` version (left/old) against the working tree (right/new): "show me what
+  I've changed since the last commit." Reuses the existing diff engine
+  (alignment, gutter signs, char-level intra-line highlighting, `]c`/`[c` hunk
+  nav) — it just sources the old side from `git show HEAD:<path>`. A new/untracked
+  file shows an empty old side (all added); a deleted file shows an empty new
+  side (all removed). Honors `--diff-ignore-whitespace` / `--diff-force`.
+  Mutually exclusive with `--diff` / `--split` / `--right-*` / the `--` per-pane
+  form. Errors cleanly on: not a git repository, no commits yet (unborn HEAD),
+  not exactly one file, or a file that is neither in HEAD nor on disk. v1 scope:
+  working tree vs `HEAD`, single file — arbitrary revisions, staged-vs-`HEAD`,
+  multi-file diffs, and rename detection are deferred.
+
 ## [0.51.0] — 2026-06-23
 
 ### Added

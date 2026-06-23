@@ -68,6 +68,7 @@ cmd | tess [OPTIONS]
 - **`--encoding LABEL`** — decode the input as `LABEL` (a WHATWG charset label) instead of UTF-8. See [Character encoding](#character-encoding).
 - **`--diff`** — open a side-by-side aligned diff of two files (implies a split). Interactive only. See [Diff mode](#diff-mode---diff--diff). Runtime: `:diff`.
 - **`--diff-force`** — allow `--diff` past the size cap (large files; may be slow / memory-heavy). Runtime: `:diff!`.
+- **`--gitdiff`** — aligned diff of one file's committed `HEAD` version (left) vs the working tree (right). Requires a git repo. See [Git diff](#git-diff---gitdiff).
 - **`--diff-ignore-whitespace`** — in `--diff`, treat lines differing only in whitespace as equal. Runtime: `:diffws`.
 
 ### Character encoding
@@ -485,6 +486,31 @@ the size cap (below), `:nodiff` returns to the plain split.
 changed lines that fit a single row on their pane. `Tab` (focus swap) is locked
 in diff mode — the panes scroll as one. A numbered `<n>G` jumps to the top
 (use `]c`/`[c` to move between changes).
+
+#### Git diff (`--gitdiff`)
+
+```sh
+tess --gitdiff src/foo.rs       # HEAD version (left) vs working tree (right)
+```
+
+`--gitdiff FILE` is the same aligned side-by-side diff, but instead of a second
+file it sources the **left/old** side from git — the committed `HEAD` version
+(`git show HEAD:<path>`) — and the **right/new** side from the working-tree file.
+It's the quick "what have I changed since the last commit" view, with the changes
+highlighted exactly as in `--diff`.
+
+- A **new / untracked** file (not in `HEAD`) shows an empty left side — every
+  line as added. A **deleted** file (in `HEAD`, gone from the working tree) shows
+  an empty right side — every line as removed.
+- Honors `--diff-ignore-whitespace` and `--diff-force`; all the diff navigation
+  (`]c` / `[c`, `:diffws`) applies.
+- Requires **exactly one file** in a **git repository**. Errors cleanly on: not a
+  git repo, no commits yet (unborn `HEAD`), more than one file, or combining with
+  `--diff` / `--split` / `--right-*` / the `--` per-pane form.
+
+**v1 scope:** working tree vs `HEAD`, single file. Arbitrary revisions
+(`--gitdiff REV`), staged-vs-`HEAD`, multi-file diffs, and rename detection are
+future additions.
 
 ### Search
 

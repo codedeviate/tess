@@ -35,32 +35,6 @@ _Nothing currently._
 
 ## Deferred
 
-### `--gitdiff` — side-by-side git diff — **M**
-
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-`tess --gitdiff FILE` opens the existing aligned side-by-side diff view with the
-committed `HEAD` version on the left (old) and the working-tree file on the right
-(new) — "show me what I've changed since the last commit," changes highlighted.
-
-The diff/render engine already exists: `--diff A B` builds two panes and feeds
-them to `app::build_diff`, which produces the line-aligned `DiffState` (gutter
-signs, change classes, char-level intra-line highlighting on changed rows, `]c`/
-`[c` hunk nav). `--gitdiff` is therefore a **source-acquisition** feature, not a
-new diff engine: construct the "old" pane's source from git (`git show
-HEAD:<repo-relative-path>`) instead of a second file on disk, then reuse the
-existing pipeline.
-
-New work: resolve the repo + repo-relative path, shell out to git for the old
-blob, a `--gitdiff` flag wired into the two-pane diff setup, and error handling —
-not a git repo, path untracked, a brand-new/untracked file (empty old side),
-unchanged file, binary blob. **v1 scope:** working tree vs `HEAD`, single file
-(matches the current exactly-2-pane diff). Deferred to follow-ons: arbitrary
-revisions (`--gitdiff REV` / `REV:path`), staged-vs-`HEAD`, multi-file diffs,
-rename detection. Realistically **M** — bigger than a flag pickup, smaller than
-the L compositor projects.
-
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
@@ -102,10 +76,13 @@ mode, per pane). What remains deferred:
 
 - **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
   grid layout (and the compositor work for it) is deferred.
-- **Diff refinements.** Diff is 2-pane vertical, raw-line (no `--filter`/
-  `--format`), intra-line highlighting only on single-row changed lines, `Tab`
-  locked, numbered-goto jumps to top. Larger follow-ons: strict ISO-8859-1 (vs
-  WHATWG windows-1252), UTF-16 (needs whole-buffer transcode), 3-way diff.
+- **Diff refinements.** `--gitdiff` (HEAD vs working tree) shipped in `0.52.0`.
+  Diff is still 2-pane vertical, raw-line (no `--filter`/`--format`), intra-line
+  highlighting only on single-row changed lines, `Tab` locked, numbered-goto
+  jumps to top. Larger follow-ons: strict ISO-8859-1 (vs WHATWG windows-1252),
+  UTF-16 (needs whole-buffer transcode), 3-way diff, and for `--gitdiff`
+  specifically — arbitrary revisions (`--gitdiff REV` / `REV:path`),
+  staged-vs-`HEAD`, multi-file diffs, rename detection.
   (Per-pane filter/format predicates are now their own prioritized entry above.)
 - **Protocol images and raw passthrough per pane.** The split compositor is
   cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the

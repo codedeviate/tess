@@ -270,7 +270,28 @@ fn build_second_pane(
 ) -> Result<tess::pane::Pane> {
     let (src, label, preprocess_failure) =
         tess::open::open_source_for_path(path, args, preprocessor)?;
+    build_pane_from_source(
+        src, label, preprocess_failure, args, ansi_mode, cols, rows,
+        record_start_regex, case_mode, predicates,
+    )
+}
 
+/// Build a `Pane` from an already-constructed source. The body is the tail of
+/// `build_second_pane` after the source is opened, factored out so callers
+/// (e.g. `--gitdiff`) can supply an in-memory source instead of a path.
+#[allow(clippy::too_many_arguments)]
+fn build_pane_from_source(
+    src: Box<dyn tess::source::Source>,
+    label: String,
+    preprocess_failure: Option<String>,
+    args: &Args,
+    ansi_mode: tess::render::AnsiMode,
+    cols: u16,
+    rows: u16,
+    record_start_regex: Option<&regex::bytes::Regex>,
+    case_mode: tess::viewport::CaseMode,
+    predicates: ResolvedPredicates,
+) -> Result<tess::pane::Pane> {
     let mut idx = match args.tail {
         Some(n) => {
             let off = find_tail_offset(src.as_ref(), n);
@@ -457,6 +478,26 @@ fn build_extra_panes(
     record_start_regex: Option<&regex::bytes::Regex>,
     case_mode: tess::viewport::CaseMode,
 ) -> Result<Vec<tess::pane::Pane>> {
+    if args.gitdiff {
+        // Right/new pane = the working-tree file (the single positional). If it's
+        // absent on disk (deletion), use an empty source so the diff shows the
+        // HEAD content as all-removed.
+        let path = &files[0];
+        let rp = ResolvedPredicates::empty();
+        let pane = if path.exists() {
+            build_second_pane(path, args, ansi_mode, cols, rows,
+                preprocessor, record_start_regex, case_mode, rp)?
+        } else {
+            let label = path.file_name().map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            build_pane_from_source(
+                Box::new(tess::source::MemorySource::new(Vec::new())),
+                label, None, args, ansi_mode, cols, rows,
+                record_start_regex, case_mode, rp)?
+        };
+        return Ok(vec![pane]);
+    }
+
     if args.diff {
         if files.len() != 2 {
             return Err(Error::Runtime("--diff takes exactly two files".into()));
@@ -829,6 +870,24 @@ fn real_main() -> Result<()> {
         validate_per_pane_argv(&args, sections.len())?;
     }
 
+    if args.gitdiff {
+        if per_pane || args.diff || args.split
+            || !args.right_grep.is_empty() || !args.right_filter.is_empty()
+            || args.right_format.is_some() || args.right_display.is_some()
+            || args.right_ignore_case || args.right_IGNORE_case
+        {
+            return Err(Error::Runtime(
+                "--gitdiff can't be combined with --diff / --split / --right-* / the `--` form".to_string(),
+            ));
+        }
+        if args.from_clipboard {
+            return Err(Error::Runtime("--gitdiff reads a file, not the clipboard".to_string()));
+        }
+        if args.files.len() != 1 {
+            return Err(Error::Runtime("--gitdiff needs exactly one file".to_string()));
+        }
+    }
+
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
     let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
         .iter()
@@ -1014,7 +1073,24 @@ documents can't be parsed)".to_string(),
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
-    let (src, label): (Box<dyn Source>, String) = if args.from_clipboard {
+    let (src, label): (Box<dyn Source>, String) = if args.gitdiff {
+        let path = &args.files[0]; // validated: exactly one file
+        let gf = tess::git::resolve(path).map_err(Error::Runtime)?;
+        let bytes = match tess::git::head_blob(&gf).map_err(Error::Runtime)? {
+            tess::git::BlobOutcome::Bytes(b) => b,
+            tess::git::BlobOutcome::NotInHead => {
+                if !path.exists() {
+                    return Err(Error::Runtime(format!(
+                        "nothing to diff: {} is neither in HEAD nor on disk", path.display())));
+                }
+                Vec::new()
+            }
+            tess::git::BlobOutcome::NoCommits => {
+                return Err(Error::Runtime("no commits in HEAD yet".to_string()));
+            }
+        };
+        (Box::new(tess::source::MemorySource::new(bytes)), format!("HEAD:{}", gf.rel_path))
+    } else if args.from_clipboard {
         let bytes = tess::clipboard::read().map_err(Error::Runtime)?;
         (Box::new(tess::source::MemorySource::new(bytes)), "(clipboard)".to_string())
     } else { match args.files.first() {
