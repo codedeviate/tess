@@ -308,6 +308,17 @@ pub struct Viewport {
     /// composition (but search navigation still works). Toggled by
     /// `-G` / `--no-hilite-search` and `:hlsearch` / `:nohlsearch`.
     hilite_search: bool,
+    /// `-a` / `--search-skip-screen`: forward search and `n` anchor at the
+    /// last displayed logical line instead of `top_line`, skipping matches on
+    /// the current screen. Default off.
+    search_skip_screen: bool,
+    /// `-g` / `--hilite-only-match`: highlight only the single match last
+    /// jumped to, not every match on screen. Default off.
+    hilite_only_match: bool,
+    /// `--tilde`: show a dim `~` on rows past end-of-file (default blank).
+    tilde_eof: bool,
+    /// Logical line the last search landed on. Drives `-g` highlight scoping.
+    last_match_line: Option<usize>,
     /// Auto-exit-on-EOF policy resolved from `-e` / `-E` at startup.
     quit_at_eof: QuitAtEof,
     /// Counter for `QuitAtEof::Second`: number of consecutive forward
@@ -404,6 +415,10 @@ impl Viewport {
             ticks_since_growth: 0,
             case_mode: CaseMode::default(),
             hilite_search: true,
+            search_skip_screen: false,
+            hilite_only_match: false,
+            tilde_eof: false,
+            last_match_line: None,
             quit_at_eof: QuitAtEof::default(),
             eof_hits: 0,
             squeeze_blanks: false,
@@ -461,6 +476,13 @@ impl Viewport {
     pub fn hilite_search(&self) -> bool { self.hilite_search }
 
     pub fn set_hilite_search(&mut self, on: bool) { self.hilite_search = on; }
+
+    pub fn set_search_skip_screen(&mut self, on: bool) { self.search_skip_screen = on; }
+    pub fn search_skip_screen(&self) -> bool { self.search_skip_screen }
+    pub fn set_hilite_only_match(&mut self, on: bool) { self.hilite_only_match = on; }
+    pub fn hilite_only_match(&self) -> bool { self.hilite_only_match }
+    pub fn set_tilde_eof(&mut self, on: bool) { self.tilde_eof = on; }
+    pub fn tilde_eof(&self) -> bool { self.tilde_eof }
 
     pub fn incsearch(&self) -> bool { self.incsearch }
 
@@ -877,6 +899,7 @@ impl Viewport {
             if pattern.is_match(&text) {
                 let line_range = idx.record_line_range(r);
                 self.top_line = line_range.start;
+                self.last_match_line = Some(line_range.start);
                 self.top_row = 0;
                 return true;
             }
@@ -900,7 +923,11 @@ impl Viewport {
     fn search_step_in_logical(&mut self, pattern: &Regex, src: &dyn Source, idx: &LineIndex, forward: bool) -> bool {
         let total = idx.line_count();
         if total == 0 { return false; }
-        let start = self.top_line;
+        let start = if self.search_skip_screen && forward {
+            self.bottom_visible_line(idx)
+        } else {
+            self.top_line
+        };
         // Walk every logical line once, starting from start+1 (or start-1)
         // and wrapping at the end / beginning.
         for offset in 1..=total {
@@ -911,6 +938,7 @@ impl Viewport {
             };
             if self.line_matches(pattern, src, idx, line_n) {
                 self.top_line = line_n;
+                self.last_match_line = Some(line_n);
                 self.top_row = 0;
                 return true;
             }
@@ -922,7 +950,12 @@ impl Viewport {
         let total = self.visible_lines.len();
         if total == 0 { return false; }
         // Find current visible position for top_line.
-        let cur = self.visible_lines.iter().position(|&l| l >= self.top_line).unwrap_or(0);
+        let anchor = if self.search_skip_screen && forward {
+            self.bottom_visible_line(idx)
+        } else {
+            self.top_line
+        };
+        let cur = self.visible_lines.iter().position(|&l| l >= anchor).unwrap_or(0);
         for offset in 1..=total {
             let visible_idx = if forward {
                 (cur + offset) % total
@@ -932,6 +965,7 @@ impl Viewport {
             let line_n = self.visible_lines[visible_idx];
             if self.line_matches(pattern, src, idx, line_n) {
                 self.top_line = line_n;
+                self.last_match_line = Some(line_n);
                 self.top_row = 0;
                 return true;
             }
@@ -1390,6 +1424,17 @@ impl Viewport {
                     for _ in 0..gutter { row.push(Cell::Empty); }
                 }
                 while row.len() < self.cols as usize { row.push(Cell::Empty); }
+                if self.tilde_eof {
+                    let at = (scol + gutter) as usize;
+                    if at < row.len() {
+                        row[at] = Cell::Char {
+                            ch: '~',
+                            width: 1,
+                            style: crate::ansi::Style { dim: true, ..Default::default() },
+                            hyperlink: None,
+                        };
+                    }
+                }
                 body.push(row);
                 row_styles.push(RowStyle::Normal);
                 highlights.push(Vec::new());
@@ -1497,7 +1542,17 @@ impl Viewport {
                 // the regex against the row's rendered text. Each match's
                 // char range maps to a cell column range via `starts`.
                 let row_highlights = if let (true, Some(s)) = (self.hilite_search, self.search.as_ref()) {
-                    find_row_highlights(&full, &s.regex)
+                    if self.hilite_only_match {
+                        if Some(line_n) == self.last_match_line {
+                            let mut h = find_row_highlights(&full, &s.regex);
+                            h.truncate(1); // first match on the landed line
+                            h
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        find_row_highlights(&full, &s.regex)
+                    }
                 } else {
                     Vec::new()
                 };
@@ -2421,6 +2476,53 @@ mod tests {
         m.finish();
         let idx = LineIndex::new();
         (m, idx)
+    }
+
+    #[test]
+    fn search_skip_screen_skips_on_screen_match() {
+        let (m, mut idx) = setup(b"a\nhit1\nc\nd\nhit2\nf\n");
+        let mut v = Viewport::new(20, 3, "t".into()); // body_rows = 2 → lines 0,1 visible
+        v.set_search("hit".into(), SearchDirection::Forward).unwrap();
+        v.search_repeat(&m, &mut idx, false);
+        assert_eq!(v.top_line(), 1, "default search lands on the on-screen match");
+
+        let (m2, mut idx2) = setup(b"a\nhit1\nc\nd\nhit2\nf\n");
+        let mut v2 = Viewport::new(20, 3, "t".into());
+        v2.set_search_skip_screen(true);
+        v2.set_search("hit".into(), SearchDirection::Forward).unwrap();
+        v2.search_repeat(&m2, &mut idx2, false);
+        assert_eq!(v2.top_line(), 4, "skip-screen search skips the visible screen");
+    }
+
+    #[test]
+    fn hilite_only_match_highlights_just_landed_line() {
+        let (m, mut idx) = setup(b"hit one\nhit two\n");
+        let mut v = Viewport::new(20, 4, "t".into());
+        v.set_hilite_only_match(true);
+        v.set_search("hit".into(), SearchDirection::Forward).unwrap();
+        v.search_repeat(&m, &mut idx, false); // lands on the first match after top (line 1)
+        let landed = v.top_line();
+        assert_eq!(landed, 1, "forward search lands on line 1");
+        // Scroll back so BOTH matching lines are on screen at known body rows
+        // (row 0 = line 0, row 1 = line 1 = landed). `f.highlights` is indexed
+        // by body row, not logical line, so we read the rows directly.
+        v.set_top(0, 0);
+        let f = v.frame(&m, &mut idx);
+        assert!(!f.highlights[landed].is_empty(), "landed line is highlighted");
+        let other = if landed == 0 { 1 } else { 0 };
+        assert!(f.highlights[other].is_empty(), "non-landed matching line is not highlighted");
+    }
+
+    #[test]
+    fn tilde_marks_lines_past_eof() {
+        let (m, mut idx) = setup(b"only\n");
+        let mut v = Viewport::new(10, 4, "t".into()); // body_rows = 3
+        v.set_tilde_eof(true);
+        let f = v.frame(&m, &mut idx);
+        assert!(matches!(f.body[1][0], Cell::Char { ch: '~', .. }), "past-EOF row shows '~'");
+        let mut v2 = Viewport::new(10, 4, "t".into());
+        let f2 = v2.frame(&m, &mut idx);
+        assert!(!matches!(f2.body[1][0], Cell::Char { ch: '~', .. }), "default past-EOF is blank");
     }
 
     /// Read the `ch` of the first cell of a body row (the status column when
