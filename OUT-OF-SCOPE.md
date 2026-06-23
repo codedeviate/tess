@@ -35,30 +35,15 @@ _Nothing currently._
 
 ## Deferred
 
-### `--gitdiff` revisions & staged — **M**
+### `git::resolve` for working-tree-deleted files — **S**
 
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-Extends the `--gitdiff` shipped in `0.52.0` (working tree vs `HEAD`, single file)
-along the two axes its v1 deferred:
-
-- **Arbitrary revisions** — `--gitdiff REV FILE` (e.g. `HEAD~3`, a branch, a tag,
-  a commit SHA) diffs that revision's blob against the working tree, and a
-  `REV:path` / two-revision form (`REV1..REV2`?) for comparing two committed
-  versions. Shape (value-flag vs positional rev vs `REV:path` spec) is a
-  brainstorm decision.
-- **Staged vs `HEAD`** — `--gitdiff --staged FILE` (a.k.a. `--cached`) diffs the
-  index against `HEAD`, mirroring `git diff --staged`.
-
-Mostly **source-acquisition + arg parsing** on the existing `git` module
-(`resolve` / `head_blob` generalize to `rev_blob(rev, path)` and an index blob
-via `git show :<path>` / `git show <rev>:<path>`); the diff/render pipeline is
-unchanged. Reuses the same empty-side semantics for add/delete and the existing
-error taxonomy (extend `classify` for bad-revision messages). Open questions for
-the brainstorm: the exact CLI surface for revisions, whether `--staged` composes
-with a `REV`, and resolving `REV:path` repo-relative paths. Realistically **M**.
-Still deferred beyond this: multi-file diffs, rename detection.
+`--gitdiff FILE` where `FILE` is committed but **deleted from the working tree**
+errors `… is outside the git repository` instead of diffing `HEAD` vs an empty
+right side. Cause: `git::resolve` canonicalizes the path, which fails for a
+missing file, and the parent-dir fallback misresolves the repo-relative path.
+Pre-existing since `0.52.0` (the deletion-supports comment over-promises). Small,
+self-contained fix to `resolve`'s path handling for absent files; add a
+temp-repo `git rm` regression test.
 
 ### Windows support — **M**
 
@@ -106,8 +91,8 @@ mode, per pane). What remains deferred:
   highlighting only on single-row changed lines, `Tab` locked, numbered-goto
   jumps to top. Larger follow-ons: strict ISO-8859-1 (vs WHATWG windows-1252),
   UTF-16 (needs whole-buffer transcode), 3-way diff. For `--gitdiff`: arbitrary
-  revisions and staged-vs-`HEAD` are now their own prioritized entry above;
-  multi-file diffs and rename detection remain deferred.
+  revisions and staged-vs-`HEAD` shipped in `0.53.0`; multi-file diffs, rename
+  detection, and `R1..R2` range-token syntax remain deferred.
   (Per-pane filter/format predicates are now their own prioritized entry above.)
 - **Protocol images and raw passthrough per pane.** The split compositor is
   cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the

@@ -442,6 +442,11 @@ pub struct Args {
     #[arg(short = 's', long = "squeeze-blank-lines")]
     pub squeeze_blanks: bool,
 
+    /// With `--gitdiff`, diff the staged (index) version instead of the working
+    /// tree (i.e. `HEAD` vs index — "what's staged"). Alias: `--cached`.
+    #[arg(long = "staged", visible_alias = "cached")]
+    pub staged: bool,
+
     /// Show a 1-column status gutter at the far left: a mark letter on marked
     /// lines, else `*` on lines containing a current-search match. Stays fixed
     /// under horizontal scroll. No-op in --hex/-r/image modes. Mirrors `less -J`.
@@ -917,6 +922,13 @@ mod tests {
     }
 
     #[test]
+    fn parses_staged() {
+        assert!(Args::parse_from(["tess", "--gitdiff", "--staged", "f.rs"]).staged);
+        assert!(Args::parse_from(["tess", "--gitdiff", "--cached", "f.rs"]).staged);
+        assert!(!Args::parse_from(["tess", "--gitdiff", "f.rs"]).staged);
+    }
+
+    #[test]
     fn parses_encoding() {
         assert_eq!(Args::parse_from(["tess", "--encoding", "iso-8859-1", "f"]).encoding, "iso-8859-1");
         assert_eq!(Args::parse_from(["tess", "f"]).encoding, "utf-8");
@@ -1077,6 +1089,7 @@ mod tests {
             "--shift",
             "--split",
             "--squeeze-blank-lines",
+            "--staged",
             "--status-column",
             "--status-style",
             "--stdout",

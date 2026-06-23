@@ -10,6 +10,23 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.53.0] — 2026-06-24
+
+### Added
+
+- **`--gitdiff` now takes revisions and `--staged`.** Beyond the v1 working-tree
+  vs `HEAD`, you can now diff against any revision and the index. Revisions are
+  leading positionals (the last positional is always the file):
+  - `tess --gitdiff REV FILE` — `REV` (left/old) vs working tree.
+  - `tess --gitdiff R1 R2 FILE` — `R1` vs `R2` (commit ↔ commit).
+  - `tess --gitdiff --staged FILE` (alias `--cached`) — `HEAD` vs the index.
+  - `tess --gitdiff REV --staged FILE` — `REV` vs the index.
+
+  A revision where the file doesn't exist diffs against an empty side; a typo'd
+  revision errors with `bad revision '<rev>'`. Errors on `--staged` with two
+  revisions, `--staged` without `--gitdiff`, and more than three positionals.
+  Still single-file — multi-file diffs and rename detection remain deferred.
+
 ## [0.52.0] — 2026-06-23
 
 ### Added

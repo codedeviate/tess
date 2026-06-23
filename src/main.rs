@@ -457,6 +457,72 @@ fn build_pane_from_source(
     })
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RightKind { WorkingTree, Index, Rev(String) }
+
+#[derive(Debug, PartialEq, Eq)]
+struct GitDiffSpec {
+    file: std::path::PathBuf,
+    left_rev: String,
+    right: RightKind,
+}
+
+/// Map the `--gitdiff` positionals (+ `--staged`) to which rev/target each side
+/// is. Last positional = file; the 0/1/2 before it are revisions. Pure.
+fn parse_gitdiff_spec(files: &[std::path::PathBuf], staged: bool) -> std::result::Result<GitDiffSpec, String> {
+    if files.is_empty() || files.len() > 3 {
+        return Err("--gitdiff takes a file, optionally preceded by one or two revisions".to_string());
+    }
+    let file = files[files.len() - 1].clone();
+    let revs: Vec<String> = files[..files.len() - 1]
+        .iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    if staged && revs.len() == 2 {
+        return Err("--gitdiff --staged can't be combined with two revisions".to_string());
+    }
+    let left_rev = revs.first().cloned().unwrap_or_else(|| "HEAD".to_string());
+    let right = if staged {
+        RightKind::Index
+    } else if revs.len() == 2 {
+        RightKind::Rev(revs[1].clone())
+    } else {
+        RightKind::WorkingTree
+    };
+    Ok(GitDiffSpec { file, left_rev, right })
+}
+
+enum GitDiffRight { WorkingTree(std::path::PathBuf), Blob(Vec<u8>, String) }
+
+struct GitDiffSources {
+    left_bytes: Vec<u8>,
+    left_label: String,
+    right: GitDiffRight,
+}
+
+fn resolve_gitdiff_sources(files: &[std::path::PathBuf], staged: bool) -> Result<GitDiffSources> {
+    let spec = parse_gitdiff_spec(files, staged).map_err(Error::Runtime)?;
+    let gf = tess::git::resolve(&spec.file).map_err(Error::Runtime)?;
+    let (left_bytes, left_absent) = match tess::git::rev_blob(&gf, &spec.left_rev).map_err(Error::Runtime)? {
+        tess::git::BlobOutcome::Bytes(b) => (b, false),
+        tess::git::BlobOutcome::Absent => (Vec::new(), true),
+    };
+    let (right, right_absent) = match &spec.right {
+        RightKind::WorkingTree => (GitDiffRight::WorkingTree(spec.file.clone()), !spec.file.exists()),
+        RightKind::Index => match tess::git::index_blob(&gf).map_err(Error::Runtime)? {
+            tess::git::BlobOutcome::Bytes(b) => (GitDiffRight::Blob(b, format!("{} (index)", gf.rel_path)), false),
+            tess::git::BlobOutcome::Absent => (GitDiffRight::Blob(Vec::new(), format!("{} (index)", gf.rel_path)), true),
+        },
+        RightKind::Rev(r) => match tess::git::rev_blob(&gf, r).map_err(Error::Runtime)? {
+            tess::git::BlobOutcome::Bytes(b) => (GitDiffRight::Blob(b, format!("{r}:{}", gf.rel_path)), false),
+            tess::git::BlobOutcome::Absent => (GitDiffRight::Blob(Vec::new(), format!("{r}:{}", gf.rel_path)), true),
+        },
+    };
+    if left_absent && right_absent {
+        return Err(Error::Runtime(format!(
+            "nothing to diff: {} is absent on both sides", spec.file.display())));
+    }
+    Ok(GitDiffSources { left_bytes, left_label: format!("{}:{}", spec.left_rev, gf.rel_path), right })
+}
+
 /// Build the extra-panes Vec for `--split`/`--diff` startup.
 ///
 /// - `--diff`: requires exactly two files; returns one extra pane from `files[1]`
@@ -477,23 +543,27 @@ fn build_extra_panes(
     preprocessor: Option<&tess::preprocess::Preprocessor>,
     record_start_regex: Option<&regex::bytes::Regex>,
     case_mode: tess::viewport::CaseMode,
+    gitdiff_right: Option<&GitDiffRight>,
 ) -> Result<Vec<tess::pane::Pane>> {
     if args.gitdiff {
-        // Right/new pane = the working-tree file (the single positional). If it's
-        // absent on disk (deletion), use an empty source so the diff shows the
-        // HEAD content as all-removed.
-        let path = &files[0];
         let rp = ResolvedPredicates::empty();
-        let pane = if path.exists() {
-            build_second_pane(path, args, ansi_mode, cols, rows,
-                preprocessor, record_start_regex, case_mode, rp)?
-        } else {
-            let label = path.file_name().map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string());
-            build_pane_from_source(
-                Box::new(tess::source::MemorySource::new(Vec::new())),
-                label, None, args, ansi_mode, cols, rows,
-                record_start_regex, case_mode, rp)?
+        let right = gitdiff_right.ok_or_else(|| Error::Runtime("internal: gitdiff right source missing".into()))?;
+        let pane = match right {
+            GitDiffRight::WorkingTree(path) => {
+                if path.exists() {
+                    build_second_pane(path, args, ansi_mode, cols, rows,
+                        preprocessor, record_start_regex, case_mode, rp)?
+                } else {
+                    let label = path.file_name().map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    build_pane_from_source(Box::new(tess::source::MemorySource::new(Vec::new())),
+                        label, None, args, ansi_mode, cols, rows, record_start_regex, case_mode, rp)?
+                }
+            }
+            GitDiffRight::Blob(bytes, lbl) => {
+                build_pane_from_source(Box::new(tess::source::MemorySource::new(bytes.clone())),
+                    lbl.clone(), None, args, ansi_mode, cols, rows, record_start_regex, case_mode, rp)?
+            }
         };
         return Ok(vec![pane]);
     }
@@ -870,23 +940,25 @@ fn real_main() -> Result<()> {
         validate_per_pane_argv(&args, sections.len())?;
     }
 
-    if args.gitdiff {
+    if args.staged && !args.gitdiff {
+        return Err(Error::Runtime("--staged/--cached only applies with --gitdiff".to_string()));
+    }
+    let gitdiff_sources: Option<GitDiffSources> = if args.gitdiff {
         if per_pane || args.diff || args.split
             || !args.right_grep.is_empty() || !args.right_filter.is_empty()
             || args.right_format.is_some() || args.right_display.is_some()
             || args.right_ignore_case || args.right_IGNORE_case
         {
             return Err(Error::Runtime(
-                "--gitdiff can't be combined with --diff / --split / --right-* / the `--` form".to_string(),
-            ));
+                "--gitdiff can't be combined with --diff / --split / --right-* / the `--` form".to_string()));
         }
         if args.from_clipboard {
             return Err(Error::Runtime("--gitdiff reads a file, not the clipboard".to_string()));
         }
-        if args.files.len() != 1 {
-            return Err(Error::Runtime("--gitdiff needs exactly one file".to_string()));
-        }
-    }
+        Some(resolve_gitdiff_sources(&args.files, args.staged)?)
+    } else {
+        None
+    };
 
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
     let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
@@ -1073,23 +1145,8 @@ documents can't be parsed)".to_string(),
     let mut consumed_stdin = false;
     let mut source_supports_tail = true;
     let mut preprocess_failure: Option<String> = None;
-    let (src, label): (Box<dyn Source>, String) = if args.gitdiff {
-        let path = &args.files[0]; // validated: exactly one file
-        let gf = tess::git::resolve(path).map_err(Error::Runtime)?;
-        let bytes = match tess::git::head_blob(&gf).map_err(Error::Runtime)? {
-            tess::git::BlobOutcome::Bytes(b) => b,
-            tess::git::BlobOutcome::NotInHead => {
-                if !path.exists() {
-                    return Err(Error::Runtime(format!(
-                        "nothing to diff: {} is neither in HEAD nor on disk", path.display())));
-                }
-                Vec::new()
-            }
-            tess::git::BlobOutcome::NoCommits => {
-                return Err(Error::Runtime("no commits in HEAD yet".to_string()));
-            }
-        };
-        (Box::new(tess::source::MemorySource::new(bytes)), format!("HEAD:{}", gf.rel_path))
+    let (src, label): (Box<dyn Source>, String) = if let Some(g) = gitdiff_sources.as_ref() {
+        (Box::new(tess::source::MemorySource::new(g.left_bytes.clone())), g.left_label.clone())
     } else if args.from_clipboard {
         let bytes = tess::clipboard::read().map_err(Error::Runtime)?;
         (Box::new(tess::source::MemorySource::new(bytes)), "(clipboard)".to_string())
@@ -1655,6 +1712,7 @@ showing raw (use --content-type=NAME to override)"
             preprocessor.as_ref(),
             record_start_regex.as_ref(),
             right_case_mode,
+            gitdiff_sources.as_ref().map(|g| &g.right),
         ) {
             Ok(panes) => panes,
             Err(e) => {
@@ -1907,9 +1965,34 @@ mod tests {
         let args = Args::parse_from(["tess", "--split", "x", "y", "z"]);
         let extras = build_extra_panes(
             &files, &args, tess::render::AnsiMode::Strict, 80, 24, None, None,
-            tess::viewport::CaseMode::Sensitive,
+            tess::viewport::CaseMode::Sensitive, None,
         ).unwrap();
         assert_eq!(extras.len(), 2); // panes for files[1] and files[2]
+    }
+
+    #[test]
+    fn gitdiff_spec_forms() {
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+        let s = parse_gitdiff_spec(&[p("a.rs")], false).unwrap();
+        assert_eq!(s.left_rev, "HEAD"); assert_eq!(s.right, RightKind::WorkingTree); assert_eq!(s.file, p("a.rs"));
+        let s = parse_gitdiff_spec(&[p("HEAD~3"), p("a.rs")], false).unwrap();
+        assert_eq!(s.left_rev, "HEAD~3"); assert_eq!(s.right, RightKind::WorkingTree);
+        let s = parse_gitdiff_spec(&[p("v1"), p("v2"), p("a.rs")], false).unwrap();
+        assert_eq!(s.left_rev, "v1"); assert_eq!(s.right, RightKind::Rev("v2".into()));
+        let s = parse_gitdiff_spec(&[p("a.rs")], true).unwrap();
+        assert_eq!(s.left_rev, "HEAD"); assert_eq!(s.right, RightKind::Index);
+        let s = parse_gitdiff_spec(&[p("HEAD~1"), p("a.rs")], true).unwrap();
+        assert_eq!(s.left_rev, "HEAD~1"); assert_eq!(s.right, RightKind::Index);
+    }
+
+    #[test]
+    fn gitdiff_spec_rejects_bad_arity_and_staged_two_revs() {
+        use std::path::PathBuf;
+        let p = |s: &str| PathBuf::from(s);
+        assert!(parse_gitdiff_spec(&[], false).is_err());
+        assert!(parse_gitdiff_spec(&[p("a"),p("b"),p("c"),p("d")], false).is_err());
+        assert!(parse_gitdiff_spec(&[p("r1"),p("r2"),p("a.rs")], true).is_err());
     }
 
     #[test]

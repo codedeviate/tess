@@ -68,7 +68,8 @@ cmd | tess [OPTIONS]
 - **`--encoding LABEL`** — decode the input as `LABEL` (a WHATWG charset label) instead of UTF-8. See [Character encoding](#character-encoding).
 - **`--diff`** — open a side-by-side aligned diff of two files (implies a split). Interactive only. See [Diff mode](#diff-mode---diff--diff). Runtime: `:diff`.
 - **`--diff-force`** — allow `--diff` past the size cap (large files; may be slow / memory-heavy). Runtime: `:diff!`.
-- **`--gitdiff`** — aligned diff of one file's committed `HEAD` version (left) vs the working tree (right). Requires a git repo. See [Git diff](#git-diff---gitdiff).
+- **`--gitdiff`** — aligned diff of one file against git: `HEAD` (or a given revision / the `--staged` index) vs the working tree. Requires a git repo. See [Git diff](#git-diff---gitdiff).
+- **`--staged`** / **`--cached`** — with `--gitdiff`, use the staged (index) version as the right side.
 - **`--diff-ignore-whitespace`** — in `--diff`, treat lines differing only in whitespace as equal. Runtime: `:diffws`.
 
 ### Character encoding
@@ -490,27 +491,43 @@ in diff mode — the panes scroll as one. A numbered `<n>G` jumps to the top
 #### Git diff (`--gitdiff`)
 
 ```sh
-tess --gitdiff src/foo.rs       # HEAD version (left) vs working tree (right)
+tess --gitdiff src/foo.rs            # HEAD vs working tree
+tess --gitdiff HEAD~3 src/foo.rs     # an older commit vs working tree
+tess --gitdiff v1.0 v2.0 src/foo.rs  # commit vs commit
+tess --gitdiff --staged src/foo.rs   # HEAD vs the staged (index) version
+tess --gitdiff HEAD~1 --staged foo   # an older commit vs the index
 ```
 
-`--gitdiff FILE` is the same aligned side-by-side diff, but instead of a second
-file it sources the **left/old** side from git — the committed `HEAD` version
-(`git show HEAD:<path>`) — and the **right/new** side from the working-tree file.
-It's the quick "what have I changed since the last commit" view, with the changes
-highlighted exactly as in `--diff`.
+`--gitdiff` is the same aligned side-by-side diff as `--diff`, but it sources its
+sides from git instead of a second file. It's the quick "what have I changed"
+view, with changes highlighted exactly as in `--diff`.
 
-- A **new / untracked** file (not in `HEAD`) shows an empty left side — every
-  line as added. A **deleted** file (in `HEAD`, gone from the working tree) shows
-  an empty right side — every line as removed.
+**Forms.** Revisions are **leading positionals** — the **last positional is
+always the file**, the 0, 1, or 2 before it are revisions:
+
+| Invocation | left (old) | right (new) |
+|---|---|---|
+| `--gitdiff FILE` | `HEAD` | working tree |
+| `--gitdiff REV FILE` | `REV` | working tree |
+| `--gitdiff R1 R2 FILE` | `R1` | `R2` |
+| `--gitdiff --staged FILE` | `HEAD` | index |
+| `--gitdiff REV --staged FILE` | `REV` | index |
+
+`--staged` has the alias `--cached`. A `REV` is anything `git` resolves
+(`HEAD~3`, a branch, tag, or SHA).
+
+- A side where the file **doesn't exist** in that revision/index (or, for the
+  working tree, on disk) shows as empty — all-added or all-removed.
 - Honors `--diff-ignore-whitespace` and `--diff-force`; all the diff navigation
   (`]c` / `[c`, `:diffws`) applies.
-- Requires **exactly one file** in a **git repository**. Errors cleanly on: not a
-  git repo, no commits yet (unborn `HEAD`), more than one file, or combining with
-  `--diff` / `--split` / `--right-*` / the `--` per-pane form.
+- Requires a **git repository** and **one file**. Errors cleanly on: not a git
+  repo, no commits yet (unborn `HEAD`), a bad/typo'd revision (`bad revision
+  '<rev>'`), `--staged` with two revisions, `--staged` without `--gitdiff`, more
+  than three positionals, or combining with `--diff` / `--split` / `--right-*` /
+  the `--` per-pane form.
 
-**v1 scope:** working tree vs `HEAD`, single file. Arbitrary revisions
-(`--gitdiff REV`), staged-vs-`HEAD`, multi-file diffs, and rename detection are
-future additions.
+**Still deferred:** multi-file diffs and rename detection. Range syntax as one
+token (`R1..R2`) isn't supported — pass two positionals instead.
 
 ### Search
 
