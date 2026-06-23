@@ -35,6 +35,31 @@ _Nothing currently._
 
 ## Deferred
 
+### `--gitdiff` revisions & staged — **M**
+
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
+Extends the `--gitdiff` shipped in `0.52.0` (working tree vs `HEAD`, single file)
+along the two axes its v1 deferred:
+
+- **Arbitrary revisions** — `--gitdiff REV FILE` (e.g. `HEAD~3`, a branch, a tag,
+  a commit SHA) diffs that revision's blob against the working tree, and a
+  `REV:path` / two-revision form (`REV1..REV2`?) for comparing two committed
+  versions. Shape (value-flag vs positional rev vs `REV:path` spec) is a
+  brainstorm decision.
+- **Staged vs `HEAD`** — `--gitdiff --staged FILE` (a.k.a. `--cached`) diffs the
+  index against `HEAD`, mirroring `git diff --staged`.
+
+Mostly **source-acquisition + arg parsing** on the existing `git` module
+(`resolve` / `head_blob` generalize to `rev_blob(rev, path)` and an index blob
+via `git show :<path>` / `git show <rev>:<path>`); the diff/render pipeline is
+unchanged. Reuses the same empty-side semantics for add/delete and the existing
+error taxonomy (extend `classify` for bad-revision messages). Open questions for
+the brainstorm: the exact CLI surface for revisions, whether `--staged` composes
+with a `REV`, and resolving `REV:path` repo-relative paths. Realistically **M**.
+Still deferred beyond this: multi-file diffs, rename detection.
+
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
@@ -80,9 +105,9 @@ mode, per pane). What remains deferred:
   Diff is still 2-pane vertical, raw-line (no `--filter`/`--format`), intra-line
   highlighting only on single-row changed lines, `Tab` locked, numbered-goto
   jumps to top. Larger follow-ons: strict ISO-8859-1 (vs WHATWG windows-1252),
-  UTF-16 (needs whole-buffer transcode), 3-way diff, and for `--gitdiff`
-  specifically — arbitrary revisions (`--gitdiff REV` / `REV:path`),
-  staged-vs-`HEAD`, multi-file diffs, rename detection.
+  UTF-16 (needs whole-buffer transcode), 3-way diff. For `--gitdiff`: arbitrary
+  revisions and staged-vs-`HEAD` are now their own prioritized entry above;
+  multi-file diffs and rename detection remain deferred.
   (Per-pane filter/format predicates are now their own prioritized entry above.)
 - **Protocol images and raw passthrough per pane.** The split compositor is
   cell-based, so Kitty/Sixel images render as ASCII and `-r` renders through the
