@@ -883,7 +883,15 @@ impl Viewport {
         let total = idx.record_count();
         if total == 0 { return false; }
 
-        let cur_record = idx.line_to_record(self.top_line);
+        // `-a` (search-skip-screen): forward search anchors at the record of the
+        // last on-screen line, so matches in records already visible are skipped
+        // (parity with the line/hide-mode paths). Backward stays top-anchored.
+        let anchor_line = if self.search_skip_screen && forward {
+            self.bottom_visible_line(idx)
+        } else {
+            self.top_line
+        };
+        let cur_record = idx.line_to_record(anchor_line);
 
         let range: Box<dyn Iterator<Item = usize>> = if forward {
             Box::new(((cur_record + 1)..total).chain(0..=cur_record))
@@ -2492,6 +2500,29 @@ mod tests {
         v2.set_search("hit".into(), SearchDirection::Forward).unwrap();
         v2.search_repeat(&m2, &mut idx2, false);
         assert_eq!(v2.top_line(), 4, "skip-screen search skips the visible screen");
+    }
+
+    #[test]
+    fn search_skip_screen_applies_in_records_mode() {
+        // One-line records; on-screen records are 0,1 (body_rows=2). Record 1
+        // ("[2] hit") matches and is on screen; record 3 ("[4] hit") is below.
+        let body = b"[1] aaa\n[2] hit\n[3] bbb\n[4] hit\n";
+        let re = regex::bytes::Regex::new(r"^\[").unwrap();
+
+        let m = MockSource::new(); m.append(body);
+        let mut idx = LineIndex::new(); idx.set_record_start(re.clone()); idx.extend_to_end(&m);
+        let mut v = Viewport::new(20, 3, "t".into()); // body_rows = 2
+        v.set_search("hit".into(), SearchDirection::Forward).unwrap();
+        v.search_repeat(&m, &mut idx, false);
+        assert_eq!(v.top_line(), 1, "default records search lands on the on-screen record");
+
+        let m2 = MockSource::new(); m2.append(body);
+        let mut idx2 = LineIndex::new(); idx2.set_record_start(re); idx2.extend_to_end(&m2);
+        let mut v2 = Viewport::new(20, 3, "t".into());
+        v2.set_search_skip_screen(true);
+        v2.set_search("hit".into(), SearchDirection::Forward).unwrap();
+        v2.search_repeat(&m2, &mut idx2, false);
+        assert_eq!(v2.top_line(), 3, "skip-screen skips the on-screen record in records mode");
     }
 
     #[test]
