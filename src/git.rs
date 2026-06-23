@@ -32,7 +32,10 @@ pub fn classify(stderr: &str) -> FailKind {
     } else if s.contains("unknown revision")
         || s.contains("bad revision")
         || s.contains("ambiguous argument 'head'")
+        || s.contains("invalid object name 'head'")
     {
+        // The last form is what modern git (2.5x) emits for an unborn HEAD
+        // (`git init` with no commits yet).
         FailKind::NoCommits
     } else {
         FailKind::Other
@@ -107,6 +110,23 @@ mod tests {
     fn classify_no_commits() {
         assert!(matches!(classify("fatal: bad revision 'HEAD'"), FailKind::NoCommits));
         assert!(matches!(classify("fatal: ambiguous argument 'HEAD': unknown revision"), FailKind::NoCommits));
+        // Modern git (2.5x) emits this for an unborn HEAD.
+        assert!(matches!(classify("fatal: invalid object name 'HEAD'."), FailKind::NoCommits));
+    }
+
+    #[test]
+    fn head_blob_unborn_head_is_no_commits() {
+        // Fresh repo, no commits → HEAD is unborn → NoCommits (not Other/NotInHead),
+        // against the real installed git rather than a synthetic stderr string.
+        let dir = std::env::temp_dir().join(format!("tess_gitdiff_nc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::process::Command::new("git").arg("-C").arg(&dir).args(["init","-q"]).output().unwrap();
+        let f = dir.join("x.txt");
+        std::fs::write(&f, b"hi\n").unwrap();
+        let gf = resolve(&f).unwrap();
+        assert!(matches!(head_blob(&gf).unwrap(), BlobOutcome::NoCommits));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
