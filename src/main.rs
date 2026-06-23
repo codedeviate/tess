@@ -829,6 +829,24 @@ fn real_main() -> Result<()> {
         validate_per_pane_argv(&args, sections.len())?;
     }
 
+    if args.gitdiff {
+        if per_pane || args.diff || args.split
+            || !args.right_grep.is_empty() || !args.right_filter.is_empty()
+            || args.right_format.is_some() || args.right_display.is_some()
+            || args.right_ignore_case || args.right_IGNORE_case
+        {
+            return Err(Error::Runtime(
+                "--gitdiff can't be combined with --diff / --split / --right-* / the `--` form".to_string(),
+            ));
+        }
+        if args.from_clipboard {
+            return Err(Error::Runtime("--gitdiff reads a file, not the clipboard".to_string()));
+        }
+        if args.files.len() != 1 {
+            return Err(Error::Runtime("--gitdiff needs exactly one file".to_string()));
+        }
+    }
+
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
     let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
         .iter()

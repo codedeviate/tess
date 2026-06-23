@@ -130,6 +130,12 @@ pub struct Args {
     #[arg(long = "from-clipboard", conflicts_with = "files")]
     pub from_clipboard: bool,
 
+    /// Diff a file against its committed `HEAD` version: opens the aligned
+    /// side-by-side diff with HEAD on the left (old) and the working tree on the
+    /// right (new). Requires a single file in a git repository.
+    #[arg(long = "gitdiff")]
+    pub gitdiff: bool,
+
     /// Filter visible lines by regex against the raw line. Repeatable;
     /// multiple `--grep` arguments AND. Works on any input — no `--format`
     /// required. Composes with `--filter` (both must match) and with
@@ -904,6 +910,11 @@ mod tests {
     fn from_clipboard_conflicts_with_files() {
         assert!(Args::try_parse_from(["tess", "--from-clipboard", "f"]).is_err());
     }
+    #[test]
+    fn parses_gitdiff() {
+        assert!(Args::parse_from(["tess", "--gitdiff", "f.rs"]).gitdiff);
+        assert!(!Args::parse_from(["tess", "f.rs"]).gitdiff);
+    }
 
     #[test]
     fn parses_encoding() {
@@ -1015,6 +1026,7 @@ mod tests {
             "--follow-suspend-on-motion",
             "--format",
             "--from-clipboard",
+            "--gitdiff",
             "--grep",
             "--head",
             "--header",
