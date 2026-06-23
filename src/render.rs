@@ -281,10 +281,14 @@ pub fn render_line(
         && opts.left_col > 0
         && (opts.cols as usize) > opts.frozen_cols + 1
     {
-        // Frozen prefix: cols == frozen_cols, no scroll, no rscroll marker.
+        // Frozen prefix: render ONE extra column (frozen_cols + 1), no scroll, no
+        // rscroll marker. The extra column lets us detect a width-2 char that
+        // straddles the frozen boundary — its trailing `Continuation` lands at
+        // index `frozen_cols`. Without the extra column, chop mode would drop the
+        // straddling wide char and slide the next narrow char into the gutter.
         let frozen_opts = RenderOpts {
             left_col: 0,
-            cols: opts.frozen_cols as u16,
+            cols: opts.frozen_cols as u16 + 1,
             frozen_cols: 0,
             rscroll_char: None,
             ..opts.clone()
@@ -304,7 +308,18 @@ pub fn render_line(
         let scrolled_rows = render_line(bytes, &scrolled_opts, state);
 
         let mut row = frozen_rows.into_iter().next().unwrap_or_default();
+        // A width-2 char straddling the boundary leaves a `Continuation` at index
+        // frozen_cols; its `Char` sits at the last frozen column. Rendering that
+        // half alone would misalign (width-2 glyph in a 1-col slot), so blank it —
+        // the straddling glyph is dropped at the edge (matching the left-edge
+        // straddle behavior), not slid in.
+        let straddles = matches!(row.get(opts.frozen_cols), Some(Cell::Continuation));
         row.truncate(opts.frozen_cols);
+        if straddles {
+            if let Some(last) = row.last_mut() {
+                *last = Cell::Empty;
+            }
+        }
         while row.len() < opts.frozen_cols {
             row.push(Cell::Empty);
         }
@@ -1270,6 +1285,35 @@ mod tests {
         // remainder skipped by frozen(4)+left_col(3)=7 → starts at 'h'.
         let opts = RenderOpts { wrap: false, cols: 10, left_col: 3, frozen_cols: 4, ..Default::default() };
         assert_eq!(row_chars(&render_line(b"abcdefghij", &opts, None)), "abcd\u{2502}hij");
+    }
+
+    #[test]
+    fn frozen_cols_wide_char_straddling_boundary_is_blanked_not_slid() {
+        // "a世bcdef": display cols a=0, 世=1-2 (width 2), b=3, c=4…
+        // C=2 → frozen region is cols 0-1; 世 straddles (occupies 1 and 2), so it
+        // must be dropped at the edge and col 1 blanked — NOT have 'b' slide in.
+        // Engaged (left_col=2): scrolled skips frozen(2)+left_col(2)=4 cols → 'c'.
+        // Result: 'a' + blank + '│' + "cdef" → row_chars = "a\u{2502}cdef".
+        let opts = RenderOpts { wrap: false, cols: 10, left_col: 2, frozen_cols: 2, ..Default::default() };
+        let rows = render_line("a世bcdef".as_bytes(), &opts, None);
+        // The dropped wide char and its blank don't appear in row_chars (Empty is
+        // skipped); the key assertion is 'b' did NOT slide into the frozen gutter.
+        assert_eq!(row_chars(&rows), "a\u{2502}cdef");
+        // Row width invariant: exactly `cols` cells.
+        assert_eq!(rows[0].len(), 10);
+        // Frozen col 1 is blanked (Empty), not a 'b'.
+        assert!(matches!(rows[0][1], Cell::Empty),
+            "straddling wide char's frozen column must be blanked, not back-filled");
+    }
+
+    #[test]
+    fn frozen_cols_wide_char_fully_inside_frozen_is_kept() {
+        // "世abcdef": 世 occupies cols 0-1, fully inside a C=2 frozen region.
+        let opts = RenderOpts { wrap: false, cols: 10, left_col: 2, frozen_cols: 2, ..Default::default() };
+        let rows = render_line("世abcdef".as_bytes(), &opts, None);
+        // 世 kept in frozen; scrolled skips 2+2=4 display cols (世=2, a,b=2) → 'c'.
+        assert_eq!(row_chars(&rows), "世\u{2502}cdef");
+        assert_eq!(rows[0].len(), 10);
     }
 
     #[test]
