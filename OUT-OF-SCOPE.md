@@ -88,10 +88,6 @@ mode, per pane). What remains deferred:
 
 ### Long tail of `less` flags — **L (cumulative)**
 
-> **Next up — prioritized for the upcoming development cycle.** The next batch
-> gets its own brainstorm → spec → plan cycle; specific target flags are chosen
-> during the brainstorm.
-
 `less --help` lists ~80 options. Many are trivial alias toggles, some
 are non-trivial behavior. Add as the need arises; each pickup gets its
 own commit and a `Picked up:` line below.
@@ -107,6 +103,7 @@ does not pursue.
 - `0.28.0` — `-s`, `--header=L[,C]`, `--rscroll=c`, `-z N`, `--wordwrap`.
 - `0.29.0` — `--follow-name`, `--exit-follow-on-close`.
 - `0.37.0` — `-x`/`--tabs`, `-R`, `-#`/`--shift`, `--wheel-lines`, `--incsearch`, `-J`/`--status-column`.
+- `0.51.0` — `-p`/`--pattern`, `-a`/`--search-skip-screen`, `-g`/`--hilite-search`, `--tilde` (search/startup ergonomics + tilde-past-EOF; `--tilde` is the inverse direction of `less -~`, documented).
 
 ### `anyhow` / `thiserror` — **S**
 

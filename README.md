@@ -313,6 +313,10 @@ The full set, alphabetical by long name — the same order `tess --help` lists t
 | `--no-animate` | Open an animated image as its static first frame instead of playing it. |
 | `--no-color` | Show raw control bytes as `^X`; disable SGR/OSC interpretation. |
 | `-G, --no-hilite-search` | Disable search-match highlighting by default (navigation still works). |
+| `-g, --hilite-search` | Highlight only the match last jumped to, not every occurrence (`-G` overrides). |
+| `-a, --search-skip-screen` | Forward search / `n` skips matches on the current screen (starts below it). Runtime: `:search-skip-screen`. |
+| `-p, --pattern PATTERN` | Start at the first line matching PATTERN (flag form of `+/PATTERN`). |
+| `--tilde` | Show `~` on lines past EOF (default blank). Runtime: `:tilde`. Inverse direction of `less -~`. |
 | `--no-image` | Treat a detected image file as raw text instead of rendering it. |
 | `-X, --no-init` | Don't enter the alt-screen; leave content in terminal scrollback. |
 | `--no-preprocess` | Ignore `$LESSOPEN` for this invocation. |

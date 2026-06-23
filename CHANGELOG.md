@@ -10,6 +10,26 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.51.0] — 2026-06-23
+
+### Added
+
+Batch of `less`-compatibility flags:
+
+- **`-p PATTERN` / `--pattern PATTERN`** — start at the first line matching
+  PATTERN (equivalent to `+/PATTERN`; honors `-i`/`-I`).
+- **`-a` / `--search-skip-screen`** — forward search (and `n`) starts below the
+  last displayed line, so matches already on screen are skipped. Runtime toggle
+  `:search-skip-screen`; applies in line, filter/hide, and records modes; per
+  split pane.
+- **`-g` / `--hilite-search`** — highlight only the match last jumped to, rather
+  than every match of the active pattern (the landed line's first match per
+  display row). `-G` / `--no-hilite-search` (no highlight at all) still wins.
+- **`--tilde`** — show a dim `~` on lines past end-of-file (the classic `less`
+  look). Opt-in; default stays blank. Runtime toggle `:tilde`. Note: this is the
+  inverse direction of `less -~` (which *disables* tildes) — tess defaults to
+  blank and `--tilde` enables, a documented divergence. Long flag only.
+
 ## [0.50.0] — 2026-06-23
 
 ### Added

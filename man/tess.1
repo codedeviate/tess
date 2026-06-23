@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.50.0" 
+.TH tess 1  "tess 0.51.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
-\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-diff\fR] [\fB\-\-diff\-force\fR] [\fB\-\-diff\-ignore\-whitespace\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-encoding\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-protocol\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-animate\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-right\-display\fR] [\fB\-\-right\-filter\fR] [\fB\-\-right\-format\fR] [\fB\-\-right\-grep\fR] [\fB\-\-right\-ignore\-case\fR] [\fB\-\-right\-IGNORE\-CASE\fR] [\fB\-\-rscroll\fR] [\fB\-\-scroll\-lock\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-\-split\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
+\fBtess\fR [\fB\-\-blocks\fR] [\fB\-S\fR|\fB\-\-chop\-long\-lines\fR] [\fB\-\-clipboard\fR] [\fB\-\-content\-type\fR] [\fB\-\-diff\fR] [\fB\-\-diff\-force\fR] [\fB\-\-diff\-ignore\-whitespace\fR] [\fB\-\-dim\fR] [\fB\-\-display\fR] [\fB\-\-encoding\fR] [\fB\-\-examples\fR] [\fB\-\-exit\-follow\-on\-close\fR] [\fB\-\-filter\fR] [\fB\-f\fR|\fB\-\-follow\fR] [\fB\-\-follow\-name\fR] [\fB\-\-follow\-suspend\-on\-motion\fR] [\fB\-\-format\fR] [\fB\-\-from\-clipboard\fR] [\fB\-\-grep\fR] [\fB\-\-head\fR] [\fB\-\-header\fR] [\fB\-\-hex\fR] [\fB\-\-hex\-group\fR] [\fB\-g\fR|\fB\-\-hilite\-search\fR] [\fB\-i\fR|\fB\-\-ignore\-case\fR] [\fB\-I\fR|\fB\-\-IGNORE\-CASE\fR] [\fB\-\-image\-protocol\fR] [\fB\-\-image\-width\fR] [\fB\-\-incsearch\fR] [\fB\-N\fR|\fB\-\-LINE\-NUMBERS\fR] [\fB\-\-list\-formats\fR] [\fB\-\-live\fR] [\fB\-\-manual\fR] [\fB\-\-mouse\fR] [\fB\-\-no\-animate\fR] [\fB\-\-no\-color\fR] [\fB\-G\fR|\fB\-\-no\-hilite\-search\fR] [\fB\-\-no\-image\fR] [\fB\-X\fR|\fB\-\-no\-init\fR] [\fB\-\-no\-preprocess\fR] [\fB\-\-or\-filter\fR] [\fB\-\-or\-grep\fR] [\fB\-\-or\-group\fR] [\fB\-o\fR|\fB\-\-output\fR] [\fB\-p\fR|\fB\-\-pattern\fR] [\fB\-\-preprocess\fR] [\fB\-\-prettify\fR] [\fB\-\-prompt\fR] [\fB\-\-prompt\-style\fR] [\fB\-e\fR|\fB\-\-quit\-at\-eof\fR] [\fB\-E\fR|\fB\-\-QUIT\-AT\-EOF\fR] [\fB\-F\fR|\fB\-\-quit\-if\-one\-screen\fR] [\fB\-K\fR|\fB\-\-quit\-on\-intr\fR] [\fB\-r\fR|\fB\-\-raw\-control\-chars\fR] [\fB\-R\fR|\fB\-\-RAW\-CONTROL\-CHARS\fR] [\fB\-\-record\-start\fR] [\fB\-\-right\-display\fR] [\fB\-\-right\-filter\fR] [\fB\-\-right\-format\fR] [\fB\-\-right\-grep\fR] [\fB\-\-right\-ignore\-case\fR] [\fB\-\-right\-IGNORE\-CASE\fR] [\fB\-\-rscroll\fR] [\fB\-\-scroll\-lock\fR] [\fB\-a\fR|\fB\-\-search\-skip\-screen\fR] [\fB\-#\fR|\fB\-\-shift\fR] [\fB\-\-split\fR] [\fB\-s\fR|\fB\-\-squeeze\-blank\-lines\fR] [\fB\-J\fR|\fB\-\-status\-column\fR] [\fB\-\-status\-style\fR] [\fB\-\-stdout\fR] [\fB\-\-tab\-width\fR] [\fB\-x\fR|\fB\-\-tabs\fR] [\fB\-t\fR|\fB\-\-tag\fR] [\fB\-T\fR|\fB\-\-tag\-file\fR] [\fB\-\-tail\fR] [\fB\-\-tilde\fR] [\fB\-\-to\-clipboard\fR] [\fB\-\-truecolor\fR] [\fB\-\-wheel\-lines\fR] [\fB\-z\fR|\fB\-\-window\fR] [\fB\-\-wordwrap\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fIFILES\fR] 
 .SH DESCRIPTION
 A less\-style terminal pager.
 .SH OPTIONS
@@ -78,6 +78,9 @@ Render the source as an xxd\-style hex dump instead of byte\-faithful text. 16 b
 \fB\-\-hex\-group\fR \fI<N>\fR [default: 4]
 Hex characters per group in `\-\-hex` mode. One of 2, 4, 8, 16, 32 (default 4, matching `xxd`). 32 means the whole row as a single group with no spacing between hex pairs. Requires `\-\-hex`. Can be changed at runtime with `:hex N`
 .TP
+\fB\-g\fR, \fB\-\-hilite\-search\fR
+Highlight only the single match last jumped to, instead of every match of the active pattern. Mirrors `less \-g` / `\-\-hilite\-search`. `\-G` / `\-\-no\-hilite\-search` (no highlight at all) still wins over this
+.TP
 \fB\-i\fR, \fB\-\-ignore\-case\fR
 Smart\-case search. `/`, `?`, `\-\-grep`, and `\-\-filter`\*(Aqs `~` / `!~` operators match case\-insensitively unless the pattern contains an uppercase character. Mirrors `less \-i` / ripgrep / vim smartcase. Mutually exclusive with `\-I`. Runtime toggle: `:case`
 .TP
@@ -138,6 +141,9 @@ Open an OR\-group: subsequent \-\-or\-filter/\-\-or\-grep join NAME until the ne
 \fB\-o\fR, \fB\-\-output\fR \fI<FILE>\fR
 Non\-interactive batch mode: apply \-\-filter / \-\-grep / \-\-head / \-\-tail / \-\-prettify to the source and write the resulting raw bytes to FILE, then exit. Use `\-` for stdout (`\-\-stdout` is a synonym). Skips the alt\-screen and raw mode entirely. With `\-\-follow`, doesn\*(Aqt exit — keeps appending matching new bytes to FILE as they arrive (Ctrl\-C to stop). Not compatible with `\-\-live`
 .TP
+\fB\-p\fR, \fB\-\-pattern\fR \fI<PATTERN>\fR
+Start at the first line matching PATTERN (equivalent to `+/PATTERN`). Mirrors `less \-p` / `\-\-pattern`
+.TP
 \fB\-\-preprocess\fR \fI<CMD>\fR
 Pipe the source file through this command before rendering. Must start with `|`; `%s` is substituted with the file path. Example: `\-\-preprocess \*(Aq|pdftotext %s \-\*(Aq`. Overrides $LESSOPEN
 .TP
@@ -195,6 +201,9 @@ Character to show at the right edge of a chopped line (`\-S` chop mode) indicati
 \fB\-\-scroll\-lock\fR
 Start with the split panes scroll\-locked together (relative offset captured at launch). Only meaningful with \-\-split; ignored otherwise
 .TP
+\fB\-a\fR, \fB\-\-search\-skip\-screen\fR
+Forward search (and `n`) skips matches on the current screen — it starts below the last displayed line instead of after the top line. Mirrors `less \-a` / `\-\-search\-skip\-screen`. Runtime: `:search\-skip\-screen`
+.TP
 \fB\-#\fR, \fB\-\-shift\fR \fI<N>\fR
 Column count for the ←/→ horizontal\-scroll commands (default: half screen). `0` keeps the half\-screen default. Mirrors `less \-#`/`\-\-shift`
 .TP
@@ -228,6 +237,9 @@ Path to the tags file. Default: walk up from CWD looking for `tags`
 \fB\-\-tail\fR \fI<N>\fR
 Show only the last N lines of the source. For files this skips most of the index work — useful for huge logs. Combine with `\-f` for `tail \-f`. Mutually exclusive with \-\-head. Streaming stdin is not supported
 .TP
+\fB\-\-tilde\fR
+Show a `~` on lines past end\-of\-file (the classic `less` look). tess defaults to blank lines there; this opts in. Runtime: `:tilde`. (Inverse direction of `less \-~`, which disables tildes. Long flag only.)
+.TP
 \fB\-\-to\-clipboard\fR
 Batch sink: apply filters/head/tail/prettify and copy the result to the system clipboard, then exit. Mutually exclusive with \-o/\-\-stdout
 .TP
@@ -252,4 +264,4 @@ Print version
 [\fIFILES\fR]
 Files to view (only the first is opened in MVP)
 .SH VERSION
-v0.50.0
+v0.51.0
