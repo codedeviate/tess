@@ -526,6 +526,28 @@ disabled — searches still navigate (`n` / `N` jump to matches), but the
 visual reverse-video on the matched phrase is suppressed. Toggle at
 runtime with `:hlsearch` / `:nohlsearch`.
 
+`-g` / `--hilite-search` narrows highlighting the other way: only the match
+you last jumped to is highlighted (the landed line's first match per display
+row), rather than every occurrence of the pattern. `-G` (no highlight at all)
+takes precedence over `-g`. Mirrors `less -g`.
+
+### Skipping the screen on search (`-a`)
+
+`-a` / `--search-skip-screen` makes a forward search (and `n`) start *below*
+the last displayed line instead of just after the top line — so matches that
+are already visible on the current screen are skipped, jumping straight to the
+next match below. Backward search is unaffected (it already starts above the
+screen). Works in line, filter/hide, and records modes, and per split pane.
+Toggle at runtime with `:search-skip-screen`. Mirrors `less -a`.
+
+### Tildes past end-of-file (`--tilde`)
+
+By default tess shows blank lines below the end of a short file. `--tilde`
+shows a dim `~` on those rows instead — the classic `less` appearance. Toggle
+at runtime with `:tilde`. Note the direction differs from `less`: `less` shows
+tildes by default and `-~` *disables* them, whereas tess defaults to blank and
+`--tilde` *enables* them (a deliberate divergence; long flag only, no `-~`).
+
 ### Startup commands (`+CMD`)
 
 Like `less +CMD` and `vim +CMD`, `tess` accepts startup commands as
@@ -545,6 +567,10 @@ tess +/error access.log         # open at first 'error' match
 tess +500 huge.csv              # open at line 500
 tess +G app.log                 # open at end (like `-f` without the follow)
 ```
+
+**`-p PATTERN` / `--pattern PATTERN`** is the flag form of `+/PATTERN`: open
+scrolled to the first line matching PATTERN (honoring `-i` / `-I`). If both a
+`+/` command and `-p` are given, `-p` is applied last. Mirrors `less -p`.
 
 ### Exit-on-EOF and one-screen pager
 

@@ -1355,6 +1355,9 @@ showing raw (use --content-type=NAME to override)"
     viewport.set_ansi_mode(ansi_mode);
     viewport.set_case_mode(case_mode);
     viewport.set_hilite_search(!args.no_hilite_search);
+    viewport.set_search_skip_screen(args.search_skip_screen);
+    viewport.set_hilite_only_match(args.hilite_only_match);
+    viewport.set_tilde_eof(args.tilde);
     viewport.set_incsearch(args.incsearch);
     let qae = if args.QUIT_AT_EOF {
         tess::viewport::QuitAtEof::First
@@ -1476,6 +1479,15 @@ showing raw (use --content-type=NAME to override)"
                 viewport.search_repeat(src.as_ref(), &mut idx, false);
             }
         }
+    }
+
+    // `-p PATTERN` is equivalent to `+/PATTERN`: open at the first match. Applied
+    // after explicit +CMDs (last jump wins).
+    if let Some(pat) = args.pattern.as_deref() {
+        viewport
+            .set_search(pat.to_string(), tess::viewport::SearchDirection::Forward)
+            .map_err(|e| Error::Runtime(format!("-p {pat}: {e}")))?;
+        viewport.search_repeat(src.as_ref(), &mut idx, false);
     }
 
     // Resolve the startup image protocol once: it pins the first viewport's

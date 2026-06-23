@@ -106,6 +106,10 @@ enum ColonCommand {
     /// `:incsearch` — toggle incremental search (preview-as-you-type in the
     /// `/`/`?` prompt) at runtime. Bare command; flips the current state.
     IncSearch,
+    /// `:search-skip-screen` — toggle whether forward search skips the screen.
+    SearchSkipScreen,
+    /// `:tilde` — toggle `~` display on lines past EOF.
+    Tilde,
     /// `:header L [C]` — pin top L source rows and left C cols.
     Header(usize, usize),
     /// `:yank` — copy the current top logical line to the system clipboard
@@ -252,6 +256,8 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
+        "search-skip-screen" => Ok(ColonCommand::SearchSkipScreen),
+        "tilde"              => Ok(ColonCommand::Tilde),
         "yank"       => Ok(ColonCommand::Yank),
         "header" => {
             let parts: Vec<&str> = rest.split_whitespace().collect();
@@ -944,6 +950,17 @@ fn dispatch_colon_command(
             let msg = if on { "[incsearch on]" } else { "[incsearch off]" };
             ColonOutcome::Continue(Some(msg.into()))
         }
+        ColonCommand::SearchSkipScreen => {
+            let on = !viewport.search_skip_screen();
+            viewport.set_search_skip_screen(on);
+            ColonOutcome::Continue(Some(
+                if on { "[search-skip-screen on]" } else { "[search-skip-screen off]" }.into()))
+        }
+        ColonCommand::Tilde => {
+            let on = !viewport.tilde_eof();
+            viewport.set_tilde_eof(on);
+            ColonOutcome::Continue(Some(if on { "[tilde on]" } else { "[tilde off]" }.into()))
+        }
         ColonCommand::Yank => {
             ColonOutcome::Continue(Some(yank_current_line(args.clipboard, viewport, src.as_ref(), idx)))
         }
@@ -1230,6 +1247,9 @@ pub fn apply_pane_display_config(viewport: &mut Viewport, args: &crate::cli::Arg
     viewport.opts.rscroll_char = args.rscroll.chars().next();
     viewport.opts.word_wrap = args.word_wrap;
     viewport.set_page_size(args.window);
+    viewport.set_search_skip_screen(args.search_skip_screen);
+    viewport.set_hilite_only_match(args.hilite_only_match);
+    viewport.set_tilde_eof(args.tilde);
     viewport.set_file_index(0, 1);
 }
 
@@ -4060,6 +4080,12 @@ mod tests {
     #[test]
     fn parse_colon_scrolllock() {
         assert_eq!(parse_colon_command("scrolllock").unwrap(), ColonCommand::ScrollLock);
+    }
+
+    #[test]
+    fn parse_colon_search_skip_screen_and_tilde() {
+        assert_eq!(parse_colon_command("search-skip-screen").unwrap(), ColonCommand::SearchSkipScreen);
+        assert_eq!(parse_colon_command("tilde").unwrap(), ColonCommand::Tilde);
     }
 
     #[test]
