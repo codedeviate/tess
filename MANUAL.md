@@ -338,7 +338,12 @@ The `←` / `→` step defaults to half the screen width, but `-#` / `--shift N`
 
 The **line-number gutter** (`-N`) stays fixed while text scrolls. For chopped text, a `<` marker appears at the left edge when content extends further left (analogous to the existing `>` / `--rscroll` right-edge marker). Images shift cleanly with no edge markers. When scrolled past column 0, the status line shows a `»{col}` offset readout; `<col-offset>` is available as a `--prompt` template placeholder.
 
-Frozen left content-columns (`--header ,C`) remain a future addition.
+**Frozen left content-columns** (`--header ,C`): in chop mode the first `C`
+display columns stay pinned while `←` / `→` scroll the rest of each line, with a
+dim `│` divider between the frozen region and the scrolled remainder. The freeze
+engages only once scrolled; the dedicated `<` left-edge marker gives way to the
+divider. A width-2 character straddling the boundary is dropped at the edge. This
+also applies per pane in the split view (each pane honors its own `--header`).
 
 ### Split view
 
@@ -439,8 +444,10 @@ mechanism is planned). Because the split compositor works on rendered
 cells, **protocol images** (Kitty/Sixel) render as **ASCII** and **`-r` raw**
 content renders through the cell pipeline (Interpret) while split. Runtime
 `:vsplit` panes also do not apply `--tabs`, `--header`, or status-prompt theming
-(the startup `--split` pane does). Per-pane frozen left columns (`--header ,C`)
-remain deferred. See `OUT-OF-SCOPE.md`.
+(the startup `--split` pane does). Frozen left columns (`--header ,C`) therefore
+apply per pane for startup-configured panes (each pane honors its own
+`--header`), but not for runtime `:vsplit` panes (which don't apply `--header`).
+See `OUT-OF-SCOPE.md`.
 
 #### Diff mode (`--diff` / `:diff`)
 

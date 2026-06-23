@@ -298,7 +298,7 @@ The full set, alphabetical by long name — the same order `tess --help` lists t
 | `--format NAME` | Apply a named log format (built-in or from `formats.toml`). |
 | `--grep PATTERN` | Filter visible lines by regex on the raw line (repeatable, AND'd; no `--format` needed). |
 | `--head N` | Show only the first N lines. Mutually exclusive with `--tail`. |
-| `--header L[,C]` | Pin the top L lines (and left C columns) at the top of the viewport. |
+| `--header L[,C]` | Pin the top L lines; in chop mode also freeze the left C columns (a dim `│` divides them from the scrolled remainder), per pane in a split. |
 | `--hex` | Render the source as an xxd-style hex dump. |
 | `--hex-group N` | Hex bytes per group in `--hex` mode (`2`/`4`/`8`/`16`/`32`; default `4`). |
 | `-i, --ignore-case` | Smart-case search (insensitive unless the pattern has an uppercase char). |

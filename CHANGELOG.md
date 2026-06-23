@@ -10,6 +10,19 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.50.0] — 2026-06-23
+
+### Added
+
+- **Frozen left content-columns.** `--header L,C` (and runtime `:header L [C]`)
+  now pins the first `C` display columns in chop mode (`-S`): they stay put while
+  `←`/`→` scroll the rest of each line, separated by a dim `│` divider. The
+  freeze engages only when scrolled. Works in the single-pane view and per split
+  pane (each pane honors its own `--header`). Previously the `,C` half of
+  `--header` was parsed but inert. No-op in wrap/hex/raw/image; a pane too narrow
+  to hold the frozen region + divider renders normally. A width-2 char straddling
+  the boundary is dropped at the edge (not slid into the gutter).
+
 ## [0.49.0] — 2026-06-22
 
 ### Changed
