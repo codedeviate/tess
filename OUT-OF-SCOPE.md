@@ -35,24 +35,6 @@ _Nothing currently._
 
 ## Deferred
 
-### Frozen left content-columns (`--header ,C`) per pane — **M**
-
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-`--header L,C` pins the top `L` rows and the left `C` content-columns so they
-stay visible while scrolling — it works today in the single-pane view. In the
-split view the per-pane frozen-columns case was deferred when N-pane landed: the
-cell-based split compositor (`pane::compose_panes`) stitches pre-rendered pane
-frames left-to-right, and making each pane honor its own `,C` left-freeze means
-the per-pane render must reserve and re-emit its frozen left columns at each
-horizontal scroll position, then compose those alongside the divider math. The
-natural continuation of the split series (`0.41.0`–`0.49.0`); medium-sized,
-compositor + viewport work, no new subsystem. Open questions for the brainstorm:
-whether the freeze is set per-pane (each section's own `--header`) or inherited,
-and how it interacts with per-pane horizontal scroll and the too-narrow
-full-width fallback.
-
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
@@ -87,9 +69,10 @@ scrolling (`0.42.0`), charset support (`0.43.0`), aligned **diff mode**
 **N-pane** vertical split (`0.47.0` — `--split a b c`, Tab/BackTab cycle,
 scroll-lock couples all), the **`--` per-pane argv form** (`0.48.0` —
 `tess a --grep X -- b --grep Y -- c`, each section a full per-pane view spec,
-section 0 carries globals), and **mouse-wheel routing to the pane under the
-cursor** (`0.49.0` — all axes, no focus change). What remains deferred (frozen
-left content-columns per pane is now its own prioritized entry above):
+section 0 carries globals), **mouse-wheel routing to the pane under the
+cursor** (`0.49.0` — all axes, no focus change), and **frozen left
+content-columns** (`0.50.0` — `--header ,C` pins the first C columns in chop
+mode, per pane). What remains deferred:
 
 - **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
   grid layout (and the compositor work for it) is deferred.
@@ -104,6 +87,10 @@ left content-columns per pane is now its own prioritized entry above):
   region-addressed compositor.
 
 ### Long tail of `less` flags — **L (cumulative)**
+
+> **Next up — prioritized for the upcoming development cycle.** The next batch
+> gets its own brainstorm → spec → plan cycle; specific target flags are chosen
+> during the brainstorm.
 
 `less --help` lists ~80 options. Many are trivial alias toggles, some
 are non-trivial behavior. Add as the need arises; each pickup gets its
