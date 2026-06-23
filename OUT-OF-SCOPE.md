@@ -35,6 +35,32 @@ _Nothing currently._
 
 ## Deferred
 
+### `--gitdiff` — side-by-side git diff — **M**
+
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
+`tess --gitdiff FILE` opens the existing aligned side-by-side diff view with the
+committed `HEAD` version on the left (old) and the working-tree file on the right
+(new) — "show me what I've changed since the last commit," changes highlighted.
+
+The diff/render engine already exists: `--diff A B` builds two panes and feeds
+them to `app::build_diff`, which produces the line-aligned `DiffState` (gutter
+signs, change classes, char-level intra-line highlighting on changed rows, `]c`/
+`[c` hunk nav). `--gitdiff` is therefore a **source-acquisition** feature, not a
+new diff engine: construct the "old" pane's source from git (`git show
+HEAD:<repo-relative-path>`) instead of a second file on disk, then reuse the
+existing pipeline.
+
+New work: resolve the repo + repo-relative path, shell out to git for the old
+blob, a `--gitdiff` flag wired into the two-pane diff setup, and error handling —
+not a git repo, path untracked, a brand-new/untracked file (empty old side),
+unchanged file, binary blob. **v1 scope:** working tree vs `HEAD`, single file
+(matches the current exactly-2-pane diff). Deferred to follow-ons: arbitrary
+revisions (`--gitdiff REV` / `REV:path`), staged-vs-`HEAD`, multi-file diffs,
+rename detection. Realistically **M** — bigger than a flag pickup, smaller than
+the L compositor projects.
+
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
