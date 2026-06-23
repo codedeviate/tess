@@ -170,6 +170,12 @@ pub struct Args {
     )]
     pub hex_group: usize,
 
+    /// Highlight only the single match last jumped to, instead of every match of
+    /// the active pattern. Mirrors `less -g` / `--hilite-search`. `-G` /
+    /// `--no-hilite-search` (no highlight at all) still wins over this.
+    #[arg(short = 'g', long = "hilite-search")]
+    pub hilite_only_match: bool,
+
     /// Smart-case search. `/`, `?`, `--grep`, and `--filter`'s `~` / `!~`
     /// operators match case-insensitively unless the pattern contains an
     /// uppercase character. Mirrors `less -i` / ripgrep / vim smartcase.
@@ -287,6 +293,11 @@ pub struct Args {
     #[arg(short = 'o', long = "output", value_name = "FILE")]
     pub output: Option<String>,
 
+    /// Start at the first line matching PATTERN (equivalent to `+/PATTERN`).
+    /// Mirrors `less -p` / `--pattern`.
+    #[arg(short = 'p', long = "pattern", value_name = "PATTERN")]
+    pub pattern: Option<String>,
+
     /// Pipe the source file through this command before rendering.
     /// Must start with `|`; `%s` is substituted with the file path.
     /// Example: `--preprocess '|pdftotext %s -'`. Overrides $LESSOPEN.
@@ -402,6 +413,12 @@ pub struct Args {
     #[arg(long = "scroll-lock")]
     pub scroll_lock: bool,
 
+    /// Forward search (and `n`) skips matches on the current screen — it starts
+    /// below the last displayed line instead of after the top line. Mirrors
+    /// `less -a` / `--search-skip-screen`. Runtime: `:search-skip-screen`.
+    #[arg(short = 'a', long = "search-skip-screen")]
+    pub search_skip_screen: bool,
+
     /// Column count for the ←/→ horizontal-scroll commands (default: half
     /// screen). `0` keeps the half-screen default. Mirrors `less -#`/`--shift`.
     #[arg(short = '#', long = "shift", value_name = "N")]
@@ -461,6 +478,12 @@ pub struct Args {
     /// Mutually exclusive with --head. Streaming stdin is not supported.
     #[arg(long = "tail", value_name = "N", conflicts_with = "head")]
     pub tail: Option<usize>,
+
+    /// Show a `~` on lines past end-of-file (the classic `less` look). tess
+    /// defaults to blank lines there; this opts in. Runtime: `:tilde`.
+    /// (Inverse direction of `less -~`, which disables tildes. Long flag only.)
+    #[arg(long = "tilde")]
+    pub tilde: bool,
 
     /// Batch sink: apply filters/head/tail/prettify and copy the result to the
     /// system clipboard, then exit. Mutually exclusive with -o/--stdout.
@@ -936,6 +959,34 @@ mod tests {
     }
 
     #[test]
+    fn parses_pattern_flag() {
+        let a = Args::parse_from(["tess", "-p", "ERROR", "f.log"]);
+        assert_eq!(a.pattern.as_deref(), Some("ERROR"));
+        let b = Args::parse_from(["tess", "--pattern", "warn"]);
+        assert_eq!(b.pattern.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn parses_search_skip_screen() {
+        assert!(Args::parse_from(["tess", "-a"]).search_skip_screen);
+        assert!(Args::parse_from(["tess", "--search-skip-screen"]).search_skip_screen);
+        assert!(!Args::parse_from(["tess"]).search_skip_screen);
+    }
+
+    #[test]
+    fn parses_hilite_only_match() {
+        assert!(Args::parse_from(["tess", "-g"]).hilite_only_match);
+        assert!(Args::parse_from(["tess", "--hilite-search"]).hilite_only_match);
+        assert!(!Args::parse_from(["tess"]).hilite_only_match);
+    }
+
+    #[test]
+    fn parses_tilde() {
+        assert!(Args::parse_from(["tess", "--tilde"]).tilde);
+        assert!(!Args::parse_from(["tess"]).tilde);
+    }
+
+    #[test]
     fn help_lists_flags_in_alphabetical_order() {
         use clap::CommandFactory;
         let mut cmd = Args::command();
@@ -969,6 +1020,7 @@ mod tests {
             "--header",
             "--hex",
             "--hex-group",
+            "--hilite-search",
             "--ignore-case",
             "--IGNORE-CASE",
             "--image-protocol",
@@ -989,6 +1041,7 @@ mod tests {
             "--or-grep",
             "--or-group",
             "--output",
+            "--pattern",
             "--preprocess",
             "--prettify",
             "--prompt",
@@ -1008,6 +1061,7 @@ mod tests {
             "--right-IGNORE-CASE",
             "--rscroll",
             "--scroll-lock",
+            "--search-skip-screen",
             "--shift",
             "--split",
             "--squeeze-blank-lines",
@@ -1019,6 +1073,7 @@ mod tests {
             "--tag",
             "--tag-file",
             "--tail",
+            "--tilde",
             "--to-clipboard",
             "--truecolor",
             "--wheel-lines",
