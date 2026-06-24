@@ -890,6 +890,19 @@ fn real_main() -> Result<()> {
     // event loop starts.
     let raw_argv: Vec<String> = std::env::args().collect();
 
+    // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
+    // parses. A `--<groupname>` token becomes the group's flags inline, and
+    // remaining bare positionals become `--filter <arg>` pairs.
+    let groups = format::load_groups().map_err(Error::Runtime)?;
+
+    // Layouts (`[layout.X]` in formats.toml) compile a `--<layoutname>` token
+    // into the `--` per-pane form before the argv is split into sections.
+    let layouts = format::load_layouts().map_err(Error::Runtime)?;
+    if let Some(name) = layouts.keys().find(|k| groups.contains_key(*k)) {
+        return Err(Error::Runtime(format!("`{name}` is defined as both a [layout] and a [group]")));
+    }
+    let (raw_argv, layout_horizontal) = format::expand_layout_argv(raw_argv, &layouts);
+
     // Split on standalone `--` into per-pane sections. Zero `--` → one section
     // (the existing single-view path, unchanged). Each section is prefixed with
     // argv[0].
@@ -912,10 +925,6 @@ fn real_main() -> Result<()> {
         .map(|(_, a)| a.clone())
         .collect();
 
-    // Expand any user-defined groups (`[group.X]` in formats.toml) before clap
-    // parses. A `--<groupname>` token becomes the group's flags inline, and
-    // remaining bare positionals become `--filter <arg>` pairs.
-    let groups = format::load_groups().map_err(Error::Runtime)?;
     let argv = format::expand_argv(cleaned_argv, &groups);
     let or_spec = tess::or::extract_from_argv(&argv);
     let args = Args::parse_from(argv);
@@ -972,6 +981,19 @@ fn real_main() -> Result<()> {
         }
         if args.files.is_empty() {
             return Err(Error::Runtime("--hsplit needs at least one file".to_string()));
+        }
+    }
+
+    // A layout already compiled to a `--` per-pane form, so combining it with
+    // explicit split flags is contradictory.
+    if layout_horizontal.is_some() {
+        if args.split || args.hsplit || args.diff || args.gitdiff
+            || !args.right_grep.is_empty() || !args.right_filter.is_empty()
+            || args.right_format.is_some() || args.right_display.is_some()
+            || args.right_ignore_case || args.right_IGNORE_case
+        {
+            return Err(Error::Runtime(
+                "a layout can't be combined with --split / --hsplit / --diff / --gitdiff / --right-*".to_string()));
         }
     }
 
@@ -1737,10 +1759,10 @@ showing raw (use --content-type=NAME to override)"
         }
     };
 
-    let orientation = if args.hsplit {
-        tess::app::Orientation::Horizontal
-    } else {
-        tess::app::Orientation::Vertical
+    let orientation = match layout_horizontal {
+        Some(true) => tess::app::Orientation::Horizontal,
+        Some(false) => tess::app::Orientation::Vertical,
+        None => if args.hsplit { tess::app::Orientation::Horizontal } else { tess::app::Orientation::Vertical },
     };
     app::run(
         src,
