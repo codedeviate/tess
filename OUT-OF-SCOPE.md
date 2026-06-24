@@ -61,28 +61,18 @@ Technical sketch when the time comes:
   on NTFS — inode equivalents and file-locking behavior would need
   their own design pass.
 
-### Horizontal (stacked) split — **L**
+### Nested grid — layout tree (split Sub-project 2) — **L**
 
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-The split view is **vertical columns only** today — `compose_panes` stitches
-pre-rendered pane frames left-to-right with a divider column, and pane widths
-come from `pane::split_widths_n`. This adds a **horizontal (stacked) layout**:
-panes arranged as rows (a / b), separated by a divider *row*, with each pane
-getting a slice of the available body height instead of width.
-
-The big questions for the brainstorm: the **layout model** (pure horizontal
-stacks vs a general grid; how it composes with — or replaces — the existing
-vertical split), the **CLI/runtime surface** (a `--hsplit` flag? a `:hsplit`
-runtime command? an orientation toggle?), how **focus cycling**, **scroll-lock**,
-and the **`--` per-pane form** extend to two axes, and the **height-division +
-too-short fallback** (mirroring the vertical `≥8 cols` / focused-full-width
-rule). Substantial compositor work: a horizontal analog of `split_widths_n` /
-`compose_panes` (height slicing, divider rows, per-pane status placement) and the
-`app::run` model generalizing from a 1-D pane sequence to a 2-D arrangement.
-Largest remaining split-view item; very likely wants decomposition into a
-2-pane-stacked core first, then N / grid.
+Flat horizontal (stacked) split shipped in `0.54.0` as a whole-split orientation
+(Sub-project 1). The remaining piece is a **nested grid** — e.g. a vertical split
+where one column is itself split into rows (`a | (b / c)`). That needs a recursive
+**layout tree** (`Leaf(Pane) | HSplit([…]) | VSplit([…])`) replacing the flat
+`others: Vec<Pane>` + `focused_pos`, a **region-addressed compositor** (each leaf
+renders into a sub-rectangle; the current `compose_panes` / `compose_panes_horizontal`
+are flat 1-D), **2-D focus navigation**, scroll-lock/diff/`--`-form mapping onto
+the tree, and runtime split/close at the focused leaf. A major subsystem; deferred
+until there's demand. The flat orientation (Sub-project 1) is the foundation it
+builds on.
 
 ### Split-view series & remaining refinements — **L**
 
@@ -95,8 +85,9 @@ scroll-lock couples all), the **`--` per-pane argv form** (`0.48.0` —
 section 0 carries globals), **mouse-wheel routing to the pane under the
 cursor** (`0.49.0` — all axes, no focus change), and **frozen left
 content-columns** (`0.50.0` — `--header ,C` pins the first C columns in chop
-mode, per pane). What remains deferred (horizontal/stacked split is now its own
-prioritized entry above):
+mode, per pane), and **horizontal (stacked) split** (`0.54.0` — `--hsplit` /
+`:hsplit` / `:rotate`, whole-split orientation). What remains deferred (the
+nested grid / layout tree is its own entry above):
 
 - **Diff refinements.** `--gitdiff` (HEAD vs working tree) shipped in `0.52.0`.
   Diff is still 2-pane vertical, raw-line (no `--filter`/`--format`), intra-line

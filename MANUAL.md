@@ -274,6 +274,7 @@ tess --clipboard app.log                                # then :yank a line
 - **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
 - **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
 - **`--split`** — open a side-by-side vertical split of the first two file arguments (or two views of a single file). Interactive only. See [Split view](#split-view). Runtime equivalent: `:vsplit`.
+- **`--hsplit`** — like `--split` but **horizontal** (stacked rows). Runtime: `:hsplit`; flip an open split with `:rotate`. See [Horizontal (stacked) split](#horizontal-stacked-split).
 - **`--scroll-lock`** — start a `--split` session with the two panes scroll-locked together. Only meaningful with `--split`; ignored otherwise. See [Synchronized scrolling](#synchronized-scrolling-scrolllock). Runtime toggle: `=` / `:scrolllock`.
 - **`--incsearch`** — enable incremental search (off by default). See [Search](#search). Toggle at runtime with `:incsearch`. Mirrors `less --incsearch`.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
@@ -416,6 +417,35 @@ Under `--mouse`, the wheel (vertical, Shift+wheel, and native horizontal) scroll
 the pane the **cursor is over** — not necessarily the focused one — and does not
 change focus. (Exceptions: while scroll-locked the panes move together, and in
 diff mode the aligned pair scrolls as one view.)
+
+#### Horizontal (stacked) split
+
+By default the split is **vertical** (side-by-side columns). A **horizontal**
+split stacks the panes as rows instead, each getting a height slice with its
+**own status row** at the bottom of its slice (the status rows double as the
+separators — there is no extra divider row).
+
+```sh
+tess --hsplit app.log app.log.1   # stacked rows at startup
+tess --hsplit big.log             # one file → two stacked views
+```
+
+At runtime:
+
+- `:hsplit [file]` / `:hsp` — open a stacked split (no argument duplicates the
+  focused file at its scroll position, like `:vsplit`).
+- `:rotate` — flip the **current** split's orientation (vertical ↔ horizontal)
+  in place, without reopening; panes, sources, and scroll positions are kept.
+  No-op (with a flash) when there's a single pane or in diff mode.
+
+Orientation is **whole-split** — every pane shares it; you can't mix columns and
+rows in one view (nested grids are a future addition). `--split` / `:vsplit` stay
+vertical, and a `--`-form split opens vertical but can be `:rotate`d. Each
+horizontal pane needs at least **2 rows** (1 body + 1 status); in a terminal too
+short to fit them all, the focused pane renders full-screen until there's room —
+the height analog of the vertical ≥8-columns rule. Under `--mouse`, the wheel
+targets the pane the cursor's **row** is over. Diff mode stays vertical
+(`--hsplit --diff` is rejected; `:rotate` is a no-op while diffing).
 
 #### Synchronized scrolling (`:scrolllock`)
 
