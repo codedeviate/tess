@@ -10,6 +10,21 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.54.0] — 2026-06-24
+
+### Added
+
+- **Horizontal (stacked) split.** Panes can now be arranged as rows, not just
+  vertical columns: `tess --hsplit a b c` opens a stacked split (one pane per
+  file), each pane getting a height slice with its **own status row** at the
+  bottom of its slice. Runtime: `:hsplit [file]` opens/adds a stacked pane, and
+  **`:rotate`** flips the live split's orientation (vertical ↔ horizontal) in
+  place without reopening. Orientation is whole-split (one at a time — nested
+  grids are a future addition). `--split` / `:vsplit` stay vertical; diff mode
+  stays vertical (`:rotate` is a no-op in diff). A terminal too short to give
+  each pane ≥2 rows falls back to the focused pane full-screen, mirroring the
+  too-narrow rule for vertical splits.
+
 ## [0.53.1] — 2026-06-24
 
 ### Fixed

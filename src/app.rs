@@ -19,6 +19,12 @@ use crate::render::Cell;
 use crate::source::{find_tail_offset, Source};
 use crate::viewport::{Frame, RowStyle, SearchDirection, Viewport};
 
+/// Split orientation: vertical (side-by-side, today's default) or horizontal
+/// (stacked). Threaded through pane sizing, frame composition, and mouse
+/// routing so the same N-pane machinery serves both layouts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Orientation { Vertical, Horizontal }
+
 /// Constraints to re-apply when the source content has been replaced wholesale
 /// (`--live`). The line index is rebuilt from scratch each time, so caps that
 /// were originally honored at startup need to be reasserted.
@@ -119,6 +125,12 @@ enum ColonCommand {
     /// open that file beside the current pane; without, duplicate the focused
     /// file at its current scroll position.
     VSplit(Option<String>),
+    /// `:hsplit [file]` / `:hsp [file]` — open a horizontal (stacked) split.
+    /// With a path, open that file below the current pane; without, duplicate
+    /// the focused file at its current scroll position.
+    HSplit(Option<String>),
+    /// `:rotate` — flip the live split's orientation (vertical ↔ horizontal).
+    Rotate,
     /// `:only` / `:close` — collapse a split back to the focused pane.
     Only,
     /// `:scrolllock` — toggle synchronized scroll between the two split panes.
@@ -251,6 +263,14 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 Ok(ColonCommand::VSplit(Some(rest.to_string())))
             }
         }
+        "hsplit" | "hsp" => {
+            if rest.is_empty() {
+                Ok(ColonCommand::HSplit(None))
+            } else {
+                Ok(ColonCommand::HSplit(Some(rest.to_string())))
+            }
+        }
+        "rotate" => Ok(ColonCommand::Rotate),
         "only" | "close" => Ok(ColonCommand::Only),
         "scrolllock" => Ok(ColonCommand::ScrollLock),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
@@ -982,7 +1002,8 @@ fn dispatch_colon_command(
         // Split commands and encoding are intercepted in the event loop (they
         // need the loose `others`/`cols`/`rows`/`focused_pos` locals or must
         // apply to every pane) and never reach this file-set-only dispatcher.
-        ColonCommand::VSplit(_) | ColonCommand::Only | ColonCommand::ScrollLock
+        ColonCommand::VSplit(_) | ColonCommand::HSplit(_) | ColonCommand::Rotate
+        | ColonCommand::Only | ColonCommand::ScrollLock
         | ColonCommand::SetEncoding(_)
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
@@ -1113,16 +1134,24 @@ fn panes_init(
     focused_pos: usize,
     cols: u16,
     rows: u16,
+    orientation: Orientation,
 ) {
     let n = others.len() + 1;
-    let widths = crate::pane::split_widths_n(cols, n);
-    if widths.len() == 1 {
-        focused_vp.resize(cols, rows);
+    let sizes = match orientation {
+        Orientation::Vertical => crate::pane::split_widths_n(cols, n),
+        Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+    };
+    if sizes.len() == 1 {
+        focused_vp.resize(cols, rows); // too-small fallback (both orientations)
     } else {
-        focused_vp.resize(widths[focused_pos], rows);
+        let resize = |vp: &mut Viewport, sz: u16| match orientation {
+            Orientation::Vertical => vp.resize(sz, rows),
+            Orientation::Horizontal => vp.resize(cols, sz),
+        };
+        resize(focused_vp, sizes[focused_pos]);
         for (slot, other) in others.iter_mut().enumerate() {
             let phys = phys_of_slot(slot, focused_pos);
-            other.viewport.resize(widths[phys], rows);
+            resize(&mut other.viewport, sizes[phys]);
         }
     }
     force_cell_mode(focused_vp);
@@ -1140,20 +1169,28 @@ fn resize_split_aware(
     cols: u16,
     rows: u16,
     focused_pos: usize,
+    orientation: Orientation,
 ) {
     if others.is_empty() {
         focused_vp.resize(cols, rows);
         return;
     }
     let n = others.len() + 1;
-    let widths = crate::pane::split_widths_n(cols, n);
-    if widths.len() == 1 {
-        focused_vp.resize(cols, rows);
+    let sizes = match orientation {
+        Orientation::Vertical => crate::pane::split_widths_n(cols, n),
+        Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+    };
+    if sizes.len() == 1 {
+        focused_vp.resize(cols, rows); // too-small fallback (both orientations)
     } else {
-        focused_vp.resize(widths[focused_pos], rows);
+        let resize = |vp: &mut Viewport, sz: u16| match orientation {
+            Orientation::Vertical => vp.resize(sz, rows),
+            Orientation::Horizontal => vp.resize(cols, sz),
+        };
+        resize(focused_vp, sizes[focused_pos]);
         for (slot, other) in others.iter_mut().enumerate() {
             let phys = phys_of_slot(slot, focused_pos);
-            other.viewport.resize(widths[phys], rows);
+            resize(&mut other.viewport, sizes[phys]);
         }
     }
 }
@@ -1462,9 +1499,11 @@ pub fn run(
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
     extra_panes: Vec<crate::pane::Pane>,
+    orientation: Orientation,
     #[cfg(feature = "image")]
     startup_image_protocol: (crate::viewport::ImageProtocol, Option<(u16, u16)>),
 ) -> Result<()> {
+    let mut orientation = orientation;
     let (mut cols, mut rows) = size().unwrap_or((80, 24));
     viewport.resize(cols, rows);
 
@@ -1488,7 +1527,7 @@ pub fn run(
     // a focus rotation (matters on odd widths where columns differ).
     let mut others: Vec<crate::pane::Pane> = extra_panes;
     let mut focused_pos: usize = 0;
-    panes_init(&mut others, &mut viewport, focused_pos, cols, rows);
+    panes_init(&mut others, &mut viewport, focused_pos, cols, rows, orientation);
     let mut scroll_lock = false;
     // Per-physical-column scroll-lock offsets relative to the leftmost pane,
     // captured at lock enable. Empty when scroll-lock is off.
@@ -1640,8 +1679,11 @@ pub fn run(
                 f
             } else if !others.is_empty() {
                 let n = others.len() + 1;
-                let widths = crate::pane::split_widths_n(cols, n);
-                if widths.len() == 1 {
+                let sizes = match orientation {
+                    Orientation::Vertical => crate::pane::split_widths_n(cols, n),
+                    Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+                };
+                if sizes.len() == 1 {
                     // Too narrow to split: focused pane full-width.
                     viewport.frame(src.as_ref(), &mut idx)
                 } else {
@@ -1679,7 +1721,10 @@ pub fn run(
                             frames.push(other_frames[other_slot(phys, focused_pos)].clone());
                         }
                     }
-                    crate::pane::compose_panes(&frames, &widths, cols, focused_pos)
+                    match orientation {
+                        Orientation::Vertical => crate::pane::compose_panes(&frames, &sizes, cols, focused_pos),
+                        Orientation::Horizontal => crate::pane::compose_panes_horizontal(&frames, &sizes, rows, focused_pos),
+                    }
                 }
             } else {
                 viewport.frame(src.as_ref(), &mut idx)
@@ -2047,6 +2092,7 @@ pub fn run(
                                                                 force_cell_mode(&mut pane.viewport);
                                                                 // New pane to the right; focused stays leftmost.
                                                                 focused_pos = 0;
+                                                                orientation = Orientation::Vertical;
                                                                 viewport.resize(lw, rows);
                                                                 pane.viewport.resize(rw, rows);
                                                                 others.push(pane);
@@ -2054,6 +2100,61 @@ pub fn run(
                                                             Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
                                                         }
                                                     }
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::HSplit(path_arg)) => {
+                                                if !others.is_empty() {
+                                                    viewport.flash("already split (`:only` first)", 30);
+                                                } else {
+                                                    let heights = crate::pane::split_heights_n(rows, 2);
+                                                    if heights.len() == 1 {
+                                                        viewport.flash("terminal too short to split", 30);
+                                                    } else {
+                                                        let focused_path = file_set.current().map(|p| p.to_path_buf());
+                                                        let focused_ansi = viewport.ansi_mode();
+                                                        let built = build_runtime_pane(
+                                                            path_arg.as_deref(),
+                                                            focused_path.as_deref(),
+                                                            viewport.top_line(),
+                                                            cols,
+                                                            heights[1],
+                                                            &args,
+                                                            focused_ansi,
+                                                            preprocessor.as_ref(),
+                                                            record_start_regex.as_ref(),
+                                                        );
+                                                        match built {
+                                                            Ok(mut pane) => {
+                                                                force_cell_mode(&mut viewport);
+                                                                force_cell_mode(&mut pane.viewport);
+                                                                // New pane below; focused stays topmost.
+                                                                focused_pos = 0;
+                                                                orientation = Orientation::Horizontal;
+                                                                viewport.resize(cols, heights[0]);
+                                                                pane.viewport.resize(cols, heights[1]);
+                                                                others.push(pane);
+                                                            }
+                                                            Err(e) => viewport.flash(format!("hsplit: {e}"), 40),
+                                                        }
+                                                    }
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Rotate) => {
+                                                if others.is_empty() {
+                                                    viewport.flash("no split to rotate", 30);
+                                                } else if diff.is_some() {
+                                                    viewport.flash("can't rotate in diff mode", 30);
+                                                } else {
+                                                    orientation = match orientation {
+                                                        Orientation::Vertical => Orientation::Horizontal,
+                                                        Orientation::Horizontal => Orientation::Vertical,
+                                                    };
+                                                    resize_split_aware(
+                                                        &mut viewport, &mut others, cols, rows,
+                                                        focused_pos, orientation,
+                                                    );
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -2360,7 +2461,7 @@ pub fn run(
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
-                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
+                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
                     }
@@ -2487,8 +2588,16 @@ pub fn run(
                         // before). Single pane → only pane is the focused one.
                         let route = !others.is_empty() && !scroll_lock && diff.is_none();
                         let vis = if route {
-                            let widths = crate::pane::split_widths_n(cols, others.len() + 1);
-                            crate::pane::pane_at_column(me.column, &widths)
+                            match orientation {
+                                Orientation::Vertical => {
+                                    let widths = crate::pane::split_widths_n(cols, others.len() + 1);
+                                    crate::pane::pane_at_column(me.column, &widths)
+                                }
+                                Orientation::Horizontal => {
+                                    let heights = crate::pane::split_heights_n(rows, others.len() + 1);
+                                    crate::pane::pane_at_row(me.row, &heights)
+                                }
+                            }
                         } else {
                             focused_pos
                         };
@@ -2650,7 +2759,7 @@ pub fn run(
                     Command::Resize(c, r) => {
                         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
-                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
+                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }
@@ -2796,7 +2905,7 @@ pub fn run(
                             // Re-assert physical-side widths: each viewport must be
                             // resized to the column it now occupies (matters on odd
                             // widths where columns differ).
-                            resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos);
+                            resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
                             needs_redraw = true;
                         }
                     }
@@ -4080,6 +4189,13 @@ mod tests {
     #[test]
     fn parse_colon_scrolllock() {
         assert_eq!(parse_colon_command("scrolllock").unwrap(), ColonCommand::ScrollLock);
+    }
+
+    #[test]
+    fn parse_colon_hsplit_and_rotate() {
+        assert_eq!(parse_colon_command("hsplit").unwrap(), ColonCommand::HSplit(None));
+        assert_eq!(parse_colon_command("hsplit a.log").unwrap(), ColonCommand::HSplit(Some("a.log".into())));
+        assert_eq!(parse_colon_command("rotate").unwrap(), ColonCommand::Rotate);
     }
 
     #[test]
