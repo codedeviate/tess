@@ -803,6 +803,12 @@ pub fn expand_layout_argv(argv: Vec<String>, layouts: &std::collections::HashMap
     (argv, None)
 }
 
+/// Public wrapper over `expand_group` for reuse by the runtime `:layout` command.
+/// Emits the group's view flags followed by its `file` positional into `out`.
+pub fn expand_group_tokens(g: &Group, out: &mut Vec<String>) {
+    expand_group(g, out)
+}
+
 fn expand_group(g: &Group, out: &mut Vec<String>) {
     if let Some(format) = &g.format {
         out.push("--format".into());

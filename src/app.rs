@@ -133,6 +133,8 @@ enum ColonCommand {
     Rotate,
     /// `:only` / `:close` — collapse a split back to the focused pane.
     Only,
+    /// `:layout NAME` — build a named layout's panes live and swap the view.
+    Layout(String),
     /// `:scrolllock` — toggle synchronized scroll between the two split panes.
     ScrollLock,
     /// `:encoding [LABEL]` — switch active encoding (e.g. `iso-8859-1`), or
@@ -161,6 +163,7 @@ enum ColonParseError {
     UnknownCommand(String),
     MissingPath,
     TagRequiresName,
+    LayoutRequiresName,
     HexGroupRequiresValue,
     HexGroupInvalid(String),
     ColorInvalid(String),
@@ -174,6 +177,7 @@ impl std::fmt::Display for ColonParseError {
             ColonParseError::UnknownCommand(t) => write!(f, "unknown command: :{t}"),
             ColonParseError::MissingPath => write!(f, ":e requires a path"),
             ColonParseError::TagRequiresName => write!(f, ":tag requires a name"),
+            ColonParseError::LayoutRequiresName => write!(f, ":layout requires a name"),
             ColonParseError::HexGroupRequiresValue => {
                 write!(f, ":hex requires N (one of 2, 4, 8, 16, 32)")
             }
@@ -272,6 +276,13 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
         }
         "rotate" => Ok(ColonCommand::Rotate),
         "only" | "close" => Ok(ColonCommand::Only),
+        "layout" => {
+            if rest.is_empty() {
+                Err(ColonParseError::LayoutRequiresName)
+            } else {
+                Ok(ColonCommand::Layout(rest.to_string()))
+            }
+        }
         "scrolllock" => Ok(ColonCommand::ScrollLock),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
@@ -1003,7 +1014,7 @@ fn dispatch_colon_command(
         // need the loose `others`/`cols`/`rows`/`focused_pos` locals or must
         // apply to every pane) and never reach this file-set-only dispatcher.
         ColonCommand::VSplit(_) | ColonCommand::HSplit(_) | ColonCommand::Rotate
-        | ColonCommand::Only | ColonCommand::ScrollLock
+        | ColonCommand::Only | ColonCommand::Layout(_) | ColonCommand::ScrollLock
         | ColonCommand::SetEncoding(_)
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
@@ -2171,6 +2182,52 @@ pub fn run(
                                                         viewport.set_image_protocol(proto, cell_px);
                                                     }
                                                     focused_pos = 0;
+                                                }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Layout(name)) => {
+                                                let layouts = crate::format::load_layouts().unwrap_or_default();
+                                                match layouts.get(&name) {
+                                                    None => { viewport.flash(format!("unknown layout: {name}"), 40); }
+                                                    Some(layout) => {
+                                                        let ansi = viewport.ansi_mode();
+                                                        // Synthesize a per-pane Args from each pane spec.
+                                                        let mut pane_args: Vec<crate::cli::Args> = Vec::with_capacity(layout.panes.len());
+                                                        for pane in &layout.panes {
+                                                            let mut toks = vec!["tess".to_string()];
+                                                            // Emits the pane's view flags AND its file positional.
+                                                            crate::format::expand_group_tokens(pane, &mut toks);
+                                                            pane_args.push(<crate::cli::Args as clap::Parser>::parse_from(toks));
+                                                        }
+                                                        match crate::layout::build_panes_from_sections(
+                                                            &pane_args, ansi, cols, rows, preprocessor.as_ref(),
+                                                        ) {
+                                                            Ok(mut panes) if !panes.is_empty() => {
+                                                                // Collapse any current split, install the new panes.
+                                                                others.clear();
+                                                                scroll_lock = false;
+                                                                lock_offsets.clear();
+                                                                diff = None;
+                                                                // pane 0 -> focused loose locals.
+                                                                let p0 = panes.remove(0);
+                                                                src = p0.src;
+                                                                idx = p0.idx;
+                                                                viewport = p0.viewport;
+                                                                others = panes;
+                                                                focused_pos = 0;
+                                                                orientation = if layout.horizontal {
+                                                                    Orientation::Horizontal
+                                                                } else {
+                                                                    Orientation::Vertical
+                                                                };
+                                                                force_cell_mode(&mut viewport);
+                                                                for o in others.iter_mut() { force_cell_mode(&mut o.viewport); }
+                                                                resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                            }
+                                                            Ok(_) => { viewport.flash("layout produced no panes", 40); }
+                                                            Err(e) => { viewport.flash(format!("layout: {e}"), 40); }
+                                                        }
+                                                    }
                                                 }
                                                 mode = InputMode::Normal;
                                             }
@@ -4184,6 +4241,12 @@ mod tests {
         assert_eq!(parse_colon_command("split a.log").unwrap(), ColonCommand::VSplit(Some("a.log".into())));
         assert_eq!(parse_colon_command("only").unwrap(), ColonCommand::Only);
         assert_eq!(parse_colon_command("close").unwrap(), ColonCommand::Only);
+    }
+
+    #[test]
+    fn parse_colon_layout() {
+        assert_eq!(parse_colon_command("layout dash").unwrap(), ColonCommand::Layout("dash".into()));
+        assert!(parse_colon_command("layout").is_err()); // name required
     }
 
     #[test]
