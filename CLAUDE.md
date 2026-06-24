@@ -192,3 +192,28 @@ gh release upload vX.Y.Z \
 - Session reports (after a brainstorm → plan → implement cycle) → `~/Development/Starweb/superpowers/tess/reports/YYYY-MM-DD-<feature>.md`
 
 The MVP design lives in `specs/2026-04-27-rust-less-clone-design.md`; the implementation plan in `plans/2026-04-27-rust-less-clone-plan.md`; session report in `reports/2026-04-27-rust-less-clone.md`.
+
+## WISHLIST.md → OUT-OF-SCOPE.md
+
+`WISHLIST.md` (repo root) is the user's raw idea inbox: they jot feature ideas
+there — one per line, terse, unformatted — without touching `OUT-OF-SCOPE.md`. The
+agent owns moving them across.
+
+**When there's nothing else to do** (idle between tasks, or after finishing a
+cycle), check `WISHLIST.md`. If it has any idea lines:
+
+1. For each idea, write a proper `OUT-OF-SCOPE.md` entry — expand the terse note
+   into a real entry (a `### Title — **S/M/L**` heading + a short paragraph
+   capturing the idea, design considerations, and trade-offs, the same style as
+   existing entries) and place it in the right bucket (**Waiting** = nice-to-have
+   nobody's urgently asked for; **Deferred** = actively put off; **Out of scope**
+   = won't pursue; **Not yet supported** = blocked upstream). Use judgment on
+   bucket + size.
+2. Empty `WISHLIST.md` back to just its header (keep the header lines; remove the
+   idea lines).
+3. Commit both files together (`chore: move wishlist idea(s) into OUT-OF-SCOPE`).
+
+Don't ask the user to confirm routine moves — just do it correctly. If an idea is
+ambiguous or large enough to need its own brainstorm, still capture it in
+OUT-OF-SCOPE (as a candidate) rather than leaving it in WISHLIST. The goal is that
+WISHLIST.md sits empty, and every idea lands in OUT-OF-SCOPE.md properly worded.
