@@ -775,6 +775,34 @@ pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<St
     out
 }
 
+/// If a `--<layoutname>` token is present (a name found in `layouts`), replace it
+/// in place with the layout's panes rendered as `--`-form sections: for each pane,
+/// its group-style flags (via `expand_group`) followed by its `file` positional,
+/// with `--` separators between panes. Tokens before the layout token (program
+/// name + globals) stay ahead of section 0; tokens after it are appended after the
+/// last section. Returns `(rewritten_argv, Some(horizontal))`. No layout token →
+/// `(argv, None)`.
+pub fn expand_layout_argv(argv: Vec<String>, layouts: &std::collections::HashMap<String, Layout>)
+    -> (Vec<String>, Option<bool>)
+{
+    for i in 1..argv.len() {
+        if let Some(name) = argv[i].strip_prefix("--") {
+            if let Some(layout) = layouts.get(name) {
+                let mut out: Vec<String> = argv[..i].to_vec();
+                for (p, pane) in layout.panes.iter().enumerate() {
+                    if p > 0 {
+                        out.push("--".into());
+                    }
+                    expand_group(pane, &mut out);
+                }
+                out.extend_from_slice(&argv[i + 1..]);
+                return (out, Some(layout.horizontal));
+            }
+        }
+    }
+    (argv, None)
+}
+
 fn expand_group(g: &Group, out: &mut Vec<String>) {
     if let Some(format) = &g.format {
         out.push("--format".into());
@@ -1875,6 +1903,36 @@ grep = ["ssh", "sshd"]
         assert_eq!(g.or_filter, vec!["lvl=ERROR".to_string()]);
         assert_eq!(g.or_grep, vec!["panic".to_string()]);
         assert_eq!(g.or_named, vec![("svc".to_string(), vec!["status=403".to_string()], vec!["ssh".to_string(), "sshd".to_string()])]);
+    }
+
+    #[test]
+    fn expand_layout_argv_expands_token_to_sections() {
+        let mut layouts = std::collections::HashMap::new();
+        layouts.insert("dash".to_string(), Layout {
+            name: "dash".into(),
+            horizontal: true,
+            panes: vec![
+                Group { name: "p0".into(), file: Some("a.log".into()), format: Some("myapp".into()),
+                        filter: vec!["x=1".into()], ..Default::default() },
+                Group { name: "p1".into(), file: Some("b.log".into()),
+                        grep: vec!["5..".into()], ..Default::default() },
+            ],
+        });
+        let argv: Vec<String> = ["tess", "--mouse", "--dash"].iter().map(|s| s.to_string()).collect();
+        let (out, horiz) = expand_layout_argv(argv, &layouts);
+        assert_eq!(horiz, Some(true));
+        let expected: Vec<String> = ["tess", "--mouse", "--format", "myapp", "--filter", "x=1", "a.log",
+            "--", "--grep", "5..", "b.log"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn expand_layout_argv_noop_without_layout_token() {
+        let layouts: std::collections::HashMap<String, Layout> = std::collections::HashMap::new();
+        let argv: Vec<String> = ["tess", "a.log"].iter().map(|s| s.to_string()).collect();
+        let (out, horiz) = expand_layout_argv(argv.clone(), &layouts);
+        assert_eq!(out, argv);
+        assert_eq!(horiz, None);
     }
 
     #[test]
