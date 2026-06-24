@@ -10,6 +10,21 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.55.0] — 2026-06-24
+
+### Added
+
+- **Named layouts in `formats.toml`.** A `[layout.NAME]` table defines a saved
+  split: an `orientation` (`vertical` default / `horizontal`) plus an ordered
+  list of `[[layout.NAME.pane]]` view-specs (each pane reuses the `[group]`
+  field vocabulary — `format`/`filter`/`grep`/`display`/`follow`/`line_numbers`/
+  `chop`/… — plus a required `file`). Open it with `--<layoutname>` at startup
+  or `:layout NAME` at runtime; a layout compiles to the `--` per-pane form +
+  the orientation. Layout names must be disjoint from `[group]` names and not
+  shadow a built-in flag; `--<layoutname>` is mutually exclusive with
+  `--split`/`--hsplit`/`--diff`/`--gitdiff`/`--right-*`. A pane whose `file` is
+  missing errors at load.
+
 ## [0.54.0] — 2026-06-24
 
 ### Added

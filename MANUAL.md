@@ -1790,9 +1790,66 @@ grep = ["timeout", "deadlock"]   # both patterns must match
 - A group cannot be named the same as a built-in flag (`format`, `filter`, `dim`, `head`, `tail`, `follow`, `LINE-NUMBERS`, `chop-long-lines`, `tab-width`, `list-formats`, `help`, `version`). Trying to load such a group prints an error and exits.
 - Once a group token is seen, every subsequent bare positional in argv (anything that doesn't start with `-`) becomes a `--filter` argument. To open a different file alongside an active group, edit the group or define a second one — there is no `--file` override flag yet.
 
+## Layouts: saved split arrangements
+
+A `[group.NAME]` shortcut configures a *single* view. A `[layout.NAME]` table
+goes one step further and saves a whole **split**: an orientation plus an
+ordered list of panes, each pane configured exactly like a group. Open it with
+`--<layoutname>` on the command line, or `:layout NAME` at runtime.
+
+```toml
+[layout.ops]
+orientation = "vertical"      # "vertical" (default, side-by-side) or "horizontal" (stacked)
+
+[[layout.ops.pane]]
+file = "/var/log/app.log"
+format = "myapp"
+filter = ["level=ERROR"]
+follow = true
+
+[[layout.ops.pane]]
+file = "/var/log/nginx/access.log"
+format = "nginx-combined"
+grep = ["\\b5\\d\\d\\b"]
+```
+
+`tess --ops` opens both panes side by side: the app error log on the left
+(following), the nginx 5xx lines on the right. `:layout ops` does the same to
+the current session, replacing whatever was on screen.
+
+A layout compiles down to the `--` per-pane form plus the orientation — so it
+is exactly equivalent to typing each pane's flags out by hand and passing
+`--split` (or `--hsplit` for `orientation = "horizontal"`).
+
+### Pane fields
+
+Each `[[layout.NAME.pane]]` reuses the **same field vocabulary as a group**
+(see [Group fields](#group-fields) and [Named OR-groups in config](#named-or-groups-in-config))
+— `format`, `filter`, `grep`, `or_filter`, `or_grep`, `display`, `follow`,
+`tail`, `head`, `dim`, `line_numbers`, `chop`, `tab_width`, and
+`[layout.NAME.pane.or.<subname>]` sub-tables — **plus a required `file`**. A
+pane with no `file` is an error at load time.
+
+### Rules and restrictions
+
+- **Orientation is flat.** `vertical` (the default) lays panes side by side;
+  `horizontal` stacks them. There is no nested grid — every pane shares one
+  orientation.
+- **Names must be disjoint from groups** and must not shadow a built-in flag,
+  same as `[group]` names. A layout that collides with a group name errors at
+  startup.
+- **`--<layoutname>` is mutually exclusive** with `--split`, `--hsplit`,
+  `--diff`, `--gitdiff`, and the `--right-*` pane flags. Pick a layout *or* an
+  ad-hoc split, not both.
+- **Give `--<layoutname>` alone.** Like a group token, once the layout token is
+  seen the remaining argv is consumed building its panes. A conflicting flag
+  placed *after* `--<layoutname>` is folded into the last pane rather than
+  rejected; put any standalone flags *before* the layout token, or better, keep
+  the invocation to just `tess --<layoutname>`.
+
 ## Files
 
-- **`~/.config/tess/formats.toml`** — user-defined log formats and groups. See [Defining your own](#defining-your-own) and [Groups](#groups-command-line-shortcuts).
+- **`~/.config/tess/formats.toml`** — user-defined log formats, groups, and layouts. See [Defining your own](#defining-your-own), [Groups](#groups-command-line-shortcuts), and [Layouts](#layouts-saved-split-arrangements).
 
 ---
 

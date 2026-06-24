@@ -179,6 +179,22 @@ tess --errors --display '<msg>' app.log     # override the group's display
 
 Groups accept `format`, `file`, `follow`, `tail`, `head`, `dim`, `line_numbers`, `chop`, `tab_width`, `display`, `filter`, `grep`, `or_filter`, and `or_grep`. Named OR-groups are defined as `[group.NAME.or.<subname>]` sub-tables — each sub-table's conditions are OR'd internally, and every non-empty OR-group must have ≥ 1 hit (groups are AND'd together). See the [manual](MANUAL.md#groups-command-line-shortcuts) for the full field reference.
 
+A `[layout.NAME]` table goes a step further and saves a whole **split**: an `orientation` (`vertical` default / `horizontal`) plus an ordered list of `[[layout.NAME.pane]]` view-specs, each pane using the same fields as a group plus a required `file`. `tess --<name>` opens it at startup and `:layout NAME` does so at runtime — equivalent to typing each pane's flags by hand with `--split`/`--hsplit`. See the [manual](MANUAL.md#layouts-saved-split-arrangements).
+
+```toml
+[layout.ops]
+orientation = "vertical"
+
+[[layout.ops.pane]]
+file = "app.log"
+format = "app"
+filter = ["level=ERROR"]
+
+[[layout.ops.pane]]
+file = "access.log"
+format = "nginx-combined"
+```
+
 ```sh
 # Show ssh lines matching any brute-force signature:
 tess --format ssh --filter service=ssh \
