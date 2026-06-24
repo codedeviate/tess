@@ -190,6 +190,97 @@ pub fn compose_panes(frames: &[Frame], widths: &[u16], cols: u16, focused_idx: u
     }
 }
 
+/// Row heights for `n` stacked panes at `rows` rows. Each pane is `body + 1`
+/// status row; the per-pane status rows ARE the separators, so there is NO
+/// divider row and the heights sum to exactly `rows`. MIN = 2 (1 body + 1
+/// status). Remainder rows go to the bottom panes. Returns `[rows]` (the
+/// too-short fallback) when each pane would fall below MIN.
+pub fn split_heights_n(rows: u16, n: usize) -> Vec<u16> {
+    const MIN: usize = 2;
+    if n <= 1 {
+        return vec![rows];
+    }
+    let r = rows as usize;
+    if r < n * MIN {
+        return vec![rows];
+    }
+    let base = r / n;
+    let rem = r % n;
+    (0..n).map(|i| (base + if i >= n - rem { 1 } else { 0 }) as u16).collect()
+}
+
+/// Map a screen row to the 0-based stacked-pane index, given `split_heights_n`
+/// heights (no divider rows). Past the end → the last pane; single entry → 0.
+pub fn pane_at_row(row: u16, heights: &[u16]) -> usize {
+    let last = heights.len().saturating_sub(1);
+    let mut y = 0usize;
+    let row = row as usize;
+    for (i, &h) in heights.iter().enumerate() {
+        let end = y + h as usize;
+        if row < end {
+            return i;
+        }
+        y = end;
+    }
+    last
+}
+
+/// Stitch N pre-rendered pane frames top-to-bottom. Pane `i` was rendered at
+/// `(cols, heights[i])` → `heights[i]-1` body rows + a status. Panes 0..n-1
+/// contribute body rows AND their status row to the composite body (status as a
+/// separator line); the bottom pane's status is lifted to `frame.status` (the
+/// screen's bottom line). Composite body length = `rows-1`. The focused pane's
+/// status carries `*`. Cell-mode only.
+pub fn compose_panes_horizontal(frames: &[Frame], heights: &[u16], rows: u16, focused_idx: usize) -> Frame {
+    let n = frames.len();
+    // Pane render width: the body-row width, but never narrower than the widest
+    // pane's own (marked) status so a status row is never truncated below its
+    // content. In real use bodies are full screen width and this is a no-op.
+    let body_w = frames.first().and_then(|f| f.body.first().map(|r| r.len())).unwrap_or(0);
+    let status_w = frames.iter().map(|f| f.status.chars().count() + 1).max().unwrap_or(0);
+    let cols_hint = body_w.max(status_w);
+    let mut body: Vec<Vec<Cell>> = Vec::new();
+    let mut highlights: Vec<Vec<std::ops::Range<usize>>> = Vec::new();
+    let mut row_styles: Vec<RowStyle> = Vec::new();
+    let mut bottom_status = String::new();
+    let _ = heights; // heights drive the per-pane render upstream; not needed to stack here
+
+    for (i, f) in frames.iter().enumerate() {
+        for (r, cells) in f.body.iter().enumerate() {
+            let mut cells = cells.clone();
+            if f.row_styles.get(r) == Some(&RowStyle::Dim) {
+                flatten_dim(&mut cells);
+            }
+            body.push(cells);
+            highlights.push(f.highlights.get(r).cloned().unwrap_or_default());
+            row_styles.push(RowStyle::Normal);
+        }
+        if i + 1 < n {
+            // Non-bottom pane: its status becomes a separator row in the body.
+            let text = fit_pane_status(&f.status, cols_hint, i == focused_idx);
+            let cells: Vec<Cell> = text.chars()
+                .map(|ch| Cell::Char { ch, width: 1, style: crate::ansi::Style { dim: true, ..Default::default() }, hyperlink: None })
+                .collect();
+            body.push(cells);
+            highlights.push(Vec::new());
+            row_styles.push(RowStyle::Normal);
+        } else {
+            // Bottom pane: its status is the screen's status line.
+            bottom_status = fit_pane_status(&f.status, cols_hint, i == focused_idx);
+        }
+    }
+
+    Frame {
+        body,
+        row_styles,
+        highlights,
+        status: bottom_status,
+        status_style: frames.get(focused_idx).map(|f| f.status_style).unwrap_or_default(),
+        raw_rows: vec![None; rows.saturating_sub(1) as usize],
+        image_blob: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +449,39 @@ mod tests {
         let out = super::compose_panes(&frames, &vec![3u16, 3], 7, 0);
         assert!(out.highlights[0].contains(&(0..1)));
         assert!(out.highlights[0].contains(&(5..6))); // right pane offset by 3 + DIVIDER(1) = 4
+    }
+
+    #[test]
+    fn split_heights_n_even_odd_and_too_short() {
+        assert_eq!(split_heights_n(24, 1), vec![24]);
+        assert_eq!(split_heights_n(24, 2), vec![12, 12]);
+        assert_eq!(split_heights_n(25, 2), vec![12, 13]); // remainder to the bottom
+        assert_eq!(split_heights_n(24, 3), vec![8, 8, 8]);
+        assert_eq!(split_heights_n(3, 2), vec![3]);        // too short (<2*2) → fallback
+        assert_eq!(split_heights_n(4, 2), vec![2, 2]);     // exact MIN fit
+    }
+
+    #[test]
+    fn pane_at_row_bands() {
+        let h = split_heights_n(24, 3); // [8,8,8]
+        assert_eq!(pane_at_row(0, &h), 0);
+        assert_eq!(pane_at_row(7, &h), 0);
+        assert_eq!(pane_at_row(8, &h), 1);
+        assert_eq!(pane_at_row(15, &h), 1);
+        assert_eq!(pane_at_row(16, &h), 2);
+        assert_eq!(pane_at_row(99, &h), 2);   // past end → last
+        assert_eq!(pane_at_row(5, &[24]), 0); // single pane
+    }
+
+    #[test]
+    fn compose_panes_horizontal_stacks_and_lifts_bottom_status() {
+        let a = frame(vec![vec![cell('a')]], "A");
+        let b = frame(vec![vec![cell('b')]], "B");
+        let out = compose_panes_horizontal(&[a, b], &[2, 2], 4, 0);
+        assert_eq!(out.body.len(), 3); // rows-1
+        assert!(out.status.contains('B')); // bottom pane status lifted
+        let mid: String = out.body[1].iter().filter_map(|c| match c {
+            Cell::Char { ch, .. } => Some(*ch), _ => None }).collect();
+        assert!(mid.contains('*') && mid.contains('A'), "focused top pane status row: {mid}");
     }
 }
