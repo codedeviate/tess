@@ -584,7 +584,7 @@ fn build_extra_panes(
         return Ok(vec![pane]);
     }
 
-    if args.split {
+    if args.split || args.hsplit {
         if files.len() >= 2 {
             let mut panes = Vec::with_capacity(files.len() - 1);
             for (i, path) in files[1..].iter().enumerate() {
@@ -809,6 +809,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         None,
         None,
         vec![],
+        tess::app::Orientation::Vertical,
         #[cfg(feature = "image")]
         (tess::viewport::ImageProtocol::Ascii, None),
     )?;
@@ -959,6 +960,20 @@ fn real_main() -> Result<()> {
     } else {
         None
     };
+
+    if args.hsplit {
+        if per_pane || args.split || args.diff || args.gitdiff
+            || !args.right_grep.is_empty() || !args.right_filter.is_empty()
+            || args.right_format.is_some() || args.right_display.is_some()
+            || args.right_ignore_case || args.right_IGNORE_case
+        {
+            return Err(Error::Runtime(
+                "--hsplit can't be combined with --split / --diff / --gitdiff / --right-* / the `--` form".to_string()));
+        }
+        if args.files.is_empty() {
+            return Err(Error::Runtime("--hsplit needs at least one file".to_string()));
+        }
+    }
 
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.
     let parsed_plus_cmds: Vec<PlusCmd> = plus_cmds
@@ -1722,6 +1737,11 @@ showing raw (use --content-type=NAME to override)"
         }
     };
 
+    let orientation = if args.hsplit {
+        tess::app::Orientation::Horizontal
+    } else {
+        tess::app::Orientation::Vertical
+    };
     app::run(
         src,
         viewport,
@@ -1735,6 +1755,7 @@ showing raw (use --content-type=NAME to override)"
         preprocessor,
         tag_file,
         extra_panes,
+        orientation,
         #[cfg(feature = "image")]
         startup_image_protocol,
     )?;

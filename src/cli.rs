@@ -182,6 +182,11 @@ pub struct Args {
     #[arg(short = 'g', long = "hilite-search")]
     pub hilite_only_match: bool,
 
+    /// Open a horizontal (stacked) split — one pane per file, arranged as rows.
+    /// The horizontal analog of `--split`. Runtime: `:hsplit` / `:rotate`.
+    #[arg(long = "hsplit")]
+    pub hsplit: bool,
+
     /// Smart-case search. `/`, `?`, `--grep`, and `--filter`'s `~` / `!~`
     /// operators match case-insensitively unless the pattern contains an
     /// uppercase character. Mirrors `less -i` / ripgrep / vim smartcase.
@@ -982,6 +987,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_hsplit() {
+        assert!(Args::parse_from(["tess", "--hsplit", "a", "b"]).hsplit);
+        assert!(!Args::parse_from(["tess", "a"]).hsplit);
+    }
+
+    #[test]
     fn parses_pattern_flag() {
         let a = Args::parse_from(["tess", "-p", "ERROR", "f.log"]);
         assert_eq!(a.pattern.as_deref(), Some("ERROR"));
@@ -1045,6 +1056,7 @@ mod tests {
             "--hex",
             "--hex-group",
             "--hilite-search",
+            "--hsplit",
             "--ignore-case",
             "--IGNORE-CASE",
             "--image-protocol",
