@@ -64,9 +64,14 @@ pub fn resolve(path: &Path) -> Result<GitFile, String> {
     }
     let root = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| {
-        match (path.parent().and_then(|p| std::fs::canonicalize(p).ok()), path.file_name()) {
-            (Some(p), Some(n)) => p.join(n),
-            _ => path.to_path_buf(),
+        // The file may not exist (deletion). Anchor on the canonicalized parent
+        // dir (`dir` is `path.parent()` or "."), so `abs` is absolute and strips
+        // against the absolute repo root — a bare relative filename here would
+        // otherwise leave `abs` relative and fail the strip_prefix below.
+        let parent_real = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+        match path.file_name() {
+            Some(n) => parent_real.join(n),
+            None => path.to_path_buf(),
         }
     });
     let root_real = std::fs::canonicalize(&root).unwrap_or(root.clone());
@@ -196,5 +201,70 @@ mod tests {
         assert!(rev_blob(&gf2, "HEAD").unwrap_err().to_lowercase().contains("no commits"));
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn resolve_handles_working_tree_deleted_file() {
+        let dir = std::env::temp_dir().join(format!("tess_gdel_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        run(&dir, &["init", "-q"]);
+        let f = dir.join("gone.txt");
+        std::fs::write(&f, b"committed\n").unwrap();
+        run(&dir, &["add", "gone.txt"]);
+        commit(&dir, "c1");
+        std::fs::remove_file(&f).unwrap(); // deleted from the working tree
+
+        let gf = resolve(&f).expect("deleted file should still resolve");
+        assert_eq!(gf.rel_path, "gone.txt");
+        assert!(matches!(rev_blob(&gf, "HEAD").unwrap(), BlobOutcome::Bytes(ref b) if b == b"committed\n"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_handles_deleted_file_in_subdir() {
+        let dir = std::env::temp_dir().join(format!("tess_gdels_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        run(&dir, &["init", "-q"]);
+        let f = dir.join("sub").join("gone.txt");
+        std::fs::write(&f, b"x\n").unwrap();
+        run(&dir, &["add", "sub/gone.txt"]);
+        commit(&dir, "c1");
+        std::fs::remove_file(&f).unwrap();
+
+        let gf = resolve(&f).expect("deleted subdir file should resolve");
+        assert_eq!(gf.rel_path, "sub/gone.txt");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_handles_deleted_file_given_as_bare_relative_name() {
+        // The actual regression: a committed-but-deleted file passed as a BARE
+        // relative name (empty parent) with the CWD inside the repo. Pre-fix the
+        // canonicalize fallback produced a relative path that couldn't strip the
+        // absolute repo root → "outside the git repository". Mutating CWD is
+        // process-global, so serialize on the shared test lock and restore CWD
+        // before asserting (so a failed assert can't leak a wrong CWD).
+        let _guard = crate::test_env::lock();
+        let dir = std::env::temp_dir().join(format!("tess_gdbare_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        run(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("gone.txt"), b"committed\n").unwrap();
+        run(&dir, &["add", "gone.txt"]);
+        commit(&dir, "c1");
+        std::fs::remove_file(dir.join("gone.txt")).unwrap();
+
+        let orig = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        let result = resolve(std::path::Path::new("gone.txt"));
+        let head = result.as_ref().ok().map(|gf| rev_blob(gf, "HEAD"));
+        std::env::set_current_dir(&orig).unwrap(); // restore before any assert
+
+        let gf = result.expect("bare-relative deleted file should resolve");
+        assert_eq!(gf.rel_path, "gone.txt");
+        assert!(matches!(head, Some(Ok(BlobOutcome::Bytes(ref b))) if b == b"committed\n"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

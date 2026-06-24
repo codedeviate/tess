@@ -35,19 +35,6 @@ _Nothing currently._
 
 ## Deferred
 
-### `git::resolve` for working-tree-deleted files — **S**
-
-> **Next up — prioritized for the upcoming development cycle.** Gets its own
-> brainstorm → spec → plan cycle when work starts.
-
-`--gitdiff FILE` where `FILE` is committed but **deleted from the working tree**
-errors `… is outside the git repository` instead of diffing `HEAD` vs an empty
-right side. Cause: `git::resolve` canonicalizes the path, which fails for a
-missing file, and the parent-dir fallback misresolves the repo-relative path.
-Pre-existing since `0.52.0` (the deletion-supports comment over-promises). Small,
-self-contained fix to `resolve`'s path handling for absent files; add a
-temp-repo `git rm` regression test.
-
 ### Windows support — **M**
 
 Not a primary goal. `tess` targets the macOS + Linux daily driver, and
