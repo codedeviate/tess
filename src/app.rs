@@ -2191,17 +2191,34 @@ pub fn run(
                                                     None => { viewport.flash(format!("unknown layout: {name}"), 40); }
                                                     Some(layout) => {
                                                         let ansi = viewport.ansi_mode();
-                                                        // Synthesize a per-pane Args from each pane spec.
+                                                        // Synthesize a per-pane Args from each pane spec. Use
+                                                        // try_parse_from (NOT parse_from): a pane value starting
+                                                        // with `-` (e.g. file="-x.log", display="-> {m}") makes
+                                                        // clap fail, and parse_from would `process::exit` mid-loop
+                                                        // — bypassing the terminal-restore Drop and garbling the
+                                                        // screen. Route the error to a flash instead.
                                                         let mut pane_args: Vec<crate::cli::Args> = Vec::with_capacity(layout.panes.len());
+                                                        let mut parse_err: Option<String> = None;
                                                         for pane in &layout.panes {
                                                             let mut toks = vec!["tess".to_string()];
                                                             // Emits the pane's view flags AND its file positional.
                                                             crate::format::expand_group_tokens(pane, &mut toks);
-                                                            pane_args.push(<crate::cli::Args as clap::Parser>::parse_from(toks));
+                                                            match <crate::cli::Args as clap::Parser>::try_parse_from(toks) {
+                                                                Ok(a) => pane_args.push(a),
+                                                                Err(e) => {
+                                                                    parse_err = Some(e.to_string().lines().next().unwrap_or("parse error").to_string());
+                                                                    break;
+                                                                }
+                                                            }
                                                         }
-                                                        match crate::layout::build_panes_from_sections(
-                                                            &pane_args, ansi, cols, rows, preprocessor.as_ref(),
-                                                        ) {
+                                                        let built = if let Some(e) = parse_err {
+                                                            Err(crate::error::Error::Runtime(e))
+                                                        } else {
+                                                            crate::layout::build_panes_from_sections(
+                                                                &pane_args, ansi, cols, rows, preprocessor.as_ref(),
+                                                            )
+                                                        };
+                                                        match built {
                                                             Ok(mut panes) if !panes.is_empty() => {
                                                                 // Collapse any current split, install the new panes.
                                                                 others.clear();

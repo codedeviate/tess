@@ -604,15 +604,14 @@ fn real_main() -> Result<()> {
 
     // A layout already compiled to a `--` per-pane form, so combining it with
     // explicit split flags is contradictory.
-    if layout_horizontal.is_some() {
-        if args.split || args.hsplit || args.diff || args.gitdiff
+    if layout_horizontal.is_some()
+        && (args.split || args.hsplit || args.diff || args.gitdiff
             || !args.right_grep.is_empty() || !args.right_filter.is_empty()
             || args.right_format.is_some() || args.right_display.is_some()
-            || args.right_ignore_case || args.right_IGNORE_case
-        {
-            return Err(Error::Runtime(
-                "a layout can't be combined with --split / --hsplit / --diff / --gitdiff / --right-*".to_string()));
-        }
+            || args.right_ignore_case || args.right_IGNORE_case)
+    {
+        return Err(Error::Runtime(
+            "a layout can't be combined with --split / --hsplit / --diff / --gitdiff / --right-*".to_string()));
     }
 
     // Parse +CMD tokens up front so a typo fails before raw-mode entry.

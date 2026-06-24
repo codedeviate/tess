@@ -434,6 +434,9 @@ mod tests {
 
     #[test]
     fn resolve_pane_predicates_grep_and_filter() {
+        // Resolving a format calls format::load_all(), which reads $HOME config.
+        // Sibling tests in this module swap $HOME under this lock, so serialize.
+        let _g = crate::test_env::lock();
         let case = crate::viewport::CaseMode::Sensitive;
         let r = resolve_pane_predicates(&["ERROR".to_string()], &[], None, None, case).unwrap();
         assert!(r.grep.is_some() && r.filter.is_none());
