@@ -61,7 +61,30 @@ Technical sketch when the time comes:
   on NTFS — inode equivalents and file-locking behavior would need
   their own design pass.
 
-### Horizontal split & per-pane refinements — **L**
+### Horizontal (stacked) split — **L**
+
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
+The split view is **vertical columns only** today — `compose_panes` stitches
+pre-rendered pane frames left-to-right with a divider column, and pane widths
+come from `pane::split_widths_n`. This adds a **horizontal (stacked) layout**:
+panes arranged as rows (a / b), separated by a divider *row*, with each pane
+getting a slice of the available body height instead of width.
+
+The big questions for the brainstorm: the **layout model** (pure horizontal
+stacks vs a general grid; how it composes with — or replaces — the existing
+vertical split), the **CLI/runtime surface** (a `--hsplit` flag? a `:hsplit`
+runtime command? an orientation toggle?), how **focus cycling**, **scroll-lock**,
+and the **`--` per-pane form** extend to two axes, and the **height-division +
+too-short fallback** (mirroring the vertical `≥8 cols` / focused-full-width
+rule). Substantial compositor work: a horizontal analog of `split_widths_n` /
+`compose_panes` (height slicing, divider rows, per-pane status placement) and the
+`app::run` model generalizing from a 1-D pane sequence to a 2-D arrangement.
+Largest remaining split-view item; very likely wants decomposition into a
+2-pane-stacked core first, then N / grid.
+
+### Split-view series & remaining refinements — **L**
 
 The split-view series shipped: vertical 2-pane split (`0.41.0`), synchronized
 scrolling (`0.42.0`), charset support (`0.43.0`), aligned **diff mode**
@@ -72,10 +95,9 @@ scroll-lock couples all), the **`--` per-pane argv form** (`0.48.0` —
 section 0 carries globals), **mouse-wheel routing to the pane under the
 cursor** (`0.49.0` — all axes, no focus change), and **frozen left
 content-columns** (`0.50.0` — `--header ,C` pins the first C columns in chop
-mode, per pane). What remains deferred:
+mode, per pane). What remains deferred (horizontal/stacked split is now its own
+prioritized entry above):
 
-- **Horizontal (stacked) split.** Split is vertical columns only; a stacked /
-  grid layout (and the compositor work for it) is deferred.
 - **Diff refinements.** `--gitdiff` (HEAD vs working tree) shipped in `0.52.0`.
   Diff is still 2-pane vertical, raw-line (no `--filter`/`--format`), intra-line
   highlighting only on single-row changed lines, `Tab` locked, numbered-goto
