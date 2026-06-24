@@ -37,6 +37,9 @@ _Nothing currently._
 
 ### `git::resolve` for working-tree-deleted files — **S**
 
+> **Next up — prioritized for the upcoming development cycle.** Gets its own
+> brainstorm → spec → plan cycle when work starts.
+
 `--gitdiff FILE` where `FILE` is committed but **deleted from the working tree**
 errors `… is outside the git repository` instead of diffing `HEAD` vs an empty
 right side. Cause: `git::resolve` canonicalizes the path, which fails for a
