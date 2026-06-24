@@ -10,6 +10,17 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.53.1] — 2026-06-24
+
+### Fixed
+
+- **`--gitdiff` on a working-tree-deleted file.** A committed file that's been
+  deleted from the working tree now diffs its `HEAD` version (left) against an
+  empty right side (all-removed), as documented, instead of erroring `… is
+  outside the git repository`. (`git::resolve`'s canonicalize fallback produced a
+  relative path for a missing bare filename, which couldn't strip the absolute
+  repo root.)
+
 ## [0.53.0] — 2026-06-24
 
 ### Added
