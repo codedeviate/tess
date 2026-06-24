@@ -237,4 +237,34 @@ mod tests {
         assert_eq!(gf.rel_path, "sub/gone.txt");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn resolve_handles_deleted_file_given_as_bare_relative_name() {
+        // The actual regression: a committed-but-deleted file passed as a BARE
+        // relative name (empty parent) with the CWD inside the repo. Pre-fix the
+        // canonicalize fallback produced a relative path that couldn't strip the
+        // absolute repo root → "outside the git repository". Mutating CWD is
+        // process-global, so serialize on the shared test lock and restore CWD
+        // before asserting (so a failed assert can't leak a wrong CWD).
+        let _guard = crate::test_env::lock();
+        let dir = std::env::temp_dir().join(format!("tess_gdbare_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        run(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("gone.txt"), b"committed\n").unwrap();
+        run(&dir, &["add", "gone.txt"]);
+        commit(&dir, "c1");
+        std::fs::remove_file(dir.join("gone.txt")).unwrap();
+
+        let orig = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        let result = resolve(std::path::Path::new("gone.txt"));
+        let head = result.as_ref().ok().map(|gf| rev_blob(gf, "HEAD"));
+        std::env::set_current_dir(&orig).unwrap(); // restore before any assert
+
+        let gf = result.expect("bare-relative deleted file should resolve");
+        assert_eq!(gf.rel_path, "gone.txt");
+        assert!(matches!(head, Some(Ok(BlobOutcome::Bytes(ref b))) if b == b"committed\n"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
