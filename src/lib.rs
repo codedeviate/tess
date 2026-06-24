@@ -36,6 +36,7 @@ pub mod charset;
 pub mod diff;
 pub mod git;
 pub mod diff_view;
+pub mod layout;
 #[cfg(feature = "image")]
 pub mod anim;
 #[cfg(feature = "image")]

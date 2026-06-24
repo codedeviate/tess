@@ -249,6 +249,27 @@ struct UserConfig {
     format: HashMap<String, FormatEntry>,
     #[serde(default)]
     group: HashMap<String, GroupEntry>,
+    #[serde(default)]
+    layout: HashMap<String, LayoutEntry>,
+}
+
+/// Raw layout entry as deserialized from TOML. A `[layout.NAME]` carries an
+/// `orientation` plus an ordered array of `[[layout.NAME.pane]]` tables, each
+/// reusing the `GroupEntry` shape. Promoted to `Layout` after validation.
+#[derive(Debug, Deserialize, Default)]
+struct LayoutEntry {
+    orientation: Option<String>,
+    #[serde(default)]
+    pane: Vec<GroupEntry>,
+}
+
+/// A saved split arrangement: an orientation plus an ordered list of pane
+/// view-specs (each a promoted `Group`).
+#[derive(Debug, Clone)]
+pub struct Layout {
+    pub name: String,
+    pub horizontal: bool,
+    pub panes: Vec<Group>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -376,6 +397,7 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "raw-control-chars",
     "tag",
     "tag-file",
+    "split",
 ];
 
 /// Built-in formats compiled from this list of (name, pattern). Patterns use
@@ -516,40 +538,92 @@ pub fn load_groups() -> Result<HashMap<String, Group>, String> {
                 "group `{name}`: name collides with built-in --{name} flag"
             ));
         }
-        out.insert(
-            name.clone(),
-            Group {
-                name,
-                format: sg.entry.format,
-                file: sg.entry.file,
-                follow: sg.entry.follow.unwrap_or(false),
-                tail: sg.entry.tail,
-                head: sg.entry.head,
-                dim: sg.entry.dim.unwrap_or(false),
-                line_numbers: sg.entry.line_numbers.unwrap_or(false),
-                chop: sg.entry.chop.unwrap_or(false),
-                tab_width: sg.entry.tab_width,
-                display: sg.entry.display,
-                filter: sg.entry.filter,
-                grep: sg.entry.grep,
-                or_filter: sg.entry.or_filter,
-                or_grep: sg.entry.or_grep,
-                or_named: {
-                    let mut v: Vec<(String, Vec<String>, Vec<String>)> = sg
-                        .entry
-                        .or
-                        .into_iter()
-                        .map(|(name, sub)| (name, sub.filter, sub.grep))
-                        .collect();
-                    v.sort_by(|a, b| a.0.cmp(&b.0)); // deterministic emission order
-                    v
-                },
-                source: sg.source,
-                overrides: sg.overrides,
-            },
-        );
+        let mut group = promote_group(name.clone(), sg.entry);
+        group.source = sg.source;
+        group.overrides = sg.overrides;
+        out.insert(name, group);
     }
     Ok(out)
+}
+
+/// Load all user-defined layouts from global and local `formats.toml`. Local
+/// layouts override global ones of the same name. Validates orientation, pane
+/// presence, and that each pane names a `file`; rejects names that collide with
+/// built-in flags. Each pane is promoted to a `Group` via `promote_group`.
+pub fn load_layouts() -> Result<HashMap<String, Layout>, String> {
+    let cfg = load_layered_config()?;
+
+    let mut staged: HashMap<String, LayoutEntry> = HashMap::new();
+    for (k, v) in cfg.global.layout {
+        staged.insert(k, v);
+    }
+    for (k, v) in cfg.local.layout {
+        staged.insert(k, v);
+    }
+
+    let mut out = HashMap::with_capacity(staged.len());
+    for (name, entry) in staged {
+        if RESERVED_LONG_FLAGS.contains(&name.as_str()) {
+            return Err(format!(
+                "layout `{name}`: name collides with built-in --{name} flag"
+            ));
+        }
+        let horizontal = match entry.orientation.as_deref() {
+            None | Some("vertical") => false,
+            Some("horizontal") => true,
+            Some(other) => {
+                return Err(format!(
+                    "layout `{name}`: bad orientation `{other}` (expected vertical or horizontal)"
+                ))
+            }
+        };
+        if entry.pane.is_empty() {
+            return Err(format!("layout `{name}`: needs at least one pane"));
+        }
+        let mut panes = Vec::with_capacity(entry.pane.len());
+        for (i, pane) in entry.pane.into_iter().enumerate() {
+            if pane.file.is_none() {
+                return Err(format!("layout `{name}` pane {i}: missing `file`"));
+            }
+            panes.push(promote_group(format!("{name}.pane{i}"), pane));
+        }
+        out.insert(name.clone(), Layout { name, horizontal, panes });
+    }
+    Ok(out)
+}
+
+/// Promote a raw `GroupEntry` into a `Group`: assign the name, unwrap the
+/// `Option<bool>` defaults, and flatten the named OR-sub-groups into a sorted
+/// `or_named` vec. The `source`/`overrides` provenance fields are left at their
+/// `Default` and must be set by the caller when known.
+fn promote_group(name: String, entry: GroupEntry) -> Group {
+    Group {
+        name,
+        format: entry.format,
+        file: entry.file,
+        follow: entry.follow.unwrap_or(false),
+        tail: entry.tail,
+        head: entry.head,
+        dim: entry.dim.unwrap_or(false),
+        line_numbers: entry.line_numbers.unwrap_or(false),
+        chop: entry.chop.unwrap_or(false),
+        tab_width: entry.tab_width,
+        display: entry.display,
+        filter: entry.filter,
+        grep: entry.grep,
+        or_filter: entry.or_filter,
+        or_grep: entry.or_grep,
+        or_named: {
+            let mut v: Vec<(String, Vec<String>, Vec<String>)> = entry
+                .or
+                .into_iter()
+                .map(|(name, sub)| (name, sub.filter, sub.grep))
+                .collect();
+            v.sort_by(|a, b| a.0.cmp(&b.0)); // deterministic emission order
+            v
+        },
+        ..Group::default()
+    }
 }
 
 /// Load all formats: built-ins first, then any in `~/.config/tess/formats.toml`
@@ -699,6 +773,40 @@ pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<St
         out.push(arg);
     }
     out
+}
+
+/// If a `--<layoutname>` token is present (a name found in `layouts`), replace it
+/// in place with the layout's panes rendered as `--`-form sections: for each pane,
+/// its group-style flags (via `expand_group`) followed by its `file` positional,
+/// with `--` separators between panes. Tokens before the layout token (program
+/// name + globals) stay ahead of section 0; tokens after it are appended after the
+/// last section. Returns `(rewritten_argv, Some(horizontal))`. No layout token →
+/// `(argv, None)`.
+pub fn expand_layout_argv(argv: Vec<String>, layouts: &std::collections::HashMap<String, Layout>)
+    -> (Vec<String>, Option<bool>)
+{
+    for i in 1..argv.len() {
+        if let Some(name) = argv[i].strip_prefix("--") {
+            if let Some(layout) = layouts.get(name) {
+                let mut out: Vec<String> = argv[..i].to_vec();
+                for (p, pane) in layout.panes.iter().enumerate() {
+                    if p > 0 {
+                        out.push("--".into());
+                    }
+                    expand_group(pane, &mut out);
+                }
+                out.extend_from_slice(&argv[i + 1..]);
+                return (out, Some(layout.horizontal));
+            }
+        }
+    }
+    (argv, None)
+}
+
+/// Public wrapper over `expand_group` for reuse by the runtime `:layout` command.
+/// Emits the group's view flags followed by its `file` positional into `out`.
+pub fn expand_group_tokens(g: &Group, out: &mut Vec<String>) {
+    expand_group(g, out)
 }
 
 fn expand_group(g: &Group, out: &mut Vec<String>) {
@@ -1268,6 +1376,113 @@ file = "/x.log"
         assert!(err.contains("collides with built-in --follow"), "{err}");
     }
 
+    /// Write `toml` as the local `formats.toml` under a temp HOME, run
+    /// `load_layouts()`, and restore HOME. Mirrors the `load_groups_*` harness.
+    fn load_layouts_with(toml: &str) -> Result<HashMap<String, Layout>, String> {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_dir = tmp.path().join(".config").join("tess");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(cfg_dir.join("formats.toml"), toml).unwrap();
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let result = load_layouts();
+        if let Some(h) = saved { std::env::set_var("HOME", h); } else { std::env::remove_var("HOME"); }
+        result
+    }
+
+    #[test]
+    fn load_layouts_parses_panes_and_orientation() {
+        let _g = crate::test_env::lock();
+        let layouts = load_layouts_with(
+            r#"
+[layout.dash]
+orientation = "horizontal"
+[[layout.dash.pane]]
+file = "a.log"
+format = "myapp"
+filter = ["x=1"]
+[[layout.dash.pane]]
+file = "b.log"
+grep = ["5.."]
+"#,
+        )
+        .unwrap();
+        let dash = &layouts["dash"];
+        assert!(dash.horizontal);
+        assert_eq!(dash.panes.len(), 2);
+        assert_eq!(dash.panes[0].file.as_deref(), Some("a.log"));
+        assert_eq!(dash.panes[0].format.as_deref(), Some("myapp"));
+        assert_eq!(dash.panes[0].filter, vec!["x=1".to_string()]);
+        assert_eq!(dash.panes[1].file.as_deref(), Some("b.log"));
+        assert_eq!(dash.panes[1].grep, vec!["5..".to_string()]);
+    }
+
+    #[test]
+    fn load_layouts_defaults_orientation_vertical() {
+        let _g = crate::test_env::lock();
+        let layouts = load_layouts_with(
+            r#"
+[layout.dash]
+[[layout.dash.pane]]
+file = "a.log"
+"#,
+        )
+        .unwrap();
+        assert!(!layouts["dash"].horizontal);
+    }
+
+    #[test]
+    fn load_layouts_rejects_pane_without_file() {
+        let _g = crate::test_env::lock();
+        let result = load_layouts_with(
+            r#"
+[layout.dash]
+[[layout.dash.pane]]
+format = "myapp"
+"#,
+        );
+        assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    fn load_layouts_rejects_reserved_name() {
+        let _g = crate::test_env::lock();
+        let result = load_layouts_with(
+            r#"
+[layout.split]
+[[layout.split.pane]]
+file = "a.log"
+"#,
+        );
+        assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    fn load_layouts_rejects_bad_orientation() {
+        let _g = crate::test_env::lock();
+        let result = load_layouts_with(
+            r#"
+[layout.dash]
+orientation = "diagonal"
+[[layout.dash.pane]]
+file = "a.log"
+"#,
+        );
+        assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    fn load_layouts_rejects_empty() {
+        let _g = crate::test_env::lock();
+        let result = load_layouts_with(
+            r#"
+[layout.dash]
+orientation = "vertical"
+"#,
+        );
+        assert!(result.is_err(), "{result:?}");
+    }
+
     #[test]
     fn user_config_overrides_builtin_via_load_all() {
         let _g = crate::test_env::lock();
@@ -1694,6 +1909,36 @@ grep = ["ssh", "sshd"]
         assert_eq!(g.or_filter, vec!["lvl=ERROR".to_string()]);
         assert_eq!(g.or_grep, vec!["panic".to_string()]);
         assert_eq!(g.or_named, vec![("svc".to_string(), vec!["status=403".to_string()], vec!["ssh".to_string(), "sshd".to_string()])]);
+    }
+
+    #[test]
+    fn expand_layout_argv_expands_token_to_sections() {
+        let mut layouts = std::collections::HashMap::new();
+        layouts.insert("dash".to_string(), Layout {
+            name: "dash".into(),
+            horizontal: true,
+            panes: vec![
+                Group { name: "p0".into(), file: Some("a.log".into()), format: Some("myapp".into()),
+                        filter: vec!["x=1".into()], ..Default::default() },
+                Group { name: "p1".into(), file: Some("b.log".into()),
+                        grep: vec!["5..".into()], ..Default::default() },
+            ],
+        });
+        let argv: Vec<String> = ["tess", "--mouse", "--dash"].iter().map(|s| s.to_string()).collect();
+        let (out, horiz) = expand_layout_argv(argv, &layouts);
+        assert_eq!(horiz, Some(true));
+        let expected: Vec<String> = ["tess", "--mouse", "--format", "myapp", "--filter", "x=1", "a.log",
+            "--", "--grep", "5..", "b.log"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn expand_layout_argv_noop_without_layout_token() {
+        let layouts: std::collections::HashMap<String, Layout> = std::collections::HashMap::new();
+        let argv: Vec<String> = ["tess", "a.log"].iter().map(|s| s.to_string()).collect();
+        let (out, horiz) = expand_layout_argv(argv.clone(), &layouts);
+        assert_eq!(out, argv);
+        assert_eq!(horiz, None);
     }
 
     #[test]
