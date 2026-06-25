@@ -1288,13 +1288,30 @@ fn rotate_focus(
     forward: bool,
 ) -> (crate::pane::Pane, Vec<crate::pane::Pane>, usize) {
     let n = others.len() + 1;
+    let target = rotate_index(focused_pos, n, forward);
+    set_focus(focused, others, focused_pos, target)
+}
+
+/// Move focus to physical pane `target`. `focused` is the currently-focused
+/// pane (built from the loose locals); `others` are the rest in slot order.
+/// Returns the new focused pane, the new others list (physical order minus the
+/// target), and the new `focused_pos`. `target` is clamped to a valid index.
+/// Move-by-value: no placeholders. Shared by `Tab`/`BackTab` (via
+/// `rotate_focus`) and mouse click-to-focus.
+fn set_focus(
+    focused: crate::pane::Pane,
+    others: Vec<crate::pane::Pane>,
+    focused_pos: usize,
+    target: usize,
+) -> (crate::pane::Pane, Vec<crate::pane::Pane>, usize) {
+    let n = others.len() + 1;
     // Materialize the full physical order with `focused` reinserted at its slot.
     let mut all: Vec<crate::pane::Pane> = Vec::with_capacity(n);
     all.extend(others);
     all.insert(focused_pos, focused);
-    let next = rotate_index(focused_pos, n, forward);
-    let new_focused = all.remove(next);
-    (new_focused, all, next)
+    let target = target.min(n - 1);
+    let new_focused = all.remove(target);
+    (new_focused, all, target)
 }
 
 /// Expand a leading `~/` against `$HOME`. Shared by `:e`/`:edit` and the
@@ -2706,7 +2723,54 @@ pub fn run(
                 // but no overlay is active.
                 if let crossterm::event::Event::Mouse(me) = &event {
                     if mouse_enabled {
-                        use crossterm::event::{KeyModifiers, MouseEventKind};
+                        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+                        // Left-click focuses the pane under the cursor. Works in
+                        // vertical and horizontal splits and under scroll-lock
+                        // (like Tab — only focus moves); focus is locked in diff
+                        // mode and a single pane has nothing to focus. The press
+                        // is consumed either way, so it never falls through to the
+                        // wheel/key paths below.
+                        if let MouseEventKind::Down(MouseButton::Left) = me.kind {
+                            if !others.is_empty() && diff.is_none() {
+                                let target = match orientation {
+                                    Orientation::Vertical => {
+                                        let widths = crate::pane::split_widths_n(cols, others.len() + 1);
+                                        crate::pane::pane_at_column(me.column, &widths)
+                                    }
+                                    Orientation::Horizontal => {
+                                        let heights = crate::pane::split_heights_n(rows, others.len() + 1);
+                                        crate::pane::pane_at_row(me.row, &heights)
+                                    }
+                                };
+                                if target != focused_pos {
+                                    // Same move-by-value swap as Tab/FocusOtherPane:
+                                    // the loop owns the loose locals, so they can't
+                                    // be factored behind a `&mut` helper without a
+                                    // placeholder for the non-Default source box.
+                                    let focused = crate::pane::Pane {
+                                        src,
+                                        idx,
+                                        viewport,
+                                        last_revision,
+                                        #[cfg(feature = "image")]
+                                        last_tick,
+                                    };
+                                    let taken = std::mem::take(&mut others);
+                                    let (nf, no, np) = set_focus(focused, taken, focused_pos, target);
+                                    src = nf.src;
+                                    idx = nf.idx;
+                                    viewport = nf.viewport;
+                                    last_revision = nf.last_revision;
+                                    #[cfg(feature = "image")]
+                                    let _ = nf.last_tick;
+                                    others = no;
+                                    focused_pos = np;
+                                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                    needs_redraw = true;
+                                }
+                            }
+                            continue;
+                        }
                         // Route the wheel to the pane under the cursor when a
                         // split is active and independent. Scroll-locked panes
                         // move together and diff scrolls as one view, so those
@@ -4042,6 +4106,49 @@ mod tests {
         assert_eq!(rotate_index(1, 2, true), 0);
         assert_eq!(rotate_index(0, 2, false), 1);
         assert_eq!(rotate_index(1, 2, false), 0);
+    }
+
+    // Build a Pane identifiable by its viewport's top_line, so a swap can be
+    // verified without a real source or label getter.
+    fn pane_with_id(id: usize) -> crate::pane::Pane {
+        let mut vp = Viewport::new(80, 24, format!("p{id}"));
+        vp.set_top(id, 0);
+        crate::pane::Pane {
+            src: Box::new(crate::source::MockSource::new()),
+            idx: crate::line_index::LineIndex::new(),
+            viewport: vp,
+            last_revision: 0,
+            #[cfg(feature = "image")]
+            last_tick: std::time::Instant::now(),
+        }
+    }
+
+    fn other_ids(others: &[crate::pane::Pane]) -> Vec<usize> {
+        others.iter().map(|p| p.viewport.top_line()).collect()
+    }
+
+    #[test]
+    fn set_focus_targets_specific_pane() {
+        // Physical order p0,p1,p2; currently focused p1 (focused_pos=1),
+        // so `others` is [p0, p2] in slot order.
+
+        // Target the last pane.
+        let (nf, no, np) = set_focus(pane_with_id(1), vec![pane_with_id(0), pane_with_id(2)], 1, 2);
+        assert_eq!(np, 2);
+        assert_eq!(nf.viewport.top_line(), 2);
+        assert_eq!(other_ids(&no), vec![0, 1]);
+
+        // Target the first pane.
+        let (nf, no, np) = set_focus(pane_with_id(1), vec![pane_with_id(0), pane_with_id(2)], 1, 0);
+        assert_eq!(np, 0);
+        assert_eq!(nf.viewport.top_line(), 0);
+        assert_eq!(other_ids(&no), vec![1, 2]);
+
+        // Target the already-focused pane: focused and others unchanged.
+        let (nf, no, np) = set_focus(pane_with_id(1), vec![pane_with_id(0), pane_with_id(2)], 1, 1);
+        assert_eq!(np, 1);
+        assert_eq!(nf.viewport.top_line(), 1);
+        assert_eq!(other_ids(&no), vec![0, 2]);
     }
 
     #[test]
