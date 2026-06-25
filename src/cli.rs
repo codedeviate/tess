@@ -236,9 +236,12 @@ pub struct Args {
     #[arg(long = "manual")]
     pub manual: bool,
 
-    /// Enable mouse capture: click rows in the file picker / help overlay,
-    /// and scrollwheel scrolls the body. Trade-off: most terminals disable
-    /// their native text selection while mouse capture is on.
+    /// Enable mouse capture (on by default): scrollwheel scrolls the body and
+    /// you can click rows in the file picker / help overlay. Kept as an
+    /// explicit-on alias now that capture is the default. Trade-off: most
+    /// terminals disable their native text selection while capture is on —
+    /// hold Shift (or Option on iTerm2/macOS) to select, or use `--no-mouse`
+    /// / the `:mouse` toggle.
     #[arg(long = "mouse")]
     pub mouse: bool,
 
@@ -270,6 +273,12 @@ pub struct Args {
     /// debugging. Mirrors `less -X` / `--no-init`.
     #[arg(short = 'X', long = "no-init")]
     pub no_init: bool,
+
+    /// Disable mouse capture at startup, so the terminal keeps its native
+    /// text selection / copy. Overrides the default-on behavior and any
+    /// `[settings] mouse` config value. Conflicts with `--mouse`.
+    #[arg(long = "no-mouse", conflicts_with = "mouse")]
+    pub no_mouse: bool,
 
     /// Ignore $LESSOPEN. Useful when LESSOPEN is exported but not wanted
     /// for one invocation.
@@ -581,6 +590,20 @@ pub fn split_argv_sections(argv: &[String]) -> Vec<Vec<String>> {
     sections
 }
 
+/// Resolve the effective startup mouse-capture state. Precedence (highest
+/// first): explicit CLI flag, then `[settings] mouse` config, then the
+/// built-in default (on). `--mouse` and `--no-mouse` are mutually exclusive
+/// at the clap layer, so at most one flag is ever set.
+pub fn resolve_mouse(mouse_flag: bool, no_mouse_flag: bool, config: Option<bool>) -> bool {
+    if no_mouse_flag {
+        false
+    } else if mouse_flag {
+        true
+    } else {
+        config.unwrap_or(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -815,6 +838,32 @@ mod tests {
     fn mouse_defaults_off() {
         let a = Args::parse_from(["tess", "f"]);
         assert!(!a.mouse);
+    }
+
+    #[test]
+    fn parses_no_mouse_flag() {
+        let a = Args::parse_from(["tess", "--no-mouse", "f"]);
+        assert!(a.no_mouse);
+        assert!(!a.mouse);
+    }
+
+    #[test]
+    fn mouse_and_no_mouse_conflict() {
+        let r = Args::try_parse_from(["tess", "--mouse", "--no-mouse", "f"]);
+        assert!(r.is_err(), "expected --mouse + --no-mouse to be rejected");
+    }
+
+    #[test]
+    fn resolve_mouse_precedence() {
+        // Explicit off flag wins over everything.
+        assert!(!resolve_mouse(false, true, Some(true)));
+        // Explicit on flag wins over config-off.
+        assert!(resolve_mouse(true, false, Some(false)));
+        // No flag: config decides.
+        assert!(!resolve_mouse(false, false, Some(false)));
+        assert!(resolve_mouse(false, false, Some(true)));
+        // No flag, no config: default on.
+        assert!(resolve_mouse(false, false, None));
     }
 
     #[test]
@@ -1072,6 +1121,7 @@ mod tests {
             "--no-hilite-search",
             "--no-image",
             "--no-init",
+            "--no-mouse",
             "--no-preprocess",
             "--or-filter",
             "--or-grep",
