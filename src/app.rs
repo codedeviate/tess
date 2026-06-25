@@ -2150,6 +2150,7 @@ pub fn run(
                                                                 viewport.resize(lw, rows);
                                                                 pane.viewport.resize(rw, rows);
                                                                 others.push(pane);
+                                                                sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
                                                         }
@@ -2188,6 +2189,7 @@ pub fn run(
                                                                 viewport.resize(cols, heights[0]);
                                                                 pane.viewport.resize(cols, heights[1]);
                                                                 others.push(pane);
+                                                                sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Err(e) => viewport.flash(format!("hsplit: {e}"), 40),
                                                         }
@@ -2283,6 +2285,7 @@ pub fn run(
                                                                 force_cell_mode(&mut viewport);
                                                                 for o in others.iter_mut() { force_cell_mode(&mut o.viewport); }
                                                                 resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                                sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Ok(_) => { viewport.flash("layout produced no panes", 40); }
                                                             Err(e) => { viewport.flash(format!("layout: {e}"), 40); }
