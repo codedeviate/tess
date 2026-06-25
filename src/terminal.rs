@@ -12,7 +12,6 @@ use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScree
 /// the primary screen so content remains in scrollback after exit. Raw
 /// mode is still enabled because we need keystroke capture either way.
 pub struct TerminalGuard {
-    mouse: bool,
     alt_screen: bool,
 }
 
@@ -27,15 +26,15 @@ impl TerminalGuard {
         if mouse {
             crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
-        Ok(TerminalGuard { mouse, alt_screen: with_alt_screen })
+        Ok(TerminalGuard { alt_screen: with_alt_screen })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        if self.mouse {
-            let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
-        }
+        // Unconditional: the live mouse state may have been toggled away from
+        // the value passed to `enter`. Disabling when never enabled is a no-op.
+        let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
         if self.alt_screen {
             let _ = crossterm::execute!(io::stdout(), Show, LeaveAlternateScreen);
         } else {
@@ -47,6 +46,7 @@ impl Drop for TerminalGuard {
 
 /// Restore terminal manually (for panic hook). Idempotent and best-effort.
 pub fn restore_terminal_best_effort() {
+    let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
     let _ = crossterm::execute!(io::stdout(), Show, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }

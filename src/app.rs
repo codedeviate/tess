@@ -1507,6 +1507,7 @@ pub fn run(
     mut file_set: crate::file_set::FileSet,
     record_start_regex: Option<regex::bytes::Regex>,
     args: crate::cli::Args,
+    mouse_on: bool,
     preprocessor: Option<crate::preprocess::Preprocessor>,
     mut tag_file: Option<crate::tags::TagFile>,
     extra_panes: Vec<crate::pane::Pane>,
@@ -1607,7 +1608,7 @@ pub fn run(
     let mut tag_stack = TagStack::default();
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
-    let mouse_enabled = args.mouse;
+    let mouse_enabled = mouse_on;
     let clipboard_enabled = args.clipboard;
     let hscroll_shift = args.shift.unwrap_or(0);
     let wheel_lines = args.wheel_lines.unwrap_or(3).max(1);

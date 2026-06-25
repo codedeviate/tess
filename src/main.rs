@@ -458,6 +458,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         file_set,
         None,
         stub_args,
+        false,
         None,
         None,
         vec![],
@@ -1095,7 +1096,9 @@ showing raw (use --content-type=NAME to override)"
         }
     }
 
-    let _guard = TerminalGuard::enter(args.mouse, !args.no_init)
+    let mouse_settings = tess::format::load_settings().unwrap_or_default();
+    let mouse_on = tess::cli::resolve_mouse(args.mouse, args.no_mouse, mouse_settings.mouse);
+    let _guard = TerminalGuard::enter(mouse_on, !args.no_init)
         .map_err(|e| Error::Runtime(format!("terminal init: {}", e)))?;
 
     let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
@@ -1391,6 +1394,7 @@ showing raw (use --content-type=NAME to override)"
         file_set,
         record_start_regex,
         args,
+        mouse_on,
         preprocessor,
         tag_file,
         extra_panes,
