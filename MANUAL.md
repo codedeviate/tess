@@ -323,7 +323,7 @@ In hide-mode filtering, scroll/page/goto operate on visible (matching) lines —
 
 ### Mouse capture
 
-Mouse capture is **on by default** since 0.56.0: the scrollwheel scrolls the body, and rows in the file picker / help overlay are clickable without any extra flag.
+Mouse capture is **on by default** since 0.56.0: the scrollwheel scrolls the body, rows in the file picker / help overlay are clickable, and (in a split) a left-click focuses the pane under the cursor — all without any extra flag.
 
 **Text-selection trade-off.** Most terminals disable their native text selection while a program holds mouse capture. To select and copy text with the mouse, hold **Shift** while clicking/dragging (on iTerm2 / macOS, hold **Option** instead). Alternatively, disable capture entirely with `--no-mouse` or `:mouse off`.
 
@@ -438,7 +438,11 @@ and follow/tail state. `Tab` cycles the focused pane **forward**, `BackTab`
 (Shift-Tab) cycles **backward** — scroll, search, and colon commands target the
 focused pane, while the others keep following / tailing on their own (including
 log-rotation re-open). The keys are remappable in `~/.config/tess/keys.toml` via
-`focus-other-pane` / `focus-prev-pane`.
+`focus-other-pane` / `focus-prev-pane`. With mouse capture on (the default), a
+**left-click in a pane** focuses it directly — handy with three or more panes
+where cycling is slower. Clicking works under scroll-lock too (only focus moves),
+is a no-op in diff mode (focus is locked there), and clicking the already-focused
+pane does nothing.
 
 Panes are separated by vertical dividers, and each gets its own status segment
 (`1/N` width); the focused pane's is prefixed with `*`. Each pane needs at least
