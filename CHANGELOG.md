@@ -10,6 +10,17 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.56.0] — 2026-06-25
+
+### Changed
+- **Mouse capture is now on by default.** The scrollwheel scrolls the body and overlay rows are clickable without passing `--mouse` (kept as an explicit-on alias). Most terminals disable native text selection while capture is on — hold Shift (Option on iTerm2/macOS) to select, or disable capture (below).
+
+### Added
+- `--no-mouse` to disable mouse capture at startup (preserves native text selection). Conflicts with `--mouse`.
+- `:mouse` runtime toggle (`:mouse` flips, `:mouse on` / `:mouse off` set explicitly) and a remappable `mouse-toggle` keybinding (unbound by default).
+- `[settings] mouse = true|false` in `formats.toml` — a persistent default-state override (CLI flags win over it). First key in the new `[settings]` table.
+- `[nomouse]` status badge and `<mouse>` prompt placeholder shown while capture is off.
+
 ## [0.55.0] — 2026-06-24
 
 ### Added

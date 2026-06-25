@@ -269,8 +269,9 @@ tess --clipboard app.log                                # then :yank a line
 - **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
 - **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
 - **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
-- **`--mouse`** — enable mouse capture: click rows in the file picker / help overlay, scrollwheel scrolls the body. Trade-off: most terminals disable their native text-selection while mouse capture is on. Off by default.
-- **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch under `--mouse`. Default `3`.
+- **`--mouse`** — explicit-on alias for mouse capture (kept for compatibility; capture is **on by default** since 0.56.0). Conflicts with `--no-mouse`.
+- **`--no-mouse`** — disable mouse capture at startup, restoring native terminal text-selection. Conflicts with `--mouse`. See [Mouse capture](#mouse-capture) for the full story and runtime controls.
+- **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch. Default `3`.
 - **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
 - **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
 - **`--split`** — open a side-by-side vertical split of the first two file arguments (or two views of a single file). Interactive only. See [Split view](#split-view). Runtime equivalent: `:vsplit`.
@@ -303,7 +304,7 @@ tess --clipboard app.log                                # then :yank a line
 | `-N` (dash, then N) | Toggle line numbers |
 | `←` `→` | Scroll left / right by half the screen width (chop mode and image view only; no-op in wrap, hex, or raw) |
 | `Shift-←` `Shift-→` | Scroll left / right by 8 columns |
-| `Shift`+scroll / horizontal trackpad scroll | Scroll left / right by 8 columns (requires `--mouse`; `Shift`+wheel works everywhere, native horizontal swipe only where the terminal reports it) |
+| `Shift`+scroll / horizontal trackpad scroll | Scroll left / right by 8 columns (requires mouse capture on; `Shift`+wheel works everywhere, native horizontal swipe only where the terminal reports it) |
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
@@ -320,13 +321,44 @@ tess --clipboard app.log                                # then :yank a line
 
 In hide-mode filtering, scroll/page/goto operate on visible (matching) lines — the viewport skips past hidden ones.
 
+### Mouse capture
+
+Mouse capture is **on by default** since 0.56.0: the scrollwheel scrolls the body, and rows in the file picker / help overlay are clickable without any extra flag.
+
+**Text-selection trade-off.** Most terminals disable their native text selection while a program holds mouse capture. To select and copy text with the mouse, hold **Shift** while clicking/dragging (on iTerm2 / macOS, hold **Option** instead). Alternatively, disable capture entirely with `--no-mouse` or `:mouse off`.
+
+**Startup flags:**
+
+- **`--no-mouse`** — disable capture at startup (preserves native text selection). Conflicts with `--mouse`.
+- **`--mouse`** — explicit-on alias (kept for compatibility; a no-op given the default). Conflicts with `--no-mouse`.
+
+**Runtime toggle (`:mouse`):**
+
+| Command | Effect |
+|---|---|
+| `:mouse` | Flip the current capture state |
+| `:mouse on` | Enable capture |
+| `:mouse off` | Disable capture |
+
+The `mouse-toggle` keybinding name is available for `~/.config/tess/keys.toml` (unbound by default — add it there to get a one-key toggle).
+
+**Persistent default (`formats.toml`):** set `mouse = false` in a `[settings]` table to make capture off the default for every invocation (CLI flags win over it):
+
+```toml
+# ~/.config/tess/formats.toml
+[settings]
+mouse = false
+```
+
+**Status indicators:** while capture is off, the status line shows a `[nomouse]` badge. The `<mouse>` prompt placeholder expands to `nomouse` when off, empty when on — useful for custom `--prompt` templates.
+
 ### Horizontal scrolling
 
 Horizontal scrolling is active in **chop mode** (`-S`) and **image view** (`--image-width N` wider than the terminal). It is a no-op in wrap mode, hex (`--hex`), and raw (`-r`) mode.
 
 - `←` / `→` — scroll left / right by half the screen width.
 - `Shift-←` / `Shift-→` — scroll left / right by 8 columns.
-- Mouse (only when `--mouse` is active) — 8-column step, via either a native
+- Mouse (requires capture on; see [Mouse capture](#mouse-capture)) — 8-column step, via either a native
   horizontal swipe (`ScrollLeft` / `ScrollRight`) or `Shift` + scroll-wheel,
   **whichever your terminal reports**. This is terminal-dependent: iTerm2,
   kitty, WezTerm, and xterm report one or both; **Warp and macOS Terminal.app

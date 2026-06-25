@@ -29,18 +29,7 @@ the full changelog.
 
 ## Waiting
 
-### `--mouse` on by default, `--no-mouse` to disable — **S**
-
-Flip the default so mouse interactions (wheel scroll, click-to-position in
-overlays) are **on** without `--mouse`, and add `--no-mouse` to turn them off.
-Today `--mouse` is opt-in (off by default). Considerations for the brainstorm:
-this is a **default-behavior change** (every invocation gains mouse capture
-unless disabled), which can interfere with the terminal's own
-text-selection/copy on some emulators — the usual reason a pager leaves mouse
-off by default. `--mouse` would become a no-op/explicit-on alias (keep it for
-compatibility); `--no-mouse` (and/or `--nomouse` alias) disables. Mirrors the
-`-R`/`--no-color` style of paired enable/disable flags. Weigh the
-text-selection trade-off before committing to the default flip.
+_Nothing here today._
 
 ---
 
