@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.56.1] — 2026-06-25
+
+### Changed
+- **Left-click now focuses the pane under the cursor** in a split. Previously focus moved only via `Tab` / `BackTab`; a click in another pane did nothing. Works in vertical and horizontal splits and under scroll-lock (like `Tab` — only focus moves, the wheel still routes to the hovered pane without changing focus). No-op in diff mode (focus stays locked), in a single pane, or when clicking the already-focused pane. Other mouse buttons, drag, and release remain inert. Requires mouse capture (on by default; see `--no-mouse` / `:mouse`).
+
 ## [0.56.0] — 2026-06-25
 
 ### Changed
