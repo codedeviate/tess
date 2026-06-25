@@ -156,6 +156,8 @@ enum ColonCommand {
     Format(Option<String>),
     /// `:display TMPL` (Some) / `:nodisplay` (None) — set/clear the focused pane's display template.
     Display(Option<String>),
+    /// `:mouse` toggles mouse capture; `:mouse on` / `:mouse off` set it.
+    Mouse(Option<bool>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +170,7 @@ enum ColonParseError {
     HexGroupInvalid(String),
     ColorInvalid(String),
     CaseInvalid(String),
+    MouseInvalid(String),
     HeaderInvalid(String),
 }
 
@@ -189,6 +192,9 @@ impl std::fmt::Display for ColonParseError {
             }
             ColonParseError::CaseInvalid(v) => {
                 write!(f, ":case mode must be sensitive, smart, or insensitive (got {v})")
+            }
+            ColonParseError::MouseInvalid(v) => {
+                write!(f, ":mouse expects on or off (got {v})")
             }
             ColonParseError::HeaderInvalid(v) => {
                 write!(f, ":header expects `L` or `L C` (got {v})")
@@ -320,6 +326,12 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                 }
             }
         }
+        "mouse" => match rest {
+            "" => Ok(ColonCommand::Mouse(None)),
+            "on" => Ok(ColonCommand::Mouse(Some(true))),
+            "off" => Ok(ColonCommand::Mouse(Some(false))),
+            other => Err(ColonParseError::MouseInvalid(other.to_string())),
+        },
         "encoding" => Ok(ColonCommand::SetEncoding(
             (!rest.is_empty()).then(|| rest.to_string())
         )),
@@ -1015,9 +1027,9 @@ fn dispatch_colon_command(
         // apply to every pane) and never reach this file-set-only dispatcher.
         ColonCommand::VSplit(_) | ColonCommand::HSplit(_) | ColonCommand::Rotate
         | ColonCommand::Only | ColonCommand::Layout(_) | ColonCommand::ScrollLock
-        | ColonCommand::SetEncoding(_)
+        | ColonCommand::SetEncoding(_) | ColonCommand::Mouse(_)
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
-            unreachable!("split/scroll-lock/encoding/diff commands are handled in the run() event loop")
+            unreachable!("split/scroll-lock/encoding/diff/mouse commands are handled in the run() event loop")
         }
         ColonCommand::Grep(arg) => match arg {
             None => { viewport.set_grep(None); ColonOutcome::Continue(Some("[grep cleared]".into())) }
@@ -1113,6 +1125,34 @@ fn dispatch_colon_command(
             },
         },
     }
+}
+
+fn sync_mouse_badge(viewport: &mut crate::viewport::Viewport, others: &mut [crate::pane::Pane], enabled: bool) {
+    viewport.set_mouse_off(!enabled);
+    for o in others.iter_mut() {
+        o.viewport.set_mouse_off(!enabled);
+    }
+}
+
+/// Apply a new mouse-capture state: issue the terminal escape, update the
+/// live flag, and refresh the `[nomouse]` badge on every pane.
+fn apply_mouse(
+    stdout: &mut io::Stdout,
+    mouse_enabled: &mut bool,
+    on: bool,
+    viewport: &mut crate::viewport::Viewport,
+    others: &mut [crate::pane::Pane],
+) {
+    use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+    if on != *mouse_enabled {
+        let _ = if on {
+            crossterm::execute!(stdout, EnableMouseCapture)
+        } else {
+            crossterm::execute!(stdout, DisableMouseCapture)
+        };
+        *mouse_enabled = on;
+    }
+    sync_mouse_badge(viewport, others, *mouse_enabled);
 }
 
 /// In split mode the compositor is cell-based: force ASCII images and disable
@@ -1608,7 +1648,7 @@ pub fn run(
     let mut tag_stack = TagStack::default();
     let mut overlay: Option<Box<dyn crate::overlay::Overlay>> = None;
     let mut overlay_flash: Option<(&'static str, std::time::Instant)> = None;
-    let mouse_enabled = mouse_on;
+    let mut mouse_enabled = mouse_on;
     let clipboard_enabled = args.clipboard;
     let hscroll_shift = args.shift.unwrap_or(0);
     let wheel_lines = args.wheel_lines.unwrap_or(3).max(1);
@@ -1631,6 +1671,8 @@ pub fn run(
             return Err(crate::error::Error::Runtime(format!("startup tag jump failed: {msg}")));
         }
     }
+
+    sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
 
     loop {
         if sigterm.load(Ordering::SeqCst) {
@@ -2263,6 +2305,12 @@ pub fn run(
                                                 } else {
                                                     viewport.flash("scroll-lock needs a split", 40);
                                                 }
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::Mouse(arg)) => {
+                                                let on = arg.unwrap_or(!mouse_enabled);
+                                                apply_mouse(&mut stdout, &mut mouse_enabled, on, &mut viewport, &mut others);
+                                                viewport.flash(if mouse_enabled { "mouse on" } else { "mouse off" }, 40);
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::SetEncoding(arg)) => {
@@ -2998,6 +3046,12 @@ pub fn run(
                             viewport.flash("scroll-lock needs a split", 40);
                             needs_redraw = true;
                         }
+                    }
+                    Command::ToggleMouse => {
+                        let on = !mouse_enabled;
+                        apply_mouse(&mut stdout, &mut mouse_enabled, on, &mut viewport, &mut others);
+                        viewport.flash(if mouse_enabled { "mouse on" } else { "mouse off" }, 40);
+                        needs_redraw = true;
                     }
                     Command::Refresh => {
                         needs_redraw = true;
@@ -4651,5 +4705,13 @@ mod tests {
         assert_eq!(parse_colon_command("noformat").unwrap(), ColonCommand::Format(None));
         assert_eq!(parse_colon_command("display <status>").unwrap(), ColonCommand::Display(Some("<status>".into())));
         assert_eq!(parse_colon_command("nodisplay").unwrap(), ColonCommand::Display(None));
+    }
+
+    #[test]
+    fn parse_colon_mouse() {
+        assert_eq!(parse_colon_command("mouse").unwrap(), ColonCommand::Mouse(None));
+        assert_eq!(parse_colon_command("mouse on").unwrap(), ColonCommand::Mouse(Some(true)));
+        assert_eq!(parse_colon_command("mouse off").unwrap(), ColonCommand::Mouse(Some(false)));
+        assert!(parse_colon_command("mouse bogus").is_err());
     }
 }
