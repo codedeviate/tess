@@ -1848,6 +1848,7 @@ impl Viewport {
             grep_tag,
             or_tag,
             lock,
+            mouse_tag: String::new(),
             hide_tag,
             search_tag,
             pretty_tag,

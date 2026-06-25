@@ -30,6 +30,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "grep-tag",
     "or-tag",
     "lock",
+    "mouse",
     "hide-tag",
     "search-tag",
     "pretty-tag",
@@ -86,6 +87,8 @@ pub struct PromptContext {
     pub or_tag: String,
     /// Scroll-lock badge for split view: `lock` when on, empty when off.
     pub lock: String,
+    /// Mouse-capture badge: `nomouse` when capture is off, empty when on.
+    pub mouse_tag: String,
     pub hide_tag: String,
     pub search_tag: String,
     pub pretty_tag: String,
@@ -123,6 +126,7 @@ impl PromptContext {
             "grep-tag" => Some(self.grep_tag.clone()),
             "or-tag" => Some(self.or_tag.clone()),
             "lock" => Some(self.lock.clone()),
+            "mouse" => Some(self.mouse_tag.clone()),
             "hide-tag" => Some(self.hide_tag.clone()),
             "search-tag" => Some(self.search_tag.clone()),
             "pretty-tag" => Some(self.pretty_tag.clone()),
@@ -285,5 +289,14 @@ mod tests {
         let p = ParsedPrompt::parse("<wrap-offset><col-offset>").unwrap();
         let ctx = PromptContext { col_offset: "  \u{00bb}12".into(), ..Default::default() };
         assert_eq!(p.render(&ctx), "  \u{00bb}12");
+    }
+
+    #[test]
+    fn mouse_placeholder_renders_off_and_on() {
+        let p = ParsedPrompt::parse("<mouse>").unwrap();
+        let off = PromptContext { mouse_tag: "nomouse".into(), ..Default::default() };
+        assert_eq!(p.render(&off), "nomouse");
+        let on = PromptContext { mouse_tag: String::new(), ..Default::default() };
+        assert_eq!(p.render(&on), "");
     }
 }
