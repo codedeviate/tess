@@ -361,6 +361,10 @@ pub struct Viewport {
     /// `<lock>` prompt placeholder. Set by the event loop on the focused
     /// split pane while scroll-lock is active.
     scroll_lock: bool,
+    /// When true, renders `[nomouse]` in the status line and `nomouse` in the
+    /// `<mouse>` prompt placeholder. Set across all panes by the event loop
+    /// when mouse capture is off (a global terminal state shown once).
+    mouse_off: bool,
 }
 
 impl Viewport {
@@ -431,6 +435,7 @@ impl Viewport {
             status_column: false,
             status_marks: std::collections::HashMap::new(),
             scroll_lock: false,
+            mouse_off: false,
         }
     }
 
@@ -493,6 +498,9 @@ impl Viewport {
     /// Show the `[lock]` status badge / `<lock>` prompt value. Set by the
     /// event loop on the focused split pane while scroll-lock is active.
     pub fn set_scroll_lock(&mut self, on: bool) { self.scroll_lock = on; }
+
+    /// Show the `[nomouse]` status badge / `nomouse` `<mouse>` value.
+    pub fn set_mouse_off(&mut self, off: bool) { self.mouse_off = off; }
 
     /// Set the scroll position directly (logical line + wrap-row within it).
     pub fn set_top(&mut self, line: usize, row: usize) {
@@ -1707,6 +1715,9 @@ impl Viewport {
         if self.scroll_lock {
             s.push_str("  [lock]");
         }
+        if self.mouse_off {
+            s.push_str("  [nomouse]");
+        }
         if self.filter.is_some() || self.grep.is_some() || self.or_groups.is_active() {
             s.push_str(if self.dim_mode { "  [dim]" } else { "  [hide]" });
         }
@@ -1830,6 +1841,7 @@ impl Viewport {
         };
 
         let lock = if self.scroll_lock { "lock".to_string() } else { String::new() };
+        let mouse_tag = if self.mouse_off { "nomouse".to_string() } else { String::new() };
 
         PromptContext {
             label: self.source_label.clone(),
@@ -1848,6 +1860,7 @@ impl Viewport {
             grep_tag,
             or_tag,
             lock,
+            mouse_tag,
             hide_tag,
             search_tag,
             pretty_tag,
@@ -4423,6 +4436,18 @@ mod tests {
         vp.set_scroll_lock(false);
         let frame = vp.frame(&src, &mut idx);
         assert!(!frame.status.contains("[lock]"));
+    }
+
+    #[test]
+    fn nomouse_badge_in_status() {
+        let (src, mut idx) = setup(b"line one\nline two\n");
+        let mut vp = Viewport::new(80, 24, "x".into());
+        vp.set_mouse_off(true);
+        let frame = vp.frame(&src, &mut idx);
+        assert!(frame.status.contains("[nomouse]"), "status was: {}", frame.status);
+        vp.set_mouse_off(false);
+        let frame = vp.frame(&src, &mut idx);
+        assert!(!frame.status.contains("[nomouse]"));
     }
 
     #[test]

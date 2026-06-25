@@ -231,6 +231,16 @@ impl DisplayRenderer {
     }
 }
 
+/// `[settings]` table in `formats.toml` — global default-flag overrides.
+/// Layered global → local like the rest of the config (local wins per key).
+#[derive(Debug, Default, Deserialize)]
+pub struct Settings {
+    /// Default mouse-capture state. `None` = unset (fall through to the
+    /// built-in default). CLI `--mouse` / `--no-mouse` override this.
+    #[serde(default)]
+    pub mouse: Option<bool>,
+}
+
 /// TOML schema for `~/.config/tess/formats.toml`:
 ///
 /// ```toml
@@ -251,6 +261,8 @@ struct UserConfig {
     group: HashMap<String, GroupEntry>,
     #[serde(default)]
     layout: HashMap<String, LayoutEntry>,
+    #[serde(default)]
+    settings: Settings,
 }
 
 /// Raw layout entry as deserialized from TOML. A `[layout.NAME]` carries an
@@ -590,6 +602,15 @@ pub fn load_layouts() -> Result<HashMap<String, Layout>, String> {
         out.insert(name.clone(), Layout { name, horizontal, panes });
     }
     Ok(out)
+}
+
+/// Load `[settings]` from global and local `formats.toml`, local winning
+/// per key. Returns defaults (all `None`) when neither layer sets anything.
+pub fn load_settings() -> Result<Settings, String> {
+    let cfg = load_layered_config()?;
+    Ok(Settings {
+        mouse: cfg.local.settings.mouse.or(cfg.global.settings.mouse),
+    })
 }
 
 /// Promote a raw `GroupEntry` into a `Group`: assign the name, unwrap the
@@ -1966,5 +1987,29 @@ grep = ["ssh", "sshd"]
                 "--or-grep", "ssh",
             ])
         );
+    }
+
+    #[test]
+    fn settings_mouse_deserializes() {
+        let cfg: UserConfig = toml::from_str("[settings]\nmouse = false\n").unwrap();
+        assert_eq!(cfg.settings.mouse, Some(false));
+    }
+
+    #[test]
+    fn settings_absent_is_none() {
+        let cfg: UserConfig = toml::from_str("[format.x]\nregex = \".\"\n").unwrap();
+        assert_eq!(cfg.settings.mouse, None);
+    }
+
+    #[test]
+    fn settings_local_overrides_global() {
+        // global says true, local says false -> local wins.
+        let global: UserConfig = toml::from_str("[settings]\nmouse = true\n").unwrap();
+        let local: UserConfig = toml::from_str("[settings]\nmouse = false\n").unwrap();
+        let resolved = local.settings.mouse.or(global.settings.mouse);
+        assert_eq!(resolved, Some(false));
+        // global only -> global applies.
+        let local_empty: UserConfig = toml::from_str("").unwrap();
+        assert_eq!(local_empty.settings.mouse.or(global.settings.mouse), Some(true));
     }
 }

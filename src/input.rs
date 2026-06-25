@@ -118,6 +118,8 @@ pub enum Command {
     /// `=` — in split view, toggle synchronized scrolling between panes.
     /// No-op in single-pane mode. Remappable via `scroll-lock-toggle` in keys.toml.
     ToggleScrollLock,
+    /// Toggle mouse capture on/off. Unbound by default; bind via `mouse-toggle` in keys.toml.
+    ToggleMouse,
     /// `]` — first half of the `]c` vimdiff-style next-change chord.
     /// The following `c` triggers DiffNextChange; any other key cancels.
     BracketClosePrefix,
