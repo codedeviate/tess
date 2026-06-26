@@ -312,6 +312,7 @@ tess --clipboard app.log                                # then :yank a line
 | `.` `,` | Animated image: step one frame forward / back (auto-pauses) |
 | `Backspace` | Animated image: restart from the first frame |
 | `Tab` / `BackTab` | Cycle the focused pane forward / backward in a split (see [Split view](#split-view); no-op without a split) |
+| `Ctrl-X z` | Toggle zoom (maximize) the focused pane in a split |
 | `=` | Toggle synchronized scrolling in a split (see [Synchronized scrolling](#synchronized-scrolling-scrolllock); flashes a hint without a split) |
 | `]c` `[c` | In diff mode, jump to the next / previous change hunk (see [Diff mode](#diff-mode---diff--diff); no-op outside diff) |
 | `r` `Ctrl-L` | Force redraw |
@@ -443,6 +444,16 @@ log-rotation re-open). The keys are remappable in `~/.config/tess/keys.toml` via
 where cycling is slower. Clicking works under scroll-lock too (only focus moves),
 is a no-op in diff mode (focus is locked there), and clicking the already-focused
 pane does nothing.
+
+**Zoom (maximize).** `Ctrl-X z` (or `:zoom`, or a `zoom-pane` binding) toggles
+the focused pane between its split size and full-screen — like tmux's pane zoom.
+The other panes are hidden (still following/tailing), not closed, and a `[zoom]`
+badge marks the state. Switching focus or running a structural command
+(`:vsplit`/`:only`/`:layout`/`:rotate`) or `:diff` unzooms first. It is a no-op
+in a single pane or in diff mode. `Ctrl+Shift+X` is not bound by default
+(terminals can't reliably distinguish it from `Ctrl+X`); bind
+`ctrl-shift-x = "zoom-pane"` in `~/.config/tess/keys.toml` if your terminal
+supports the Kitty/CSI-u keyboard protocol.
 
 Panes are separated by vertical dividers, and each gets its own status segment
 (`1/N` width); the focused pane's is prefixed with `*`. Each pane needs at least
