@@ -30,6 +30,7 @@ const PROMPT_FIELDS: &[&str] = &[
     "grep-tag",
     "or-tag",
     "lock",
+    "zoom",
     "mouse",
     "hide-tag",
     "search-tag",
@@ -87,6 +88,8 @@ pub struct PromptContext {
     pub or_tag: String,
     /// Scroll-lock badge for split view: `lock` when on, empty when off.
     pub lock: String,
+    /// Pane-zoom badge: `zoom` when the focused pane is maximized, else empty.
+    pub zoom: String,
     /// Mouse-capture badge: `nomouse` when capture is off, empty when on.
     pub mouse_tag: String,
     pub hide_tag: String,
@@ -126,6 +129,7 @@ impl PromptContext {
             "grep-tag" => Some(self.grep_tag.clone()),
             "or-tag" => Some(self.or_tag.clone()),
             "lock" => Some(self.lock.clone()),
+            "zoom" => Some(self.zoom.clone()),
             "mouse" => Some(self.mouse_tag.clone()),
             "hide-tag" => Some(self.hide_tag.clone()),
             "search-tag" => Some(self.search_tag.clone()),
@@ -298,5 +302,14 @@ mod tests {
         assert_eq!(p.render(&off), "nomouse");
         let on = PromptContext { mouse_tag: String::new(), ..Default::default() };
         assert_eq!(p.render(&on), "");
+    }
+
+    #[test]
+    fn zoom_placeholder_renders_on_and_off() {
+        let p = ParsedPrompt::parse("<zoom>").unwrap();
+        let on = PromptContext { zoom: "zoom".into(), ..Default::default() };
+        assert_eq!(p.render(&on), "zoom");
+        let off = PromptContext { zoom: String::new(), ..Default::default() };
+        assert_eq!(p.render(&off), "");
     }
 }

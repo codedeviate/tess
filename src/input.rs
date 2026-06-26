@@ -118,6 +118,9 @@ pub enum Command {
     /// `=` — in split view, toggle synchronized scrolling between panes.
     /// No-op in single-pane mode. Remappable via `scroll-lock-toggle` in keys.toml.
     ToggleScrollLock,
+    /// Toggle the focused pane between full-screen and split size. Unbound by
+    /// default; the canonical chord is `Ctrl-X z`. Bind via `zoom-pane` in keys.toml.
+    ZoomPane,
     /// Toggle mouse capture on/off. Unbound by default; bind via `mouse-toggle` in keys.toml.
     ToggleMouse,
     /// `]` — first half of the `]c` vimdiff-style next-change chord.
