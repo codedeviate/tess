@@ -449,7 +449,7 @@ pane does nothing.
 the focused pane between its split size and full-screen — like tmux's pane zoom.
 The other panes are hidden (still following/tailing), not closed, and a `[zoom]`
 badge marks the state. Switching focus or running a structural command
-(`:vsplit`/`:only`/`:layout`/`:rotate`) or `:diff` unzooms first. It is a no-op
+(`:vsplit`/`:hsplit`/`:only`/`:layout`/`:rotate`) or `:diff` unzooms first. It is a no-op
 in a single pane or in diff mode. `Ctrl+Shift+X` is not bound by default
 (terminals can't reliably distinguish it from `Ctrl+X`); bind
 `ctrl-shift-x = "zoom-pane"` in `~/.config/tess/keys.toml` if your terminal

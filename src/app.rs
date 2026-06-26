@@ -2821,6 +2821,7 @@ pub fn run(
                                     }
                                 };
                                 if target != focused_pos {
+                                    unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                     // Same move-by-value swap as Tab/FocusOtherPane:
                                     // the loop owns the loose locals, so they can't
                                     // be factored behind a `&mut` helper without a

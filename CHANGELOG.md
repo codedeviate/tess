@@ -13,7 +13,7 @@ are called out where relevant.
 ## [0.57.0] — 2026-06-26
 
 ### Added
-- **Pane zoom (tmux-style maximize).** In a split, toggle the focused pane between its normal `1/N` size and full-screen with `Ctrl-X z` (chord), the `:zoom` colon command, or the bindable `zoom-pane` key name. The other panes are hidden, not closed — they keep following/tailing and return on toggle-off. A `[zoom]` status badge and `<zoom>` prompt placeholder show the state. Switching focus (`Tab`), structural split commands (`:vsplit`/`:only`/`:layout`/`:rotate`), and entering diff auto-unzoom first. No-op in a single pane or diff mode. (Bind `ctrl-shift-x = "zoom-pane"` in `keys.toml` on a Kitty/CSI-u terminal for the tmux-like combo.)
+- **Pane zoom (tmux-style maximize).** In a split, toggle the focused pane between its normal `1/N` size and full-screen with `Ctrl-X z` (chord), the `:zoom` colon command, or the bindable `zoom-pane` key name. The other panes are hidden, not closed — they keep following/tailing and return on toggle-off. A `[zoom]` status badge and `<zoom>` prompt placeholder show the state. Switching focus (`Tab`), structural split commands (`:vsplit`/`:hsplit`/`:only`/`:layout`/`:rotate`), and entering diff auto-unzoom first. No-op in a single pane or diff mode. (Bind `ctrl-shift-x = "zoom-pane"` in `keys.toml` on a Kitty/CSI-u terminal for the tmux-like combo.)
 
 ## [0.56.1] — 2026-06-25
 
