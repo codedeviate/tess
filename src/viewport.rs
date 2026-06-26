@@ -1842,6 +1842,7 @@ impl Viewport {
 
         let lock = if self.scroll_lock { "lock".to_string() } else { String::new() };
         let mouse_tag = if self.mouse_off { "nomouse".to_string() } else { String::new() };
+        let zoom = String::new();
 
         PromptContext {
             label: self.source_label.clone(),
@@ -1860,6 +1861,7 @@ impl Viewport {
             grep_tag,
             or_tag,
             lock,
+            zoom,
             mouse_tag,
             hide_tag,
             search_tag,
