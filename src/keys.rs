@@ -277,6 +277,7 @@ fn command_from_kebab(name: &str) -> Option<Command> {
         "focus-other-pane" => Some(Command::FocusOtherPane),
         "focus-prev-pane" => Some(Command::FocusPrevPane),
         "scroll-lock-toggle" => Some(Command::ToggleScrollLock),
+        "zoom-pane" => Some(Command::ZoomPane),
         "mouse-toggle" => Some(Command::ToggleMouse),
         "diff-next-change" => Some(Command::DiffNextChange),
         "diff-prev-change" => Some(Command::DiffPrevChange),
@@ -328,6 +329,7 @@ fn command_to_kebab(cmd: &Command) -> Option<&'static str> {
         Command::FocusOtherPane => Some("focus-other-pane"),
         Command::FocusPrevPane => Some("focus-prev-pane"),
         Command::ToggleScrollLock => Some("scroll-lock-toggle"),
+        Command::ZoomPane => Some("zoom-pane"),
         Command::ToggleMouse => Some("mouse-toggle"),
         Command::DiffNextChange => Some("diff-next-change"),
         Command::DiffPrevChange => Some("diff-prev-change"),
@@ -603,7 +605,7 @@ mod tests {
             "hscroll-left", "hscroll-right", "hscroll-left-step", "hscroll-right-step",
             "clipboard-yank-line",
             "anim-pause", "anim-step-forward", "anim-step-back", "anim-restart",
-            "focus-other-pane", "focus-prev-pane", "scroll-lock-toggle", "mouse-toggle",
+            "focus-other-pane", "focus-prev-pane", "scroll-lock-toggle", "zoom-pane", "mouse-toggle",
             "diff-next-change", "diff-prev-change",
         ];
         for name in &names {

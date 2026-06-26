@@ -158,6 +158,8 @@ enum ColonCommand {
     Display(Option<String>),
     /// `:mouse` toggles mouse capture; `:mouse on` / `:mouse off` set it.
     Mouse(Option<bool>),
+    /// `:zoom` toggles the focused pane between full-screen and split size.
+    Zoom,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -290,6 +292,7 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
             }
         }
         "scrolllock" => Ok(ColonCommand::ScrollLock),
+        "zoom" => Ok(ColonCommand::Zoom),
         "hlsearch"   => Ok(ColonCommand::HlSearch(true)),
         "nohlsearch" => Ok(ColonCommand::HlSearch(false)),
         "incsearch"  => Ok(ColonCommand::IncSearch),
@@ -1027,9 +1030,9 @@ fn dispatch_colon_command(
         // apply to every pane) and never reach this file-set-only dispatcher.
         ColonCommand::VSplit(_) | ColonCommand::HSplit(_) | ColonCommand::Rotate
         | ColonCommand::Only | ColonCommand::Layout(_) | ColonCommand::ScrollLock
-        | ColonCommand::SetEncoding(_) | ColonCommand::Mouse(_)
+        | ColonCommand::SetEncoding(_) | ColonCommand::Mouse(_) | ColonCommand::Zoom
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
-            unreachable!("split/scroll-lock/encoding/diff/mouse commands are handled in the run() event loop")
+            unreachable!("split/scroll-lock/encoding/diff/mouse/zoom commands are handled in the run() event loop")
         }
         ColonCommand::Grep(arg) => match arg {
             None => { viewport.set_grep(None); ColonOutcome::Continue(Some("[grep cleared]".into())) }
@@ -1243,6 +1246,53 @@ fn resize_split_aware(
             let phys = phys_of_slot(slot, focused_pos);
             resize(&mut other.viewport, sizes[phys]);
         }
+    }
+}
+
+/// Toggle the focused pane between full-screen and its split size. No-op (with
+/// a flash) in a single pane or in diff mode, where the layout is fixed. Only
+/// changes rendering/sizing — the other panes stay in memory.
+fn toggle_zoom(
+    zoomed: &mut bool,
+    focused_vp: &mut Viewport,
+    others: &mut [crate::pane::Pane],
+    diff_active: bool,
+    cols: u16,
+    rows: u16,
+    focused_pos: usize,
+    orientation: Orientation,
+) {
+    if others.is_empty() {
+        focused_vp.flash("zoom needs a split", 40);
+        return;
+    }
+    if diff_active {
+        focused_vp.flash("zoom not available in diff", 40);
+        return;
+    }
+    *zoomed = !*zoomed;
+    if *zoomed {
+        focused_vp.resize(cols, rows);
+    } else {
+        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation);
+    }
+}
+
+/// Clear zoom and restore split sizing. No-op when not zoomed. Called before
+/// focus switches, structural split commands, and entering diff so the screen
+/// is never left maximized over a layout that no longer matches.
+fn unzoom(
+    zoomed: &mut bool,
+    focused_vp: &mut Viewport,
+    others: &mut [crate::pane::Pane],
+    cols: u16,
+    rows: u16,
+    focused_pos: usize,
+    orientation: Orientation,
+) {
+    if *zoomed {
+        *zoomed = false;
+        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation);
     }
 }
 
@@ -1598,6 +1648,7 @@ pub fn run(
     let mut focused_pos: usize = 0;
     panes_init(&mut others, &mut viewport, focused_pos, cols, rows, orientation);
     let mut scroll_lock = false;
+    let mut zoomed = false;
     // Per-physical-column scroll-lock offsets relative to the leftmost pane,
     // captured at lock enable. Empty when scroll-lock is off.
     let mut lock_offsets: Vec<isize> = Vec::new();
@@ -1725,7 +1776,10 @@ pub fn run(
                 viewport.set_status_marks(status_marks);
             }
             viewport.set_scroll_lock(scroll_lock);
-            let mut frame = if diff.is_some() && others.len() == 1 {
+            viewport.set_zoomed(zoomed);
+            let mut frame = if zoomed && !others.is_empty() && diff.is_none() {
+                viewport.frame(src.as_ref(), &mut idx)
+            } else if diff.is_some() && others.len() == 1 {
                 // Diff stays a 2-pane feature: render the focused pane against
                 // the single other pane, ordered by `focused_pos` (0 → focused
                 // left). `compose_diff`'s `focused_left` flag picks the side.
@@ -2092,6 +2146,16 @@ pub fn run(
                             mode = InputMode::Normal;
                             continue;
                         }
+                        let is_z = matches!(
+                            event,
+                            Event::Key(KeyEvent { code: KeyCode::Char('z'), .. })
+                        );
+                        if is_z {
+                            toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                            needs_redraw = true;
+                            mode = InputMode::Normal;
+                            continue;
+                        }
                         // Anything else: cancel and fall through to normal dispatch.
                         mode = InputMode::Normal;
                         // Don't `continue` — let the event fall through.
@@ -2137,6 +2201,7 @@ pub fn run(
                                     } else {
                                         match parse_colon_command(buffer) {
                                             Ok(ColonCommand::VSplit(path_arg)) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 if !others.is_empty() {
                                                     viewport.flash("already split (`:only` first)", 30);
                                                 } else {
@@ -2176,6 +2241,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::HSplit(path_arg)) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 if !others.is_empty() {
                                                     viewport.flash("already split (`:only` first)", 30);
                                                 } else {
@@ -2215,6 +2281,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Rotate) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 if others.is_empty() {
                                                     viewport.flash("no split to rotate", 30);
                                                 } else if diff.is_some() {
@@ -2232,6 +2299,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Only) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 if !others.is_empty() {
                                                     others.clear();
                                                     scroll_lock = false;
@@ -2248,6 +2316,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Layout(name)) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 let layouts = crate::format::load_layouts().unwrap_or_default();
                                                 match layouts.get(&name) {
                                                     None => { viewport.flash(format!("unknown layout: {name}"), 40); }
@@ -2327,6 +2396,10 @@ pub fn run(
                                                 }
                                                 mode = InputMode::Normal;
                                             }
+                                            Ok(ColonCommand::Zoom) => {
+                                                toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                                                mode = InputMode::Normal;
+                                            }
                                             Ok(ColonCommand::Mouse(arg)) => {
                                                 let on = arg.unwrap_or(!mouse_enabled);
                                                 apply_mouse(&mut stdout, &mut mouse_enabled, on, &mut viewport, &mut others);
@@ -2357,6 +2430,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Diff { force }) => {
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                                                 if others.len() >= 2 {
                                                     viewport.flash("diff needs exactly 2 panes", 40);
                                                 } else if others.len() == 1 {
@@ -2604,7 +2678,11 @@ pub fn run(
                     let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                     cols = c;
                     rows = r;
-                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                    if zoomed {
+                        viewport.resize(cols, rows);
+                    } else {
+                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                    }
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
                     }
@@ -3057,6 +3135,7 @@ pub fn run(
                     }
                     cmd @ (Command::FocusOtherPane | Command::FocusPrevPane) => {
                         let forward = cmd == Command::FocusOtherPane;
+                        unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
                         if diff.is_some() {
                             // In diff mode the panes are aligned and scroll as one
                             // unit, so "focus" is meaningless — and a swap would
@@ -3113,6 +3192,10 @@ pub fn run(
                             viewport.flash("scroll-lock needs a split", 40);
                             needs_redraw = true;
                         }
+                    }
+                    Command::ZoomPane => {
+                        toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                        needs_redraw = true;
                     }
                     Command::ToggleMouse => {
                         let on = !mouse_enabled;
@@ -4149,6 +4232,45 @@ mod tests {
         assert_eq!(np, 1);
         assert_eq!(nf.viewport.top_line(), 1);
         assert_eq!(other_ids(&no), vec![0, 2]);
+    }
+
+    #[test]
+    fn toggle_zoom_flips_only_with_a_split_and_not_in_diff() {
+        let mut vp = Viewport::new(80, 24, "f".into());
+
+        // Single pane (no others): no-op.
+        let mut z = false;
+        let mut none: Vec<crate::pane::Pane> = Vec::new();
+        toggle_zoom(&mut z, &mut vp, &mut none, false, 80, 24, 0, Orientation::Vertical);
+        assert!(!z, "single pane must not zoom");
+
+        // Split present but diff active: no-op.
+        let mut others = vec![pane_with_id(1)];
+        toggle_zoom(&mut z, &mut vp, &mut others, true, 80, 24, 0, Orientation::Vertical);
+        assert!(!z, "diff must not zoom");
+
+        // Split present, no diff: flips on, then off.
+        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical);
+        assert!(z, "split should zoom");
+        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical);
+        assert!(!z, "second toggle unzooms");
+    }
+
+    #[test]
+    fn unzoom_clears_and_is_idempotent() {
+        let mut vp = Viewport::new(80, 24, "f".into());
+        let mut others = vec![pane_with_id(1)];
+        let mut z = true;
+        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical);
+        assert!(!z);
+        // Already unzoomed: stays false, no panic.
+        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical);
+        assert!(!z);
+    }
+
+    #[test]
+    fn parse_colon_zoom() {
+        assert_eq!(parse_colon_command("zoom").unwrap(), ColonCommand::Zoom);
     }
 
     #[test]
