@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.58.0] — 2026-06-29
+
+### Added
+- **`MANUAL.pdf`** — a typeset PDF of the manual (cover page, table of contents, page numbers, IBM Plex Sans body font), built from `MANUAL.md` via `recon`'s self-contained typst engine. Committed to the repo, included in the source tarball and the published crate, and attached to each GitHub release. Built with `scripts/gen-manual-pdf.sh` (preprocessing in `scripts/typst-safe.awk`); regenerated whenever `MANUAL.md` changes.
+
 ## [0.57.0] — 2026-06-26
 
 ### Added

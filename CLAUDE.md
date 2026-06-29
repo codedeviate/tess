@@ -135,12 +135,19 @@ After every commit on this branch:
    cargo build --release
    ```
    Skip `cargo build` (debug). If the debug profile is actually needed (e.g. for a debug-only repro), build it on its own or wait for an explicit request — don't bundle it into the post-commit chore by default.
-2. **Generate a source tarball** of everything needed to compile `tess` on another machine, named `tess-<version>.tar.gz` (where `<version>` matches `Cargo.toml`), placed in the repo root next to this `CLAUDE.md`. Contents: `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `benches/`, `man/`, `README.md`, `MANUAL.md`, `CLAUDE.md`, `OUT-OF-SCOPE.md`, `INSTALL.md`, `LICENSE`, `.gitignore`. Excluded: `target/`, `.git/`, `.claude/`, any `.DS_Store`. The tarball is `.gitignore`d (see `tess-*.tar.gz`).
+2. **Generate a source tarball** of everything needed to compile `tess` on another machine, named `tess-<version>.tar.gz` (where `<version>` matches `Cargo.toml`), placed in the repo root next to this `CLAUDE.md`. Contents: `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `benches/`, `man/`, `README.md`, `MANUAL.md`, `MANUAL.pdf`, `CLAUDE.md`, `OUT-OF-SCOPE.md`, `INSTALL.md`, `LICENSE`, `.gitignore`. Excluded: `target/`, `.git/`, `.claude/`, any `.DS_Store`. The tarball is `.gitignore`d (see `tess-*.tar.gz`).
 3. **Regenerate the man page** when CLI flags or behavior change:
    ```
    cargo run --release --bin gen-manpage
    ```
    Output: `man/tess.1`. Commit it alongside the change.
+4. **Regenerate `MANUAL.pdf`** when `MANUAL.md` changes:
+   ```
+   scripts/gen-manual-pdf.sh
+   ```
+   Output: `MANUAL.pdf` (repo root). Commit it alongside the change. Requires
+   `recon` on PATH (Homebrew: `brew install recon`); `awk` is POSIX-standard.
+   Self-contained typst engine — no Chrome / agent-browser needed.
 
 If a commit only touches docs and doesn't change the version, the tarball can be skipped — the previous one is still current. If the version bumped, regenerate.
 
@@ -181,6 +188,12 @@ Attach both `.deb` files to the GitHub release:
 gh release upload vX.Y.Z \
   target/debian/tess-cli_X.Y.Z-1_amd64.deb \
   target/debian/tess-cli_X.Y.Z-1_arm64.deb
+```
+
+Also attach the manual PDF to the release:
+
+```sh
+gh release upload vX.Y.Z MANUAL.pdf
 ```
 
 (If the release was created with `--generate-notes` per the Versioning section above, this is the follow-up step that adds the binaries to it.)
