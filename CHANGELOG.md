@@ -10,6 +10,12 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.58.1] — 2026-06-29
+
+### Changed
+- **Manual & `--examples` refreshed to current.** Documented previously-undocumented features — OR-group filtering, `--encoding`/charset, image rendering, clipboard, input preprocessing (`--preprocess`/`$LESSOPEN`), `--header`/frozen columns, `--incsearch`, `-J`/`--status-column`, `--truecolor` + status/prompt theming, horizontal scrolling — reconciled the flag and interactive-key lists with the code, and added matching `--examples` categories.
+- **Self-updating manual version.** The manual footer now resolves the running version via a `{{VERSION}}` token (substituted by `--manual` at print time and by `scripts/gen-manual-pdf.sh` for the PDF), replacing the stale hardcoded `0.21.0` stamp.
+
 ## [0.58.0] — 2026-06-29
 
 ### Added

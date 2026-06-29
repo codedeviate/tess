@@ -43,10 +43,11 @@ cmd | tess [OPTIONS]
 
 - **`-N`, `--LINE-NUMBERS`** — show line numbers in a left-side gutter.
 - **`-J`, `--status-column`** — add a one-column gutter at the far left edge. On a marked line it shows the mark's letter; otherwise, on a line containing a current-search match, it shows `*` (a mark beats `*`). The gutter is fixed under horizontal scroll and is drawn only on the first wrap-row of a wrapped line. No-op in `--hex`, `-r`, and image modes. Match detection runs on the line *content* only (never the gutter) and works even when `-G` suppresses the visual reverse-video highlight. Mirrors `less -J`.
-- **`-S`, `--chop-long-lines`** — truncate long lines at the right edge instead of wrapping. Toggle interactively with `Shift-S`.
+- **`-S`, `--chop-long-lines`** — truncate long lines at the right edge instead of wrapping. Toggle interactively with `-S` (the option-toggle prefix: press `-` then `S`).
 - **`--tab-width N`** — tab-stop width (default `8`).
 - **`-x LIST`, `--tabs LIST`** — set explicit, possibly variable, tab stops. `LIST` is a comma-separated list of column positions. A single value (`-x4`) behaves exactly like `--tab-width` (every-N stops). Multiple values pin those stops and repeat the **last interval** past the final entry — e.g. `-x4,8,16` stops at columns 4, 8, 16, 24, 32, … (the trailing interval of 8 repeats). Overrides `--tab-width`. Mirrors `less -x`.
 - **`--hex`** — render the source as an `xxd`-style hex dump. Mutually exclusive with `--filter`, `--grep`, `--prettify`, `--format`, `--display`, `--record-start`, and `--prompt`.
+- **`--hex-group N`** — number of hex characters per group in `--hex` mode. One of `2`, `4` (default), `8`, `16`, `32`. Runtime: `:hex N`. Requires `--hex`.
 - **`--no-image`** — disable image auto-detection; treat image files as raw bytes. Combine with `--hex` for a byte-level view of image data.
 - **`--blocks`** — render detected images in Unicode half-block (`▀`) mode instead of the default character ramp. Each cell encodes two pixel rows.
 - **`--image-width N`** — scale the rendered image to N columns (default: terminal width).
@@ -171,7 +172,7 @@ UTF-16 file would misalign after the first line.
 
 - **`--dim`** — render non-matching lines visibly faded instead of hiding them.
   Works with `--filter`, `--grep`, or both. Keeps surrounding context visible.
-- **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (so what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
+- **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
 
 #### Runtime filtering & per-pane predicates
@@ -273,12 +274,15 @@ tess --clipboard app.log                                # then :yank a line
 - **`--no-mouse`** — disable mouse capture at startup, restoring native terminal text-selection. Conflicts with `--mouse`. See [Mouse capture](#mouse-capture) for the full story and runtime controls.
 - **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch. Default `3`.
 - **`-R`, `--RAW-CONTROL-CHARS`** — accepted alias for tess's default ANSI-interpret mode. A no-op, provided for drop-in `less -R` muscle memory. Conflicts with `-r` (true raw passthrough) and `--no-color`.
-- **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. `0` (the default) keeps the half-screen behavior. Mirrors `less -#` / `--shift`.
+- **`-#`, `--shift N`** — column count for the `←`/`→` horizontal-scroll commands. When not set (or set to `0`), tess uses half the screen width. Mirrors `less -#` / `--shift`.
 - **`--split`** — open a side-by-side vertical split of the first two file arguments (or two views of a single file). Interactive only. See [Split view](#split-view). Runtime equivalent: `:vsplit`.
 - **`--hsplit`** — like `--split` but **horizontal** (stacked rows). Runtime: `:hsplit`; flip an open split with `:rotate`. See [Horizontal (stacked) split](#horizontal-stacked-split).
 - **`--scroll-lock`** — start a `--split` session with the two panes scroll-locked together. Only meaningful with `--split`; ignored otherwise. See [Synchronized scrolling](#synchronized-scrolling-scrolllock). Runtime toggle: `=` / `:scrolllock`.
 - **`--incsearch`** — enable incremental search (off by default). See [Search](#search). Toggle at runtime with `:incsearch`. Mirrors `less --incsearch`.
 - **`--prompt TEMPLATE`** — override the built-in status line with a custom template. Placeholders `<field>` expand to live values (see [Customizing the status line](#customizing-the-status-line)). CLI `--prompt` overrides any `prompt` key in the active format. Not allowed with `--hex`.
+- **`--preprocess COMMAND`** — pipe the source file through an external command before display. `COMMAND` must start with `|`; `%s` is substituted with the file path. See [Preprocessing input](#preprocessing-input). Mutually exclusive with `--hex`, `--follow`, and `--live`. Overrides `$LESSOPEN`.
+- **`--no-preprocess`** — ignore `$LESSOPEN` (and any `--preprocess`) for this invocation. Useful when `LESSOPEN` is exported globally but not wanted for one run.
+- **`--record-start REGEX`** — treat lines matching `REGEX` as the start of a new multi-line record; continuation lines (non-matching) are grouped into the preceding record. See [Multi-line records](#multi-line-records). Overrides the format's `record_start` key. Mutually exclusive with `--hex`.
 - **`-V`, `--version`** — print version.
 
 ---
@@ -297,6 +301,7 @@ tess --clipboard app.log                                # then :yank a line
 | `u` `Ctrl-U` | Half-page up |
 | `g` `<` `Home` | Go to top |
 | `G` `>` `End` | Go to bottom |
+| `N%` | Jump to N percent through the file by bytes (e.g. `50%` for the midpoint) |
 | `/` *pattern* `Enter` | Forward regex search; `Esc` cancels the prompt |
 | `?` *pattern* `Enter` | Backward regex search |
 | `n` | Repeat last search (same direction) |
@@ -304,7 +309,7 @@ tess --clipboard app.log                                # then :yank a line
 | `-N` (dash, then N) | Toggle line numbers |
 | `←` `→` | Scroll left / right by half the screen width (chop mode and image view only; no-op in wrap, hex, or raw) |
 | `Shift-←` `Shift-→` | Scroll left / right by 8 columns |
-| `Shift`+scroll / horizontal trackpad scroll | Scroll left / right by 8 columns (requires mouse capture on; `Shift`+wheel works everywhere, native horizontal swipe only where the terminal reports it) |
+| `Shift`+scroll / horizontal trackpad scroll | Scroll left / right by 8 columns (when mouse capture is on — the default; `Shift`+wheel works everywhere, native horizontal swipe only where the terminal reports it) |
 | `-S` (dash, then S) | Toggle chop / wrap |
 | `Shift-F` | Toggle follow mode |
 | `Shift-P` | Toggle pretty-print on/off (only when `--prettify` was active at startup) |
@@ -331,7 +336,7 @@ Mouse capture is **on by default** since 0.56.0: the scrollwheel scrolls the bod
 **Startup flags:**
 
 - **`--no-mouse`** — disable capture at startup (preserves native text selection). Conflicts with `--mouse`.
-- **`--mouse`** — explicit-on alias (kept for compatibility; a no-op given the default). Conflicts with `--no-mouse`.
+- **`--mouse`** — explicit-on alias (kept for compatibility; overrides `[settings] mouse = false` in `formats.toml` if set). Conflicts with `--no-mouse`.
 
 **Runtime toggle (`:mouse`):**
 
@@ -359,7 +364,7 @@ Horizontal scrolling is active in **chop mode** (`-S`) and **image view** (`--im
 
 - `←` / `→` — scroll left / right by half the screen width.
 - `Shift-←` / `Shift-→` — scroll left / right by 8 columns.
-- Mouse (requires capture on; see [Mouse capture](#mouse-capture)) — 8-column step, via either a native
+- Mouse (capture on by default; see [Mouse capture](#mouse-capture)) — 8-column step, via either a native
   horizontal swipe (`ScrollLeft` / `ScrollRight`) or `Shift` + scroll-wheel,
   **whichever your terminal reports**. This is terminal-dependent: iTerm2,
   kitty, WezTerm, and xterm report one or both; **Warp and macOS Terminal.app
@@ -460,10 +465,11 @@ Panes are separated by vertical dividers, and each gets its own status segment
 8 usable columns: in a terminal too narrow to fit them all, the focused pane
 renders full-width until the window is widened.
 
-Under `--mouse`, the wheel (vertical, Shift+wheel, and native horizontal) scrolls
-the pane the **cursor is over** — not necessarily the focused one — and does not
-change focus. (Exceptions: while scroll-locked the panes move together, and in
-diff mode the aligned pair scrolls as one view.)
+With mouse capture on (the default), the wheel (vertical, Shift+wheel, and
+native horizontal) scrolls the pane the **cursor is over** — not necessarily
+the focused one — and does not change focus. (Exceptions: while scroll-locked
+the panes move together, and in diff mode the aligned pair scrolls as one
+view.)
 
 #### Horizontal (stacked) split
 
@@ -490,9 +496,10 @@ rows in one view (nested grids are a future addition). `--split` / `:vsplit` sta
 vertical, and a `--`-form split opens vertical but can be `:rotate`d. Each
 horizontal pane needs at least **2 rows** (1 body + 1 status); in a terminal too
 short to fit them all, the focused pane renders full-screen until there's room —
-the height analog of the vertical ≥8-columns rule. Under `--mouse`, the wheel
-targets the pane the cursor's **row** is over. Diff mode stays vertical
-(`--hsplit --diff` is rejected; `:rotate` is a no-op while diffing).
+the height analog of the vertical ≥8-columns rule. With mouse capture on (the
+default), the wheel targets the pane the cursor's **row** is over. Diff mode
+stays vertical (`--hsplit --diff` is rejected; `:rotate` is a no-op while
+diffing).
 
 #### Synchronized scrolling (`:scrolllock`)
 
@@ -515,18 +522,16 @@ While locked, the **focused pane drives**: only it auto-tails under `--follow` /
 lock. `=` is remappable as `scroll-lock-toggle` in `~/.config/tess/keys.toml`,
 and `<lock>` is a `--prompt` placeholder (`lock` when on, empty when off).
 
-**v1 limitations.** The split is **vertical only** (columns) — no horizontal
-(stacked) split. Aligned diff (`:diff`) requires **exactly 2 panes**. Per-pane
-predicates: `--filter`/`--grep`/`--format`/`--display` apply to the first pane,
-and `--right-*` to the second; panes 3+ use the shared flags (a uniform per-pane
-mechanism is planned). Because the split compositor works on rendered
-cells, **protocol images** (Kitty/Sixel) render as **ASCII** and **`-r` raw**
-content renders through the cell pipeline (Interpret) while split. Runtime
-`:vsplit` panes also do not apply `--tabs`, `--header`, or status-prompt theming
-(the startup `--split` pane does). Frozen left columns (`--header ,C`) therefore
+**Current split limitations.** Aligned diff (`:diff`) requires **exactly 2
+panes**. Nested grids (mixing vertical and horizontal splits in one view) are
+not yet supported. Because the split compositor works on rendered cells,
+**protocol images** (Kitty/Sixel) render as **ASCII** and **`-r` raw** content
+renders through the cell pipeline (Interpret) while split. Runtime `:vsplit`
+panes also do not apply `--tabs`, `--header`, or status-prompt theming (the
+startup `--split` pane does). Frozen left columns (`--header ,C`) therefore
 apply per pane for startup-configured panes (each pane honors its own
-`--header`), but not for runtime `:vsplit` panes (which don't apply `--header`).
-See `OUT-OF-SCOPE.md`.
+`--header`), but not for runtime `:vsplit` panes (which don't apply
+`--header`). See `OUT-OF-SCOPE.md`.
 
 #### Diff mode (`--diff` / `:diff`)
 
@@ -816,13 +821,21 @@ Available placeholders:
 | `<rec-top>` / `<rec-bottom>` / `<rec-total>` | record range and total (records mode only) |
 | `<rec-block>` | `L<top>-<bot>/<total>  R<rec-top>-<rec-bot>/<rec-total>` in records mode; `<top>-<bot>/<total>` in line mode |
 | `<wrap-offset>` | `+N/M` indicator when inside a long-wrapped line |
+| `<col-offset>` | `»{col}` horizontal-scroll offset readout; empty when at column 0 |
 | `<format-tag>` | `[<format-name>]` when --format is active |
 | `<filter-tag>` | `[<format-name>]` when --filter is active |
 | `<grep-tag>` | `[grep]` when --grep is active |
+| `<or-tag>` | `[or]` when any OR-group is active |
 | `<hide-tag>` | `[hide]` or `[dim]` when a predicate is active |
 | `<search-tag>` | `[/pattern]` or `[?pattern]` while searching |
 | `<pretty-tag>` | `[pretty:<type>]` when prettify is on |
 | `<live-tag>` / `<follow-tag>` | `(L)` / `(F)` markers |
+| `<lock>` | `lock` when scroll-lock is on in a split; empty otherwise |
+| `<zoom>` | `zoom` when the focused pane is maximized; empty otherwise |
+| `<mouse>` | `nomouse` when mouse capture is off; empty when on |
+| `<file-index-tag>` | `[N/M]` multi-file position badge; empty with a single file |
+| `<tag-tag>` | `[tag: NAME (N/M)]` during a multi-match ctags cycle; empty otherwise |
+| `<preprocess-failed-tag>` | `[preprocess-failed: <stderr>]` when the preprocessor exited non-zero; empty otherwise |
 
 Tag placeholders that aren't active resolve to empty strings (with no
 surrounding whitespace), so a template like `<label><filter-tag>` cleanly
@@ -861,7 +874,10 @@ Action:
 - Existing command name in kebab-case: `scroll-down`, `page-up`,
   `goto-line`, `toggle-line-numbers`, `mark-set`, `search-forward`,
   `shell-escape`, `hscroll-left`, `hscroll-right`, `anim-pause`,
-  `anim-step-forward`, `anim-step-back`, `anim-restart`, etc. Unknown command
+  `anim-step-forward`, `anim-step-back`, `anim-restart`,
+  `focus-other-pane`, `focus-prev-pane`, `scroll-lock-toggle`,
+  `zoom-pane`, `mouse-toggle`, `diff-next-change`, `diff-prev-change`,
+  `scroll-logical-down`, `scroll-logical-up`, etc. Unknown command
   names error at startup. `clipboard-yank-line` (copy the current line to
   the clipboard, requires `--clipboard`) is a valid command but left
   unbound by default so it doesn't clobber `y` (scroll-up).
@@ -1076,14 +1092,14 @@ The first file opens immediately. Use `:`-prefixed commands to navigate:
 |---------|--------|
 | `:n` (or `:next`) | Next file. Shows `[no next file]` at the end. |
 | `:p` (or `:prev`) | Previous file. Shows `[no previous file]` at the start. |
-| `:b` (or `:buffers`) | Open the file picker overlay. Lists every file in the working set with its saved cursor position; type to filter (substring, case-insensitive); arrows/`j`/`k` or scrollwheel (with `--mouse`) to move; Enter to switch; Ctrl-D to drop a file; Esc to close. |
+| `:b` (or `:buffers`) | Open the file picker overlay. Lists every file in the working set with its saved cursor position; type to filter (substring, case-insensitive); arrows/`j`/`k` or scrollwheel (with mouse capture on) to move; Enter to switch; Ctrl-D to drop a file; Esc to close. |
 | `:e <path>` (or `:edit`) | Open `<path>`, append it to the file list, switch to it. `~/` expands to `$HOME`. |
 | `:f` | Show the current filename and position briefly in the status line. |
 | `:q` (or `:quit`) | Quit (alias for `q`). |
 | `:d` (or `:delete`) | Remove the current file from the list and switch to the next (or previous if at the end). Errors if only one file remains. |
 | `:x` (or `:first`) | Jump to the first file in the list. |
 | `:t` (or `:last`) | Jump to the last file in the list. |
-| `:help` (or `:h`) | Open the help overlay listing every keybinding, grouped by category. `F1` also opens it. Type to filter; arrows/scrollwheel (with `--mouse`) to scroll; Esc to close (clears filter first if non-empty). |
+| `:help` (or `:h`) | Open the help overlay listing every keybinding, grouped by category. `F1` also opens it. Type to filter; arrows/scrollwheel (with mouse capture on) to scroll; Esc to close (clears filter first if non-empty). |
 | `:tag NAME` | Jump to the named ctags/etags tag. See [Tag jumping](#tag-jumping). |
 | `:tnext` / `:tprev` | Cycle through multiple matches for the current tag. |
 | `:incsearch` | Toggle incremental search on/off. Takes effect on the next search prompt. See [Search](#search). |
@@ -1359,14 +1375,21 @@ The shell is taken from `$SHELL`, falling back to `/bin/sh`.
 ## Hex display
 
 Render the source as an `xxd`-style hex dump. One row covers 16 bytes:
-an 8-digit hex offset, the bytes themselves grouped in 8 × 2-byte words,
-and an ASCII gutter where printable bytes appear and everything else
-shows as `.`.
+an 8-digit hex offset, the bytes themselves (grouped by default in 2-byte
+groups — 8 groups × 2 bytes = 16 bytes per row; see **`--hex-group`** to
+change the grouping), and an ASCII gutter where
+printable bytes appear and everything else shows as `.`.
 
 ```sh
 tess --hex /usr/bin/ls
 tess -f --hex /var/log/binary-feed.bin   # follow mode works
 ```
+
+**`--hex-group N`** — change the number of hex characters per group. Values:
+`2`, `4` (default, matches `xxd`), `8`, `16`, `32`. A wider group is easier
+to scan for aligned data; a narrower one shows byte-level spacing. Requires
+`--hex`. Runtime: `:hex N` (e.g. `:hex 8` — changes grouping live without
+restarting).
 
 `--hex` is mutually exclusive with `--filter`, `--grep`, `--prettify`,
 `--format`, `--display`, `--record-start`, and `--prompt` — hex mode is
@@ -1573,9 +1596,9 @@ tess --tab-width 4 Makefile
 # Page through git log
 git log | tess
 
-# Page a colored command's output (tess passes ANSI through faithfully —
-# control bytes render as ^X, so use a tool that strips them if you want
-# them gone)
+# Page a colored command's output (tess interprets SGR color/style escapes
+# by default; non-SGR control sequences are silently discarded so they can't
+# corrupt the layout; use --no-color to see raw ^X glyphs instead)
 ls --color=always | tess
 
 # Build output, kept on screen for inspection
@@ -1934,4 +1957,4 @@ pane with no `file` is an error at load time.
 
 ## Versions
 
-This manual targets `tess 0.21.0`. Run `tess --version` to confirm.
+This manual documents `tess {{VERSION}}`. Run `tess --version` to confirm your installed build.
