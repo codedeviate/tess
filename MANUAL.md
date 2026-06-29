@@ -1375,8 +1375,9 @@ The shell is taken from `$SHELL`, falling back to `/bin/sh`.
 ## Hex display
 
 Render the source as an `xxd`-style hex dump. One row covers 16 bytes:
-an 8-digit hex offset, the bytes themselves (grouped by default in 4-byte
-groups — 4 × 4 bytes = 16 bytes per row), and an ASCII gutter where
+an 8-digit hex offset, the bytes themselves (grouped by default in 2-byte
+groups — 8 groups × 2 bytes = 16 bytes per row; see **`--hex-group`** to
+change the grouping), and an ASCII gutter where
 printable bytes appear and everything else shows as `.`.
 
 ```sh
