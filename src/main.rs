@@ -153,6 +153,88 @@ fn build_examples_text() -> String {
         "tess --errorlog --tail 50",
     ]);
 
+    examples_section(&mut buf, "OR-group filtering (complex log queries)");
+    examples_example(&mut buf, "Match lines where ANY condition in a group is satisfied, AND'd with required filters", &[
+        r"tess --format app --filter 'level>=WARN' \",
+        r"     --or-grep timeout --or-grep 'connection refused' app.log",
+        r"tess --format app --or-group svc1 --or-filter svc=api \",
+        r"     --or-group svc2 --or-filter svc=worker app.log",
+    ]);
+    examples_note(&mut buf, "Each --or-group is a named bucket; --or-filter/--or-grep join the most recent group. Every group must have ≥1 match. Groups are AND'd together.");
+
+    examples_section(&mut buf, "Side-by-side split and diff");
+    examples_example(&mut buf, "View two files side by side, or compare two versions", &[
+        "tess --split src/old.rs src/new.rs",
+        "tess --diff before.txt after.txt",
+        "tess --gitdiff src/main.rs",
+        "tess --gitdiff --staged src/main.rs",
+        "tess --hsplit a.log b.log",
+    ]);
+    examples_note(&mut buf, "Inside a split: Tab switches panes, = toggles scroll-lock, :diff enters diff mode. :vsplit / :hsplit / :only / :close at runtime. Pane zoom: press Z to toggle focus-fullscreen (remappable).");
+
+    examples_section(&mut buf, "Named layouts (multi-pane, from formats.toml)");
+    examples_example(&mut buf, "Launch a named layout defined in ~/.config/tess/formats.toml", &[
+        "# [layout.myview]",
+        r#"# orientation = "vertical""#,
+        r#"# [[layout.myview.pane]]"#,
+        r#"# file = "/var/log/api.log""#,
+        r#"# filter = ["level=ERROR"]"#,
+        r#"# [[layout.myview.pane]]"#,
+        r#"# file = "/var/log/worker.log""#,
+        r#"# filter = ["level=ERROR"]"#,
+        "",
+        "tess --myview",
+    ]);
+    examples_note(&mut buf, "Runtime: :layout myview reloads the named layout. layout names are disjoint from group names and mutually exclusive with --split/--diff.");
+
+    examples_section(&mut buf, "Hex dump (binary inspection)");
+    examples_example(&mut buf, "xxd-style hex dump of any file", &[
+        "tess --hex binary.bin",
+        "tess --hex --hex-group 16 core.dump",
+        "tess --hex /dev/urandom | head",
+    ]);
+
+    examples_section(&mut buf, "Image rendering");
+    examples_example(&mut buf, "Render PNG / JPEG / GIF / WebP as colored ASCII art or true pixels", &[
+        "tess photo.jpg",
+        "tess --blocks logo.png",
+        "tess --image-protocol sixel diagram.gif",
+        "tess --image-width 60 thumbnail.png",
+    ]);
+    examples_note(&mut buf, "Protocol auto-detect: Kitty > Sixel > ASCII. Animated GIFs auto-play; p pauses, ./,  step, Backspace restarts. Export: tess --stdout photo.jpg > art.txt");
+
+    examples_section(&mut buf, "Clipboard integration");
+    examples_example(&mut buf, "Read from clipboard, copy filtered output, or yank lines interactively", &[
+        "tess --from-clipboard",
+        "tess --to-clipboard --grep error app.log",
+        "tess --to-clipboard --format apache-combined --filter 'status>=500' access.log",
+        "tess --clipboard app.log",
+    ]);
+    examples_note(&mut buf, "Inside --clipboard mode: :yank copies the current line. Bind a key via clipboard-yank-line in keys.toml.");
+
+    examples_section(&mut buf, "Charset / encoding");
+    examples_example(&mut buf, "Decode non-UTF-8 files; search and filter operate on decoded text", &[
+        "tess --encoding iso-8859-1 legacy.log",
+        "tess --encoding windows-1252 report.txt",
+        "tess --encoding shift_jis japanese.log",
+    ]);
+    examples_note(&mut buf, "Runtime: :encoding iso-8859-1. Uses WHATWG labels — iso-8859-1 maps to windows-1252. UTF-16 is not supported.");
+
+    examples_section(&mut buf, "Multi-line records (stack traces, structured blocks)");
+    examples_example(&mut buf, "Group continuation lines into one record for search and filter", &[
+        r"tess --record-start '^\[' app.log",
+        r"tess --record-start '^[A-Z][a-z]+Exception' stacktrace.log",
+        r"tess --record-start '^---' --grep timeout events.log",
+    ]);
+    examples_note(&mut buf, "With --record-start, search (/pat) and --grep match whole records, not individual lines.");
+
+    examples_section(&mut buf, "Tag jumping (ctags / etags)");
+    examples_example(&mut buf, "Jump to a function or symbol defined in a tags file", &[
+        "tess -t my_function src/",
+        "tess -t main -T .git/tags src/main.rs",
+    ]);
+    examples_note(&mut buf, "Inside tess: Ctrl-] prompts for a tag (Tab-complete), Ctrl-T pops the stack. :tnext / :tprev cycle multi-match results.");
+
     examples_section(&mut buf, "Interactive keys (inside tess)");
     examples_example(&mut buf, "Search, scroll, and toggle display options", &[
         "/ pat <Enter>     forward regex search       n / N    repeat search",
