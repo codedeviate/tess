@@ -20,6 +20,13 @@ use clap::Parser;
 
 const MANUAL_TEXT: &str = include_str!("../MANUAL.md");
 
+/// Resolve the `{{VERSION}}` token in the manual to the compiled crate version.
+/// The committed MANUAL.md keeps the token (it is a template); only rendered
+/// output shows the number.
+fn inject_version(template: &str, version: &str) -> String {
+    template.replace("{{VERSION}}", version)
+}
+
 use colored::Colorize;
 
 fn examples_section(buf: &mut String, title: &str) {
@@ -641,10 +648,11 @@ fn real_main() -> Result<()> {
         eprintln!("tess: --follow-name has no effect without -f / --follow");
     }
     if args.manual {
+        let text = inject_version(MANUAL_TEXT, env!("CARGO_PKG_VERSION"));
         if io::stdout().is_terminal() {
-            return page_bytes("(manual)", MANUAL_TEXT.as_bytes(), ansi_mode);
+            return page_bytes("(manual)", text.as_bytes(), ansi_mode);
         }
-        print!("{}", MANUAL_TEXT);
+        print!("{}", text);
         return Ok(());
     }
     if args.examples {
@@ -1432,6 +1440,12 @@ fn resolve_image_protocol(flag: &str, is_tty: bool)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inject_version_replaces_token() {
+        assert_eq!(inject_version("a {{VERSION}} b", "9.9.9"), "a 9.9.9 b");
+        assert_eq!(inject_version("none here", "9.9.9"), "none here");
+    }
 
     #[test]
     fn parse_plus_g_is_goto_bottom() {

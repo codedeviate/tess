@@ -7,7 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VER="$(grep -m1 '^version' "$ROOT/Cargo.toml" | sed -E 's/.*"([^"]+)".*/\1/')"
 RECON="${RECON:-recon}"
-awk -f "$ROOT/scripts/typst-safe.awk" "$ROOT/MANUAL.md" \
+sed "s/{{VERSION}}/$VER/g" "$ROOT/MANUAL.md" \
+	| awk -f "$ROOT/scripts/typst-safe.awk" \
 	| "$RECON" --md-to-pdf - -o "$ROOT/MANUAL.pdf" \
 		--gfm --page-break-on-h1 --font "IBM Plex Sans" \
 		--cover --toc --toc-depth 4 --toc-plain --toc-title "Contents" \

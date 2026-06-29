@@ -1934,4 +1934,4 @@ pane with no `file` is an error at load time.
 
 ## Versions
 
-This manual targets `tess 0.21.0`. Run `tess --version` to confirm.
+This manual documents `tess {{VERSION}}`. Run `tess --version` to confirm your installed build.
