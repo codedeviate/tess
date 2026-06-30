@@ -10,6 +10,14 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.58.2] — 2026-06-30
+
+### Changed
+- **`--help` / man-page accuracy sweep.** Corrected stale `cli.rs` help strings (e.g. `--display` said search matched the raw line; it matches the rendered template) so `tess --help` and the generated man page are accurate. Audited `INSTALL.md`.
+
+### Added
+- A `Documentation discipline` policy in CLAUDE.md (keep every user-facing surface — `--help`/man page, `--manual`/PDF, `--examples`, README, INSTALL, CHANGELOG — current per feature change) and a backstop test (`tests/help_manual_parity.rs`) that fails if a `--help` flag is undocumented in `MANUAL.md`.
+
 ## [0.58.1] — 2026-06-29
 
 ### Changed
