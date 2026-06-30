@@ -76,7 +76,7 @@ Show only the first N lines of the source. Mutually exclusive with \-\-tail
 Pin the top L source lines (and the left C columns, when horizontal scroll is supported) at the top of the viewport. Form: `L` or `L,C`. Default `0,0` (off). Mirrors `less \-\-header`. Runtime adjustment: `:header L [C]`
 .TP
 \fB\-\-heights\fR \fI<PCT,...>\fR
-Per\-pane heights as percentages, comma\-separated, in pane order (e.g. `\-\-heights 50,50`). Blank or `0` = auto. For horizontal splits (`\-\-hsplit`); ignored with `\-\-split`. Values 1\-100
+Per\-pane heights as percentages, comma\-separated, in pane order (e.g. `\-\-heights 50,50`). Blank or `0` = auto. For horizontal splits (`\-\-hsplit`); an error with `\-\-split` (use `\-\-widths`). Values 1\-100
 .TP
 \fB\-\-hex\fR
 Render the source as an xxd\-style hex dump instead of byte\-faithful text. 16 bytes per row, offset prefix, ASCII gutter. Mutually exclusive with parsing\- and rendering\-oriented flags
@@ -265,7 +265,7 @@ Truecolor (24\-bit RGB) handling. `auto` (default) checks `$COLORTERM` and downs
 Body lines scrolled per mouse\-wheel notch when mouse capture is on (the default; default 3)
 .TP
 \fB\-\-widths\fR \fI<PCT,...>\fR
-Per\-pane widths as percentages of the split axis, comma\-separated, in pane order (e.g. `\-\-widths 60,20,20`). Blank or `0` = auto (equal share of the remainder). For vertical splits (`\-\-split`); ignored with `\-\-hsplit`. Values 1\-100
+Per\-pane widths as percentages of the split axis, comma\-separated, in pane order (e.g. `\-\-widths 60,20,20`). Blank or `0` = auto (equal share of the remainder). For vertical splits (`\-\-split`); an error with `\-\-hsplit` (use `\-\-heights`). Values 1\-100
 .TP
 \fB\-z\fR, \fB\-\-window\fR \fI<N>\fR
 PageDown / PageUp step size in lines. Default: full screen height (body rows). Half\-page commands always advance by half the screen regardless. Mirrors `less \-zn` / `\-\-window=n`

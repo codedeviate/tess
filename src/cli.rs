@@ -157,7 +157,7 @@ pub struct Args {
 
     /// Per-pane heights as percentages, comma-separated, in pane order
     /// (e.g. `--heights 50,50`). Blank or `0` = auto. For horizontal splits
-    /// (`--hsplit`); ignored with `--split`. Values 1-100.
+    /// (`--hsplit`); an error with `--split` (use `--widths`). Values 1-100.
     #[arg(long = "heights", value_name = "PCT,...")]
     pub heights: Option<String>,
 
@@ -534,8 +534,8 @@ pub struct Args {
 
     /// Per-pane widths as percentages of the split axis, comma-separated, in
     /// pane order (e.g. `--widths 60,20,20`). Blank or `0` = auto (equal share
-    /// of the remainder). For vertical splits (`--split`); ignored with
-    /// `--hsplit`. Values 1-100.
+    /// of the remainder). For vertical splits (`--split`); an error with
+    /// `--hsplit` (use `--heights`). Values 1-100.
     #[arg(long = "widths", value_name = "PCT,...")]
     pub widths: Option<String>,
 
