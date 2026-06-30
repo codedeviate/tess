@@ -160,6 +160,9 @@ enum ColonCommand {
     Mouse(Option<bool>),
     /// `:zoom` toggles the focused pane between full-screen and split size.
     Zoom,
+    /// `:width N` / `:height N` (Some) or `:width auto`/`0` (None) — set the
+    /// focused pane's size % along the given axis.
+    PaneSize { width: bool, pct: Option<u16> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -174,6 +177,7 @@ enum ColonParseError {
     CaseInvalid(String),
     MouseInvalid(String),
     HeaderInvalid(String),
+    PaneSizeInvalid(String),
 }
 
 impl std::fmt::Display for ColonParseError {
@@ -200,6 +204,9 @@ impl std::fmt::Display for ColonParseError {
             }
             ColonParseError::HeaderInvalid(v) => {
                 write!(f, ":header expects `L` or `L C` (got {v})")
+            }
+            ColonParseError::PaneSizeInvalid(v) => {
+                write!(f, ":width/:height expects 1-100 or auto (got {v})")
             }
         }
     }
@@ -315,6 +322,17 @@ fn parse_colon_command(buf: &str) -> std::result::Result<ColonCommand, ColonPars
                     Ok(ColonCommand::Header(nl, nc))
                 }
                 _ => Err(ColonParseError::HeaderInvalid(rest.to_string())),
+            }
+        }
+        "width" | "height" => {
+            let width = cmd == "width";
+            match rest {
+                "" => Err(ColonParseError::PaneSizeInvalid(String::new())),
+                "auto" | "0" => Ok(ColonCommand::PaneSize { width, pct: None }),
+                other => match other.parse::<u16>() {
+                    Ok(p) if (1..=100).contains(&p) => Ok(ColonCommand::PaneSize { width, pct: Some(p) }),
+                    _ => Err(ColonParseError::PaneSizeInvalid(other.to_string())),
+                },
             }
         }
         "case" => {
@@ -1031,6 +1049,7 @@ fn dispatch_colon_command(
         ColonCommand::VSplit(_) | ColonCommand::HSplit(_) | ColonCommand::Rotate
         | ColonCommand::Only | ColonCommand::Layout(_) | ColonCommand::ScrollLock
         | ColonCommand::SetEncoding(_) | ColonCommand::Mouse(_) | ColonCommand::Zoom
+        | ColonCommand::PaneSize { .. }
         | ColonCommand::Diff { .. } | ColonCommand::NoDiff | ColonCommand::DiffToggleWs => {
             unreachable!("split/scroll-lock/encoding/diff/mouse/zoom commands are handled in the run() event loop")
         }
@@ -2418,6 +2437,24 @@ pub fn run(
                                             }
                                             Ok(ColonCommand::Zoom) => {
                                                 toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation, &pane_sizes);
+                                                mode = InputMode::Normal;
+                                            }
+                                            Ok(ColonCommand::PaneSize { width, pct }) => {
+                                                let vertical = matches!(orientation, Orientation::Vertical);
+                                                if others.is_empty() {
+                                                    viewport.flash("pane sizing needs a split", 40);
+                                                } else if diff.is_some() {
+                                                    viewport.flash("pane sizing not available in diff", 40);
+                                                } else if width != vertical {
+                                                    viewport.flash(
+                                                        if vertical { "use :width in a vertical split" }
+                                                        else { "use :height in a horizontal split" }, 40);
+                                                } else {
+                                                    let n = others.len() + 1;
+                                                    if pane_sizes.len() < n { pane_sizes.resize(n, None); }
+                                                    pane_sizes[focused_pos] = pct;
+                                                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
+                                                }
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Mouse(arg)) => {
@@ -4972,5 +5009,15 @@ mod tests {
         assert_eq!(parse_colon_command("mouse on").unwrap(), ColonCommand::Mouse(Some(true)));
         assert_eq!(parse_colon_command("mouse off").unwrap(), ColonCommand::Mouse(Some(false)));
         assert!(parse_colon_command("mouse bogus").is_err());
+    }
+
+    #[test]
+    fn parse_colon_width_height() {
+        assert_eq!(parse_colon_command("width 60").unwrap(), ColonCommand::PaneSize { width: true, pct: Some(60) });
+        assert_eq!(parse_colon_command("height 50").unwrap(), ColonCommand::PaneSize { width: false, pct: Some(50) });
+        assert_eq!(parse_colon_command("width auto").unwrap(), ColonCommand::PaneSize { width: true, pct: None });
+        assert_eq!(parse_colon_command("width 0").unwrap(), ColonCommand::PaneSize { width: true, pct: None });
+        assert!(parse_colon_command("width 101").is_err());
+        assert!(parse_colon_command("width x").is_err());
     }
 }
