@@ -151,6 +151,30 @@ After every commit on this branch:
 
 If a commit only touches docs and doesn't change the version, the tarball can be skipped — the previous one is still current. If the version bumped, regenerate.
 
+## Documentation discipline
+
+Every feature **added, changed, or removed** MUST update every affected
+user-facing surface **in the same change** — never as a follow-up. A feature is
+not done until its documentation is. The surfaces and what each feeds:
+
+1. **`src/cli.rs` `///` help** → `tess --help` AND `man/tess.1`. After editing,
+   regenerate the man page: `cargo run --release --bin gen-manpage`. Never
+   hand-edit `man/tess.1` (it is generated from the clap definitions).
+2. **`MANUAL.md`** → `tess --manual` AND `MANUAL.pdf`. After editing, regenerate
+   the PDF: `scripts/gen-manual-pdf.sh`.
+3. **`build_examples_text()` in `src/main.rs`** → `tess --examples`. Add/curate
+   an example when a feature is worth showing.
+4. **`README.md`** — the curated overview. Add prominent features; it need not
+   list every flag (it points to `tess --help` / `tess --manual`).
+5. **`INSTALL.md`** — when install or invocation changes.
+6. **`CHANGELOG.md`** — a new entry for the release.
+
+Two tests are mechanical backstops, NOT substitutes for the per-feature review:
+`tests/help_manual_parity.rs` fails if a `--help` flag is missing from
+`MANUAL.md`; `tests/manual_version.rs` guards the self-updating version footer.
+They catch a missing flag or a stale stamp — they do NOT catch a flag that is
+listed but described wrongly. Review the prose against the code.
+
 ## Linux release artifacts (`.deb` for amd64 + arm64)
 
 On **every release** (i.e. whenever the version in `Cargo.toml` bumps and gets tagged), also produce statically-linked musl `.deb` packages for the two Linux architectures we ship: `amd64` (`x86_64`) and `arm64` (`aarch64`). These belong in the GitHub release as upload assets.

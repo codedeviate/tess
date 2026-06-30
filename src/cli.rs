@@ -62,8 +62,8 @@ pub struct Args {
     #[arg(long = "diff-ignore-whitespace")]
     pub diff_ignore_whitespace: bool,
 
-    /// With `--filter`, dim non-matching lines instead of hiding them. Keeps
-    /// surrounding context visible.
+    /// With `--filter`, `--grep`, or OR-filter/OR-grep, dim non-matching lines
+    /// instead of hiding them. Keeps surrounding context visible.
     #[arg(long = "dim")]
     pub dim: bool,
 
@@ -71,7 +71,7 @@ pub struct Args {
     /// raw line. Syntax: `<fieldname>` placeholders, `\<` for literal `<`,
     /// `\\` for literal `\`. Example: `--display '[<time>] <status> <msg>'`.
     /// Overrides the format's `display` key (if set). Requires `--format`.
-    /// Search still matches against the raw line.
+    /// Search matches the rendered text (what you see), not the raw line.
     #[arg(long = "display", value_name = "TEMPLATE")]
     pub display: Option<String>,
 
@@ -538,7 +538,7 @@ pub struct Args {
     #[arg(long = "wordwrap")]
     pub word_wrap: bool,
 
-    /// Files to view (only the first is opened in MVP).
+    /// Files to view. Navigate between them with `:n` / `:p` / `:e` / `:x`.
     pub files: Vec<PathBuf>,
 }
 

@@ -84,8 +84,9 @@ cd tess-<version>           # or wherever the archive extracted to
 ```
 
 The archive contains everything needed to build offline once dependencies are
-fetched: `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `MANUAL.md`, and this
-file.
+fetched: `Cargo.toml`, `Cargo.lock`, `src/`, `tests/`, `benches/`, `man/`,
+`scripts/`, and the docs (`README.md`, `MANUAL.md`, `MANUAL.pdf`, `CLAUDE.md`,
+`OUT-OF-SCOPE.md`, `LICENSE`, `.gitignore`, and this file).
 
 > **Note:** the archive does not have a top-level `tess-<version>/` directory —
 > it extracts straight into the current working directory. Run `tar` from a
@@ -115,7 +116,7 @@ Run the test suite to confirm everything is healthy:
 cargo test
 ```
 
-You should see all tests pass (~140 across unit, integration, and doc tests).
+You should see all tests pass (~900 across unit, integration, and doc tests).
 
 ---
 
