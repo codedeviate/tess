@@ -31,10 +31,10 @@ Allow \-\-diff past the size cap (large files; may be slow / memory\-heavy)
 In \-\-diff, treat lines differing only in whitespace as equal
 .TP
 \fB\-\-dim\fR
-With `\-\-filter`, dim non\-matching lines instead of hiding them. Keeps surrounding context visible
+With `\-\-filter`, `\-\-grep`, or OR\-filter/OR\-grep, dim non\-matching lines instead of hiding them. Keeps surrounding context visible
 .TP
 \fB\-\-display\fR \fI<TEMPLATE>\fR
-Render each parsed line through this template instead of showing the raw line. Syntax: `<fieldname>` placeholders, `\\<` for literal `<`, `\\\\` for literal `\\`. Example: `\-\-display \*(Aq[<time>] <status> <msg>\*(Aq`. Overrides the format\*(Aqs `display` key (if set). Requires `\-\-format`. Search still matches against the raw line
+Render each parsed line through this template instead of showing the raw line. Syntax: `<fieldname>` placeholders, `\\<` for literal `<`, `\\\\` for literal `\\`. Example: `\-\-display \*(Aq[<time>] <status> <msg>\*(Aq`. Overrides the format\*(Aqs `display` key (if set). Requires `\-\-format`. Search matches the rendered text (what you see), not the raw line
 .TP
 \fB\-\-encoding\fR \fI<ENCODING>\fR [default: utf\-8]
 Input charset (WHATWG label: utf\-8, iso\-8859\-1, windows\-1252, shift_jis, …). Default utf\-8. Ignored under \-r (raw passthrough)
@@ -274,6 +274,6 @@ Print help
 Print version
 .TP
 [\fIFILES\fR]
-Files to view (only the first is opened in MVP)
+Files to view. Navigate between them with `:n` / `:p` / `:e` / `:x`
 .SH VERSION
 v0.58.1
