@@ -115,7 +115,7 @@ Run the test suite to confirm everything is healthy:
 cargo test
 ```
 
-You should see all tests pass (~140 across unit, integration, and doc tests).
+You should see all tests pass (~900 across unit, integration, and doc tests).
 
 ---
 
