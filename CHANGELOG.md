@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.59.0] — 2026-06-30
+
+### Added
+- **Percentage-based pane sizing.** Assign a pane a share of the split axis instead of the default even split: `--widths 60,20,20` / `--heights 50,50` at launch (comma list in pane order; blank/`0` = auto), `:width N` / `:height N` (and `:width auto`) on the focused pane at runtime, or a `width` / `height` field on `[[layout.NAME.pane]]` in `formats.toml`. Auto panes share the remainder equally; sizes are percentages recomputed on every resize and clamped to the per-pane minimum. Vertical and horizontal splits; diff mode unaffected.
+
 ## [0.58.2] — 2026-06-30
 
 ### Changed
