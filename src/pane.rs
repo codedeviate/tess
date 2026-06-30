@@ -122,12 +122,27 @@ pub fn split_axis_weighted(total: u16, sizes: &[Option<u16>], min: u16) -> Vec<u
         }
     }
 
-    // Absorb rounding drift in the largest pane so the sum is exact.
-    let sum: u32 = out.iter().sum();
-    if sum != total_u {
-        let idx = (0..n).max_by_key(|&i| out[i]).unwrap();
-        let adjusted = out[idx] as i64 + (total_u as i64 - sum as i64);
-        out[idx] = adjusted.max(min_u as i64) as u32;
+    // Absorb rounding drift one cell at a time so the result sums to exactly
+    // `total`. Each iteration adjusts the largest eligible pane by ±1; drift
+    // magnitude is small (a few cells at most), so this terminates quickly.
+    loop {
+        let sum: u32 = out.iter().sum();
+        if sum == total_u { break; }
+        if sum > total_u {
+            // Trim 1 from the largest pane that is still above min.
+            if let Some(idx) = (0..n)
+                .filter(|&i| out[i] > min_u)
+                .max_by_key(|&i| out[i])
+            {
+                out[idx] -= 1;
+            } else {
+                break; // unreachable given caller guarantee, but don't spin
+            }
+        } else {
+            // Grow 1 on the largest pane (no upper clamp needed).
+            let idx = (0..n).max_by_key(|&i| out[i]).unwrap();
+            out[idx] += 1;
+        }
     }
 
     out.iter().map(|&x| x as u16).collect()
@@ -615,6 +630,80 @@ mod tests {
         // The wrappers must be byte-identical to the even fns for all-None.
         assert_eq!(split_widths_n_weighted(34, &[None, None, None]), split_widths_n(34, 3));
         assert_eq!(split_heights_n_weighted(24, &[None, None]), split_heights_n(24, 2));
+    }
+
+    /// Regression: the reported starved-explicit case must sum to exactly total
+    /// and all elements must meet the minimum.
+    #[test]
+    fn split_axis_weighted_starved_explicit_regression() {
+        let out = split_axis_weighted(24, &[Some(1), Some(50), Some(50)], 8);
+        assert_eq!(out.iter().sum::<u16>(), 24, "sum must equal total: {:?}", out);
+        for &v in &out {
+            assert!(v >= 8, "every element must be >= min: {:?}", out);
+        }
+    }
+
+    /// Property sweep: for various n, total, and size vectors the result must
+    /// sum to exactly total and every element must be >= min.
+    #[test]
+    fn split_axis_weighted_sum_exactness_sweep() {
+        const MIN: u16 = 8;
+
+        // A representative set of size vectors per pane count n.
+        // Vectors are chosen to exercise: all-None, one-big-rest-auto,
+        // two-big-one-auto, all-explicit-over-100, tiny-explicit-rest-auto.
+        let cases_2: &[&[Option<u16>]] = &[
+            &[None, None],
+            &[Some(70), None],
+            &[Some(1), None],
+            &[Some(50), Some(50)],
+            &[Some(90), Some(90)],
+            &[Some(1), Some(50)],
+        ];
+        let cases_3: &[&[Option<u16>]] = &[
+            &[None, None, None],
+            &[Some(60), None, None],
+            &[Some(1), Some(50), Some(50)],
+            &[Some(50), Some(50), None],
+            &[Some(90), Some(90), None],
+            &[Some(1), Some(5), None],
+            &[Some(33), Some(33), Some(33)],
+        ];
+        let cases_4: &[&[Option<u16>]] = &[
+            &[None, None, None, None],
+            &[Some(40), None, None, None],
+            &[Some(1), Some(1), None, None],
+            &[Some(50), Some(50), None, None],
+            &[Some(25), Some(25), Some(25), Some(25)],
+            &[Some(1), Some(50), Some(50), None],
+        ];
+
+        let all_cases: &[(usize, &[&[Option<u16>]])] = &[
+            (2, cases_2),
+            (3, cases_3),
+            (4, cases_4),
+        ];
+
+        for &(n, cases) in all_cases {
+            let min_total = (n as u16) * MIN;
+            for total in min_total..=120 {
+                for sizes in cases.iter() {
+                    assert_eq!(sizes.len(), n, "test case length mismatch");
+                    let out = split_axis_weighted(total, sizes, MIN);
+                    let sum: u16 = out.iter().sum();
+                    assert_eq!(
+                        sum, total,
+                        "n={n} total={total} sizes={sizes:?} → {out:?} sums to {sum}, want {total}"
+                    );
+                    for &v in &out {
+                        assert!(
+                            v >= MIN,
+                            "n={n} total={total} sizes={sizes:?} → {out:?}: element {v} < min {MIN}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
