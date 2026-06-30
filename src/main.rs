@@ -77,13 +77,14 @@ fn build_examples_text() -> String {
     examples_section(&mut buf, "Pretty-printing structured files");
     examples_example(&mut buf, "Auto-detect from extension or force a content type", &[
         "tess --prettify config.json",
+        "tess --prettify events.jsonl",
         "tess --prettify schema.yaml",
         "tess --prettify Cargo.toml",
         "tess --prettify page.html",
         "tess --prettify rows.csv",
         "tess --content-type=json data.bin",
     ]);
-    examples_note(&mut buf, "Inside the pager: Shift-P toggles, -Pj/y/t/x/h/c/a/r switches type.");
+    examples_note(&mut buf, "Inside the pager: Shift-P toggles, -Pj/l/y/t/x/h/c/a/r switches type.");
 
     examples_section(&mut buf, "Following live output");
     examples_example(&mut buf, "Watch a log file or a file rewritten in place", &[

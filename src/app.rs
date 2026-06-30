@@ -2032,6 +2032,7 @@ pub fn run(
                         if let Event::Key(KeyEvent { code, .. }) = event {
                             let target: Option<PrettifyTarget> = match code {
                                 KeyCode::Char('j') | KeyCode::Char('J') => Some(PrettifyTarget::Mode(PrettifyMode::Json)),
+                                KeyCode::Char('l') | KeyCode::Char('L') => Some(PrettifyTarget::Mode(PrettifyMode::Jsonl)),
                                 KeyCode::Char('y') | KeyCode::Char('Y') => Some(PrettifyTarget::Mode(PrettifyMode::Yaml)),
                                 KeyCode::Char('t') | KeyCode::Char('T') => Some(PrettifyTarget::Mode(PrettifyMode::Toml)),
                                 KeyCode::Char('x') | KeyCode::Char('X') => Some(PrettifyTarget::Mode(PrettifyMode::Xml)),

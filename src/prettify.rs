@@ -17,6 +17,7 @@ use std::io::Cursor;
 pub enum PrettifyMode {
     Off,
     Json,
+    Jsonl,
     Yaml,
     Toml,
     Xml,
@@ -30,6 +31,7 @@ impl PrettifyMode {
         match self {
             Self::Off => "",
             Self::Json => "json",
+            Self::Jsonl => "jsonl",
             Self::Yaml => "yaml",
             Self::Toml => "toml",
             Self::Xml => "xml",
@@ -61,6 +63,7 @@ pub fn parse_content_type(name: &str) -> Result<Option<PrettifyMode>, String> {
         "auto" => return Ok(None),
         "raw" | "off" | "none" => PrettifyMode::Off,
         "json" => PrettifyMode::Json,
+        "jsonl" | "ndjson" => PrettifyMode::Jsonl,
         "yaml" | "yml" => PrettifyMode::Yaml,
         "toml" => PrettifyMode::Toml,
         "xml" => PrettifyMode::Xml,
@@ -69,7 +72,7 @@ pub fn parse_content_type(name: &str) -> Result<Option<PrettifyMode>, String> {
         other => {
             return Err(format!(
                 "unknown content type `{other}` (try one of: \
-auto, raw, json, yaml, toml, xml, html, csv)"
+auto, raw, json, jsonl, yaml, toml, xml, html, csv)"
             ));
         }
     };
@@ -81,6 +84,7 @@ pub fn detect_from_path(path: &Path) -> Option<PrettifyMode> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     Some(match ext.as_str() {
         "json" => PrettifyMode::Json,
+        "jsonl" | "ndjson" => PrettifyMode::Jsonl,
         "yaml" | "yml" => PrettifyMode::Yaml,
         "toml" => PrettifyMode::Toml,
         "xml" => PrettifyMode::Xml,
@@ -113,6 +117,19 @@ pub fn detect_from_bytes(bytes: &[u8]) -> Option<PrettifyMode> {
     // Generic XML element start.
     if trimmed[0] == b'<' {
         return Some(PrettifyMode::Xml);
+    }
+    // JSON Lines / NDJSON: compact, one value per line. The head starts (sans
+    // leading whitespace) with { or [, AND the line after the first newline
+    // ALSO begins flush-left (column 0, no indentation) with { or [. The
+    // flush-left requirement is what separates JSONL from a pretty-printed JSON
+    // array or a multi-line single object, whose inner lines are indented.
+    if trimmed[0] == b'{' || trimmed[0] == b'[' {
+        if let Some(nl) = trimmed.iter().position(|&b| b == b'\n') {
+            let next = &trimmed[nl + 1..];
+            if matches!(next.first(), Some(b'{') | Some(b'[')) {
+                return Some(PrettifyMode::Jsonl);
+            }
+        }
     }
     // JSON object or array.
     if trimmed[0] == b'{' || trimmed[0] == b'[' {
@@ -157,6 +174,7 @@ pub fn prettify(mode: PrettifyMode, input: &[u8], enc: crate::charset::Encoding)
     match mode {
         PrettifyMode::Off => Ok(input.to_vec()),
         PrettifyMode::Json => prettify_json(input, enc),
+        PrettifyMode::Jsonl => prettify_jsonl(input, enc),
         PrettifyMode::Yaml => prettify_yaml(input, enc),
         PrettifyMode::Toml => prettify_toml(input, enc),
         PrettifyMode::Xml => prettify_xml(input, false),
@@ -171,6 +189,31 @@ fn prettify_json(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>,
         serde_json::from_str(&s).map_err(|e| format!("json parse: {e}"))?;
     let mut out = serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?;
     if !out.ends_with(b"\n") {
+        out.push(b'\n');
+    }
+    Ok(out)
+}
+
+fn prettify_jsonl(input: &[u8], enc: crate::charset::Encoding) -> Result<Vec<u8>, String> {
+    let s = crate::charset::decode_line(input, enc);
+    let mut blocks: Vec<String> = Vec::new();
+    for raw_line in s.split('\n') {
+        // Tolerate CRLF: drop a single trailing CR so it never leaks into output.
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.trim().is_empty() {
+            continue; // source spacing, not a record
+        }
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value) => match serde_json::to_string_pretty(&value) {
+                Ok(pretty) => blocks.push(pretty),
+                Err(_) => blocks.push(line.to_string()),
+            },
+            // Pass through unparseable lines verbatim (resilient for real logs).
+            Err(_) => blocks.push(line.to_string()),
+        }
+    }
+    let mut out = blocks.join("\n\n").into_bytes();
+    if !out.is_empty() && !out.ends_with(b"\n") {
         out.push(b'\n');
     }
     Ok(out)
@@ -423,6 +466,93 @@ mod tests {
         let out = prettify(PrettifyMode::Json, input, enc).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("café"), "expected café in output, got: {s}");
+    }
+
+    #[test]
+    fn prettify_jsonl_expands_each_record_with_blank_separator() {
+        let input = b"{\"level\":\"info\",\"port\":8080}\n{\"level\":\"warn\",\"ms\":1203}\n";
+        let out = prettify(PrettifyMode::Jsonl, input, utf8()).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Two indented blocks.
+        assert!(s.contains("\"level\": \"info\""), "got: {s}");
+        assert!(s.contains("\"port\": 8080"), "got: {s}");
+        assert!(s.contains("\"ms\": 1203"), "got: {s}");
+        // Exactly one blank line between the two records: a `}` then blank then `{`.
+        assert!(s.contains("}\n\n{"), "expected one blank line between records, got: {s}");
+        assert!(s.ends_with("}\n"), "expected trailing newline, got: {s}");
+    }
+
+    #[test]
+    fn prettify_jsonl_passes_through_unparseable_lines() {
+        let input = b"{\"a\":1}\nthis is not json\n{\"b\":2}\n";
+        let out = prettify(PrettifyMode::Jsonl, input, utf8()).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Bad line appears verbatim, valid ones expanded.
+        assert!(s.contains("this is not json"), "got: {s}");
+        assert!(s.contains("\"a\": 1"), "got: {s}");
+        assert!(s.contains("\"b\": 2"), "got: {s}");
+    }
+
+    #[test]
+    fn prettify_jsonl_skips_blank_lines() {
+        let input = b"{\"a\":1}\n\n  \n{\"b\":2}\n";
+        let out = prettify(PrettifyMode::Jsonl, input, utf8()).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Blank/whitespace-only source lines do not add extra separators:
+        // there is a single `}\n\n{` join, never `}\n\n\n{`.
+        assert!(s.contains("}\n\n{"), "got: {s}");
+        assert!(!s.contains("}\n\n\n"), "unexpected double blank, got: {s}");
+    }
+
+    #[test]
+    fn prettify_jsonl_tolerates_crlf() {
+        let input = b"{\"a\":1}\r\n{\"b\":2}\r\n";
+        let out = prettify(PrettifyMode::Jsonl, input, utf8()).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("\"a\": 1"), "got: {s}");
+        assert!(s.contains("\"b\": 2"), "got: {s}");
+        assert!(!s.contains('\r'), "no stray CR should survive, got: {s:?}");
+    }
+
+    #[test]
+    fn prettify_jsonl_decodes_non_ascii() {
+        let enc = crate::charset::parse_label("iso-8859-1").unwrap();
+        // {"name":"caf\xe9"} per line, Latin-1.
+        let input = b"{\"name\":\"caf\xe9\"}\n{\"name\":\"caf\xe9\"}\n";
+        let out = prettify(PrettifyMode::Jsonl, input, enc).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("café"), "expected café, got: {s}");
+    }
+
+    #[test]
+    fn parse_content_type_recognizes_jsonl_aliases() {
+        assert_eq!(parse_content_type("jsonl").unwrap(), Some(PrettifyMode::Jsonl));
+        assert_eq!(parse_content_type("NDJSON").unwrap(), Some(PrettifyMode::Jsonl));
+    }
+
+    #[test]
+    fn detect_from_path_recognizes_jsonl_extensions() {
+        assert_eq!(detect_from_path(Path::new("events.jsonl")), Some(PrettifyMode::Jsonl));
+        assert_eq!(detect_from_path(Path::new("DATA.NDJSON")), Some(PrettifyMode::Jsonl));
+    }
+
+    #[test]
+    fn detect_from_bytes_sniffs_jsonl_two_compact_lines() {
+        assert_eq!(detect_from_bytes(b"{\"a\":1}\n{\"b\":2}\n"), Some(PrettifyMode::Jsonl));
+        assert_eq!(detect_from_bytes(b"[1,2]\n[3,4]\n"), Some(PrettifyMode::Jsonl));
+    }
+
+    #[test]
+    fn detect_from_bytes_pretty_json_array_is_not_jsonl() {
+        // Indented inner lines → NOT JSONL; stays Json.
+        assert_eq!(detect_from_bytes(b"[\n  {\"a\":1},\n  {\"b\":2}\n]"), Some(PrettifyMode::Json));
+    }
+
+    #[test]
+    fn detect_from_bytes_single_object_is_json_not_jsonl() {
+        assert_eq!(detect_from_bytes(b"{\"a\":1}"), Some(PrettifyMode::Json));
+        assert_eq!(detect_from_bytes(b"{\"a\":1}\n"), Some(PrettifyMode::Json));
+        assert_eq!(detect_from_bytes(b"{\n  \"a\": 1\n}"), Some(PrettifyMode::Json));
     }
 
     #[test]

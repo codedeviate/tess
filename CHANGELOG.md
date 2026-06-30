@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.60.0] — 2026-06-30
+
+### Added
+- **JSONL / NDJSON prettify.** `--prettify` now handles JSON Lines: each record is expanded into indented multi-line JSON separated by a blank line, and any line that is not valid JSON passes through verbatim (so log headers, blank lines, and truncated tails stay readable). Reachable via the `.jsonl`/`.ndjson` extension, a byte sniff (two flush-left `{`/`[` lines), `--content-type=jsonl` (alias `ndjson`), or the interactive `-Pl` key. Because bad lines pass through, JSONL never falls back to a raw `:err` state.
+
 ## [0.59.0] — 2026-06-30
 
 ### Added

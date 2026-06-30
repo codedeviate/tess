@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.59.0" 
+.TH tess 1  "tess 0.60.0" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
@@ -19,7 +19,7 @@ Chop long lines instead of wrapping
 Enable interactive clipboard yank: `:yank` copies the current line to the system clipboard. Bind a key via `clipboard\-yank\-line` in keys.toml (unbound by default, so it never clobbers existing keys)
 .TP
 \fB\-\-content\-type\fR \fI<TYPE>\fR
-Force the content type for `\-\-prettify` (otherwise auto\-detected from the filename extension and the first bytes). Values: `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`. Setting this implies `\-\-prettify` (unless the value is `raw`/`auto`)
+Force the content type for `\-\-prettify` (otherwise auto\-detected from the filename extension and the first bytes). Values: `auto`, `raw`, `json`, `jsonl` (alias `ndjson`), `yaml`, `toml`, `xml`, `html`, `csv`. Setting this implies `\-\-prettify` (unless `raw`/`auto`)
 .TP
 \fB\-\-diff\fR
 Open a side\-by\-side aligned diff of two files (implies a split). Interactive only. See \-\-diff\-force, \-\-diff\-ignore\-whitespace
@@ -160,7 +160,7 @@ Start at the first line matching PATTERN (equivalent to `+/PATTERN`). Mirrors `l
 Pipe the source file through this command before rendering. Must start with `|`; `%s` is substituted with the file path. Example: `\-\-preprocess \*(Aq|pdftotext %s \-\*(Aq`. Overrides $LESSOPEN
 .TP
 \fB\-\-prettify\fR
-Pretty\-print structured content (JSON, YAML, TOML, XML, HTML, CSV). Detects the type from the filename extension or the first bytes; use `\-\-content\-type=NAME` to override. Static files only — not allowed with `\-\-follow`, `\-\-live`, or `\-\-filter`. Toggle interactively with `Shift\-P`; force a type with `\-P` then a letter (j/y/t/x/h/c)
+Pretty\-print structured content (JSON, JSONL/NDJSON, YAML, TOML, XML, HTML, CSV). Detects the type from the filename extension or the first bytes; use `\-\-content\-type=NAME` to override. Static files only — not allowed with `\-\-follow`, `\-\-live`, or `\-\-filter`. Toggle interactively with `Shift\-P`; force a type with `\-P` then a letter (j/l/y/t/x/h/c)
 .TP
 \fB\-\-prompt\fR \fI<TEMPLATE>\fR
 Replace the hardcoded status format with a templated string. Uses the same `<field>` syntax as `\-\-display`. Available fields: label, top, bottom, total, pct, rec\-top, rec\-bottom, rec\-total, rec\-block, wrap\-offset, format\-tag, filter\-tag, grep\-tag, hide\-tag, search\-tag, pretty\-tag, live\-tag, follow\-tag. Per\-format default can be set via `prompt = \*(Aq...\*(Aq` in formats.toml. Mutually exclusive with \-\-hex
@@ -282,4 +282,4 @@ Print version
 [\fIFILES\fR]
 Files to view. Navigate between them with `:n` / `:p` / `:e` / `:x`
 .SH VERSION
-v0.59.0
+v0.60.0
