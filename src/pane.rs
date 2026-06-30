@@ -70,6 +70,92 @@ pub fn split_widths_n(cols: u16, n: usize) -> Vec<u16> {
     (0..n).map(|i| (base + if i >= n - rem { 1 } else { 0 }) as u16).collect()
 }
 
+/// Distribute `total` units across `sizes.len()` panes. `Some(pct)` panes take
+/// round(pct% * total); `None` (auto) panes split the remainder equally. Every
+/// pane is clamped to >= `min`; if explicit percentages leave the autos below
+/// `min`, the explicit panes are scaled down. Rounding drift is absorbed by the
+/// largest pane so the result sums to exactly `total`. All-None == even split.
+/// Caller guarantees `total >= sizes.len() * min` (else it uses its own fallback).
+pub fn split_axis_weighted(total: u16, sizes: &[Option<u16>], min: u16) -> Vec<u16> {
+    let n = sizes.len();
+    if n == 0 { return vec![]; }
+    if n == 1 { return vec![total]; }
+    let total_u = total as u32;
+    let min_u = min as u32;
+    let auto_count = sizes.iter().filter(|s| s.is_none()).count() as u32;
+
+    let mut out: Vec<u32> = sizes.iter().map(|s| match s {
+        Some(p) => (((*p as u32) * total_u + 50) / 100).max(min_u),
+        None => 0,
+    }).collect();
+
+    // If explicit panes + autos' minimum don't fit, scale explicit down.
+    let explicit_sum: u32 = out.iter().sum();
+    let auto_reserve = auto_count * min_u;
+    if explicit_sum + auto_reserve > total_u && explicit_sum > 0 {
+        let avail = total_u.saturating_sub(auto_reserve);
+        for (i, s) in sizes.iter().enumerate() {
+            if s.is_some() {
+                out[i] = (out[i] * avail / explicit_sum).max(min_u);
+            }
+        }
+    }
+
+    // Autos split the remainder equally; remainder columns go to the rightmost
+    // auto panes, matching split_widths_n's convention (right-gets-extra).
+    if auto_count > 0 {
+        let used: u32 = sizes.iter().enumerate()
+            .filter(|(_, s)| s.is_some()).map(|(i, _)| out[i]).sum();
+        let remainder = total_u.saturating_sub(used);
+        let base = remainder / auto_count;
+        let extra = remainder % auto_count;
+        // Count auto panes to track which are the last `extra` ones.
+        let auto_total = auto_count;
+        let mut auto_seen = 0u32;
+        for (i, s) in sizes.iter().enumerate() {
+            if s.is_none() {
+                auto_seen += 1;
+                // Give +1 to the last `extra` auto panes (rightmost-first).
+                let add = if auto_seen > auto_total - extra { 1u32 } else { 0 };
+                out[i] = (base + add).max(min_u);
+            }
+        }
+    }
+
+    // Absorb rounding drift in the largest pane so the sum is exact.
+    let sum: u32 = out.iter().sum();
+    if sum != total_u {
+        let idx = (0..n).max_by_key(|&i| out[i]).unwrap();
+        let adjusted = out[idx] as i64 + (total_u as i64 - sum as i64);
+        out[idx] = adjusted.max(min_u as i64) as u32;
+    }
+
+    out.iter().map(|&x| x as u16).collect()
+}
+
+/// Weighted vertical split: same divider/min/too-narrow accounting as
+/// `split_widths_n`, but distributing the usable columns via percentages.
+pub fn split_widths_n_weighted(cols: u16, sizes: &[Option<u16>]) -> Vec<u16> {
+    const MIN: usize = 8;
+    let n = sizes.len();
+    if n <= 1 { return vec![cols]; }
+    let c = cols as usize;
+    let dividers = n - 1;
+    if c < n * MIN + dividers { return vec![cols]; }
+    let usable = (c - dividers) as u16;
+    split_axis_weighted(usable, sizes, MIN as u16)
+}
+
+/// Weighted horizontal split: mirrors `split_heights_n` (MIN 2, no divider row).
+pub fn split_heights_n_weighted(rows: u16, sizes: &[Option<u16>]) -> Vec<u16> {
+    const MIN: usize = 2;
+    let n = sizes.len();
+    if n <= 1 { return vec![rows]; }
+    let r = rows as usize;
+    if r < n * MIN { return vec![rows]; }
+    split_axis_weighted(rows, sizes, MIN as u16)
+}
+
 /// Map a screen column to the 0-based visible pane index, given the per-pane
 /// widths from `split_widths_n`. Panes are laid out left-to-right separated by a
 /// 1-column `DIVIDER` (as in `compose_panes`). A column inside a pane's content
@@ -483,5 +569,60 @@ mod tests {
         let mid: String = out.body[1].iter().filter_map(|c| match c {
             Cell::Char { ch, .. } => Some(*ch), _ => None }).collect();
         assert!(mid.contains('*') && mid.contains('A'), "focused top pane status row: {mid}");
+    }
+
+    #[test]
+    fn split_axis_weighted_all_auto_is_even() {
+        // All-None must match the even distribution split_widths_n produces.
+        let none3 = [None, None, None];
+        assert_eq!(split_axis_weighted(33, &none3, 8), vec![11, 11, 11]);
+        let none2 = [None, None];
+        assert_eq!(split_axis_weighted(33, &none2, 8), vec![16, 17]); // remainder to the right
+    }
+
+    #[test]
+    fn split_axis_weighted_one_explicit_rest_auto() {
+        // 60% of 100 = 60; remaining 40 split equally between two autos = 20,20.
+        assert_eq!(split_axis_weighted(100, &[Some(60), None, None], 8), vec![60, 20, 20]);
+    }
+
+    #[test]
+    fn split_axis_weighted_explicit_sum_normalized_when_over() {
+        // 80 + 80 with no autos, total 100 -> scaled to fit, sum stays 100.
+        let out = split_axis_weighted(100, &[Some(80), Some(80)], 8);
+        assert_eq!(out.iter().sum::<u16>(), 100);
+        assert!(out[0] > 8 && out[1] > 8);
+    }
+
+    #[test]
+    fn split_axis_weighted_clamps_to_min() {
+        // 1% of 100 would be 1, below min 8 -> clamped to 8; auto gets the rest.
+        let out = split_axis_weighted(100, &[Some(1), None], 8);
+        assert!(out[0] >= 8);
+        assert_eq!(out.iter().sum::<u16>(), 100);
+    }
+
+    #[test]
+    fn split_axis_weighted_sum_is_exact() {
+        for total in [40u16, 41, 80, 100, 137] {
+            let out = split_axis_weighted(total, &[Some(33), None, None], 8);
+            assert_eq!(out.iter().sum::<u16>(), total, "total={total}");
+        }
+    }
+
+    #[test]
+    fn weighted_wrappers_match_even_split_when_all_auto() {
+        // The wrappers must be byte-identical to the even fns for all-None.
+        assert_eq!(split_widths_n_weighted(34, &[None, None, None]), split_widths_n(34, 3));
+        assert_eq!(split_heights_n_weighted(24, &[None, None]), split_heights_n(24, 2));
+    }
+
+    #[test]
+    fn weighted_width_one_big_pane() {
+        // cols 100, 1 divider per gap (2 dividers for 3 panes) -> usable 98.
+        let out = split_widths_n_weighted(100, &[Some(60), None, None]);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out.iter().sum::<u16>() as usize, 100 - 2); // usable = cols - dividers
+        assert!(out[0] > out[1] && out[0] > out[2]);
     }
 }
