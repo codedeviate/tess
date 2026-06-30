@@ -263,7 +263,9 @@ its own scroll position, search, and follow/tail state. `Tab`/`BackTab` cycle th
 focused pane (scroll, search, and colon commands target it); the others keep
 scrolling/tailing on their own. Each pane gets its own status segment; the
 focused one is prefixed with `*`. With mouse enabled (the default), the wheel
-scrolls the pane the cursor is over (without changing focus).
+scrolls the pane the cursor is over (without changing focus). Use `--widths` (or
+`--heights` for `--hsplit`) to assign per-pane percentage sizes; omitted panes
+share the remainder equally.
 
 At runtime: `:vsplit [file]` / `:split [file]` open a split (no argument
 duplicates the current file at its scroll position); `:only` / `:close`
@@ -325,6 +327,7 @@ Core flags — the most commonly used options. Run `tess --help` for the complet
 | `--head N` | Show only the first N lines. Mutually exclusive with `--tail`. |
 | `--hsplit` | Open a horizontal (stacked-rows) split instead of vertical columns. `:rotate` flips a live split. |
 | `--header L[,C]` | Pin the top L lines; in chop mode also freeze the left C columns (a dim `│` divides them from the scrolled remainder), per pane in a split. |
+| `--heights PCT,...` | Per-pane heights (percentages) for a horizontal split (`--hsplit`). Comma-separated, pane order; blank or `0` = auto (equal share of remainder). |
 | `--hex` | Render the source as an xxd-style hex dump. |
 | `--hex-group N` | Hex bytes per group in `--hex` mode (`2`/`4`/`8`/`16`/`32`; default `4`). |
 | `--incsearch` | Incremental search: preview and jump to the first match as you type; Esc restores position, Enter commits. |
@@ -384,6 +387,7 @@ Core flags — the most commonly used options. Run `tess --help` for the complet
 | `--to-clipboard` | Batch mode: apply filters/head/tail/prettify, copy result to clipboard, and exit. |
 | `--truecolor MODE` | 24-bit RGB handling (`auto`/`never`/`always`). |
 | `--wheel-lines N` | Mouse-wheel scroll step in body lines (default `3`). `less` compat. |
+| `--widths PCT,...` | Per-pane widths (percentages) for a vertical split (`--split`). Comma-separated, pane order; blank or `0` = auto (equal share of remainder). |
 | `-z, --window N` | PageDown / PageUp step size in lines (default: full screen). |
 | `--wordwrap` | In wrap mode, break on whitespace boundaries instead of mid-character. |
 

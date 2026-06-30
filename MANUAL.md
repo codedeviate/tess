@@ -535,6 +535,68 @@ apply per pane for startup-configured panes (each pane honors its own
 `--header`), but not for runtime `:vsplit` panes (which don't apply
 `--header`). See `OUT-OF-SCOPE.md`.
 
+#### Pane sizing (`--widths` / `--heights`)
+
+By default every pane in a split receives an **equal share** of the terminal
+width (vertical split) or height (horizontal split). `--widths` and `--heights`
+let you pin specific sizes as **percentages of the split axis**.
+
+```sh
+tess --split wide.log a.log b.log --widths 60,20,20   # 60 % / 20 % / 20 %
+tess --hsplit top.log bot.log     --heights 70,30      # 70 % / 30 %
+```
+
+**The percentage model.**
+
+- Values are whole-number percentages (1–100). Pass one value per pane in
+  physical (left-to-right or top-to-bottom) order.
+- A blank or `0` entry means **auto** — the pane takes an equal share of
+  whatever percentage is left after all explicit values are summed. For example
+  `--widths 60,,` gives the first pane 60 % and splits the remaining 40 % evenly
+  between the other two (20 % each).
+- Sizes are **resize-invariant**: they are percentages of the current terminal
+  dimension, so resizing the window re-derives each pane's column/row count and
+  the proportions stay correct.
+- Each pane is clamped to its **minimum** (8 usable columns for vertical panes,
+  2 rows for horizontal panes). If the terminal is too small to honor the
+  percentages without violating the minimum, the clamp wins and the remainders
+  are redistributed.
+
+**Orientation pairing.** `--widths` applies to vertical splits (`--split`);
+`--heights` applies to horizontal splits (`--hsplit`). Passing the wrong flag
+for the split orientation is an error.
+
+**Runtime adjustment.** Resize the focused pane with:
+
+| Command | Effect |
+|---|---|
+| `:width N` | Set the focused pane's width to N % (vertical split). |
+| `:height N` | Set the focused pane's height to N % (horizontal split). |
+| `:width auto` / `:height auto` | Return the focused pane to the auto pool (equal share of the remainder). |
+
+Explicit panes keep their percentage when another pane is resized; auto panes
+share whatever is left.
+
+**Layout config.** Each `[[layout.NAME.pane]]` entry accepts an optional
+`width` (for vertical layouts) or `height` (for horizontal layouts) field —
+same semantics as `--widths`/`--heights`:
+
+```toml
+[layout.dashboard]
+orientation = "vertical"
+
+[[layout.dashboard.pane]]
+file = "/var/log/app.log"
+width = 60        # this pane gets 60 % of the terminal width
+
+[[layout.dashboard.pane]]
+file = "/var/log/nginx/access.log"
+# width omitted → auto (takes the remaining 40 %)
+```
+
+See [`--widths`](#other) and [`--heights`](#other) in the flags reference, and
+[Layouts](#layouts-saved-split-arrangements) for the full layout config syntax.
+
 #### Diff mode (`--diff` / `:diff`)
 
 Diff mode aligns the two panes by a line-level diff so matching lines sit beside

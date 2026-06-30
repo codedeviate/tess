@@ -169,6 +169,7 @@ fn build_examples_text() -> String {
         "tess --gitdiff src/main.rs",
         "tess --gitdiff --staged src/main.rs",
         "tess --hsplit a.log b.log",
+        "tess --split wide.log a.log b.log --widths 60,20,20  # 60/20/20 width split",
     ]);
     examples_note(&mut buf, "Inside a split: Tab switches panes, = toggles scroll-lock, :diff enters diff mode. :vsplit / :hsplit / :only / :close at runtime. Pane zoom: Ctrl-X z (or :zoom; bind zoom-pane in keys.toml).");
 
