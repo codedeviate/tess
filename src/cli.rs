@@ -44,8 +44,8 @@ pub struct Args {
 
     /// Force the content type for `--prettify` (otherwise auto-detected from
     /// the filename extension and the first bytes). Values:
-    /// `auto`, `raw`, `json`, `yaml`, `toml`, `xml`, `html`, `csv`.
-    /// Setting this implies `--prettify` (unless the value is `raw`/`auto`).
+    /// `auto`, `raw`, `json`, `jsonl` (alias `ndjson`), `yaml`, `toml`, `xml`,
+    /// `html`, `csv`. Setting this implies `--prettify` (unless `raw`/`auto`).
     #[arg(long = "content-type", value_name = "TYPE")]
     pub content_type: Option<String>,
 
@@ -334,11 +334,11 @@ pub struct Args {
     )]
     pub preprocess: Option<String>,
 
-    /// Pretty-print structured content (JSON, YAML, TOML, XML, HTML, CSV).
-    /// Detects the type from the filename extension or the first bytes; use
-    /// `--content-type=NAME` to override. Static files only — not allowed
-    /// with `--follow`, `--live`, or `--filter`. Toggle interactively with
-    /// `Shift-P`; force a type with `-P` then a letter (j/y/t/x/h/c).
+    /// Pretty-print structured content (JSON, JSONL/NDJSON, YAML, TOML, XML,
+    /// HTML, CSV). Detects the type from the filename extension or the first
+    /// bytes; use `--content-type=NAME` to override. Static files only — not
+    /// allowed with `--follow`, `--live`, or `--filter`. Toggle interactively
+    /// with `Shift-P`; force a type with `-P` then a letter (j/l/y/t/x/h/c).
     #[arg(long = "prettify")]
     pub prettify: bool,
 

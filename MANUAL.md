@@ -219,10 +219,12 @@ startup-only; per-pane predicates are inactive while `:diff` is on.)
 
 ### Pretty-printing
 
-- **`--prettify`** — reformat the file's content for human reading. Supports **JSON, YAML, TOML, XML, HTML, CSV**. Type is detected from the filename extension (`.json`, `.yaml`/`.yml`, `.toml`, `.xml`, `.html`/`.htm`, `.csv`) and falls back to a quick byte sniff for unextended files. **Static files only** — not allowed with `--follow`, `--live`, or `--filter` (which would all conflict with reshaping the byte stream). Layout only — no syntax highlighting, so search and `--filter` (when used separately) keep working byte-cleanly.
-- **`--content-type NAME`** — override detection. Values: `auto` (default — same as not passing this flag), `raw` (force prettify off, even if `--prettify` is also given), `json`, `yaml` (alias `yml`), `toml`, `xml`, `html` (alias `htm`), `csv`. Setting this implies `--prettify` unless the value is `auto` or `raw`.
+- **`--prettify`** — reformat the file's content for human reading. Supports **JSON, JSONL/NDJSON, YAML, TOML, XML, HTML, CSV**. Type is detected from the filename extension (`.json`, `.jsonl`/`.ndjson`, `.yaml`/`.yml`, `.toml`, `.xml`, `.html`/`.htm`, `.csv`) and falls back to a quick byte sniff for unextended files. **Static files only** — not allowed with `--follow`, `--live`, or `--filter` (which would all conflict with reshaping the byte stream). Layout only — no syntax highlighting, so search and `--filter` (when used separately) keep working byte-cleanly.
+- **`--content-type NAME`** — override detection. Values: `auto` (default — same as not passing this flag), `raw` (force prettify off, even if `--prettify` is also given), `json`, `jsonl` (alias `ndjson`), `yaml` (alias `yml`), `toml`, `xml`, `html` (alias `htm`), `csv`. Setting this implies `--prettify` unless the value is `auto` or `raw`.
 
 If a transform fails to parse, `tess` falls back to showing the raw content and the status line shows `[pretty:<type>:err]` so you know why nothing changed.
+
+JSONL/NDJSON is prettified per line: each record (one compact JSON value per line) is expanded into an indented block, records are separated by a blank line, and any line that is not valid JSON is passed through unchanged — so stray headers, blank lines, or a truncated final line in a log stay readable. Because bad lines pass through, JSONL never shows `:err`.
 
 CSV cells are aligned into a fixed-width table; cells longer than 60 characters are truncated with an ellipsis (`…`) so a single runaway free-text column doesn't blow up the layout.
 
@@ -810,6 +812,7 @@ After `-P`, one more keystroke sets the content type:
 | `-P` then… | Effect |
 |---|---|
 | `j` | Force JSON |
+| `l` | Force JSONL/NDJSON |
 | `y` | Force YAML |
 | `t` | Force TOML |
 | `x` | Force XML |

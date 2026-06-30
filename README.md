@@ -306,7 +306,7 @@ Core flags — the most commonly used options. Run `tess --help` for the complet
 | `--cached` | Synonym for `--staged`. |
 | `-S, --chop-long-lines` | Chop long lines instead of wrapping. |
 | `--clipboard` | Enable interactive `:yank` / `clipboard-yank-line` binding. |
-| `--content-type TYPE` | Force the `--prettify` content type (`auto`/`raw`/`json`/`yaml`/`toml`/`xml`/`html`/`csv`). |
+| `--content-type TYPE` | Force the `--prettify` content type (`auto`/`raw`/`json`/`jsonl`/`yaml`/`toml`/`xml`/`html`/`csv`). |
 | `--diff OLD NEW` | Aligned side-by-side diff: `+`/`-`/`~` coloring, filler rows, intra-line highlights; `]c`/`[c` jump hunks. |
 | `--diff-force` | Override the ~500k-line safety cap for `--diff`. |
 | `--diff-ignore-whitespace` | Ignore leading/trailing whitespace when comparing diff lines. |
@@ -353,7 +353,7 @@ Core flags — the most commonly used options. Run `tess --help` for the complet
 | `-o, --output FILE` | Batch mode: write filtered output to FILE (`-` = stdout) and exit (with `--follow`, stays open and appends matching new bytes). |
 | `-p, --pattern PATTERN` | Start at the first line matching PATTERN (flag form of `+/PATTERN`). |
 | `--preprocess CMD` | Pipe the source through CMD before rendering (`%s` = file path). |
-| `--prettify` | Pretty-print structured content (JSON/YAML/TOML/XML/HTML/CSV). |
+| `--prettify` | Pretty-print structured content (JSON/JSONL/YAML/TOML/XML/HTML/CSV). |
 | `--prompt TEMPLATE` | Replace the status line with a templated string. |
 | `--prompt-style SPEC` | Style for `--prompt` output (e.g. `bold,fg=cyan`). |
 | `-e, --quit-at-eof` | Quit when scrolling forward past EOF a second time (`less -e`). |
