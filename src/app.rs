@@ -2391,9 +2391,10 @@ pub fn run(
                                                                 others.clear();
                                                                 scroll_lock = false;
                                                                 lock_offsets.clear();
-                                                                // Layout rebuild: fresh pane_sizes (all auto for now;
-                                                                // Task 5 will wire per-pane width/height from the layout).
-                                                                pane_sizes.clear();
+                                                                // Seed pane_sizes from per-pane width/height in the layout.
+                                                                pane_sizes = layout.panes.iter()
+                                                                    .map(|g| if layout.horizontal { g.height } else { g.width })
+                                                                    .collect();
                                                                 diff = None;
                                                                 // pane 0 -> focused loose locals.
                                                                 let p0 = panes.remove(0);

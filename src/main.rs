@@ -610,7 +610,7 @@ fn real_main() -> Result<()> {
     if let Some(name) = layouts.keys().find(|k| groups.contains_key(*k)) {
         return Err(Error::Runtime(format!("`{name}` is defined as both a [layout] and a [group]")));
     }
-    let (raw_argv, layout_horizontal) = format::expand_layout_argv(raw_argv, &layouts);
+    let (raw_argv, layout_horizontal, layout_pane_sizes) = format::expand_layout_argv(raw_argv, &layouts);
 
     // Split on standalone `--` into per-pane sections. Zero `--` → one section
     // (the existing single-view path, unchanged). Each section is prefixed with
@@ -1479,6 +1479,8 @@ showing raw (use --content-type=NAME to override)"
     // Resolve --widths / --heights into the per-pane size seed.
     // Orientation guard: --widths only for vertical splits, --heights only for horizontal.
     // Count guard: the spec may name at most as many panes as are being opened.
+    // When a layout was expanded, its per-pane width/height already forms the seed
+    // (unless --widths/--heights are also given, which takes precedence).
     let pane_sizes_seed: Vec<Option<u16>> = if let Some(spec) = args.widths.as_deref() {
         if args.hsplit {
             return Err(Error::Runtime(
@@ -1493,6 +1495,8 @@ showing raw (use --content-type=NAME to override)"
             ));
         }
         tess::cli::parse_pane_sizes(spec).map_err(Error::Runtime)?
+    } else if !layout_pane_sizes.is_empty() {
+        layout_pane_sizes
     } else {
         Vec::new()
     };
