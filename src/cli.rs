@@ -155,6 +155,12 @@ pub struct Args {
     #[arg(long = "header", value_name = "L[,C]")]
     pub header: Option<String>,
 
+    /// Per-pane heights as percentages, comma-separated, in pane order
+    /// (e.g. `--heights 50,50`). Blank or `0` = auto. For horizontal splits
+    /// (`--hsplit`); ignored with `--split`. Values 1-100.
+    #[arg(long = "heights", value_name = "PCT,...")]
+    pub heights: Option<String>,
+
     /// Render the source as an xxd-style hex dump instead of byte-faithful
     /// text. 16 bytes per row, offset prefix, ASCII gutter. Mutually
     /// exclusive with parsing- and rendering-oriented flags.
@@ -526,6 +532,13 @@ pub struct Args {
     #[arg(long = "wheel-lines", value_name = "N")]
     pub wheel_lines: Option<u16>,
 
+    /// Per-pane widths as percentages of the split axis, comma-separated, in
+    /// pane order (e.g. `--widths 60,20,20`). Blank or `0` = auto (equal share
+    /// of the remainder). For vertical splits (`--split`); ignored with
+    /// `--hsplit`. Values 1-100.
+    #[arg(long = "widths", value_name = "PCT,...")]
+    pub widths: Option<String>,
+
     /// PageDown / PageUp step size in lines. Default: full screen
     /// height (body rows). Half-page commands always advance by half
     /// the screen regardless. Mirrors `less -zn` / `--window=n`.
@@ -588,6 +601,22 @@ pub fn split_argv_sections(argv: &[String]) -> Vec<Vec<String>> {
         return vec![argv.to_vec()];
     }
     sections
+}
+
+/// Parse a comma-separated pane-size spec ("60,,20") into per-pane percentages.
+/// Blank or "0" entries become None (auto). Errors on non-numeric or out-of-range.
+pub fn parse_pane_sizes(spec: &str) -> Result<Vec<Option<u16>>, String> {
+    spec.split(',').map(|tok| {
+        let t = tok.trim();
+        if t.is_empty() || t == "0" {
+            return Ok(None);
+        }
+        match t.parse::<u16>() {
+            Ok(p) if (1..=100).contains(&p) => Ok(Some(p)),
+            Ok(p) => Err(format!("pane size {p} out of range (1-100)")),
+            Err(_) => Err(format!("invalid pane size `{t}` (expected 1-100 or blank)")),
+        }
+    }).collect()
 }
 
 /// Resolve the effective startup mouse-capture state. Precedence (highest
@@ -1102,6 +1131,7 @@ mod tests {
             "--grep",
             "--head",
             "--header",
+            "--heights",
             "--hex",
             "--hex-group",
             "--hilite-search",
@@ -1164,6 +1194,7 @@ mod tests {
             "--to-clipboard",
             "--truecolor",
             "--wheel-lines",
+            "--widths",
             "--window",
             "--wordwrap",
         ];
@@ -1233,5 +1264,24 @@ mod tests {
         assert_eq!(split_argv_sections(&consecutive), vec![consecutive.clone()]);
         let leading = ["tess", "--", "-weird.txt"].iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(split_argv_sections(&leading), vec![leading.clone()]);
+    }
+
+    #[test]
+    fn parse_pane_sizes_basic() {
+        assert_eq!(parse_pane_sizes("60,20,20").unwrap(), vec![Some(60), Some(20), Some(20)]);
+    }
+    #[test]
+    fn parse_pane_sizes_blank_and_zero_are_auto() {
+        assert_eq!(parse_pane_sizes("60,,0").unwrap(), vec![Some(60), None, None]);
+    }
+    #[test]
+    fn parse_pane_sizes_rejects_out_of_range() {
+        assert!(parse_pane_sizes("60,101").is_err());
+        assert!(parse_pane_sizes("60,x").is_err());
+    }
+    #[test]
+    fn widths_and_heights_parse_from_args() {
+        let a = Args::parse_from(["tess", "--split", "--widths", "60,20,20", "a", "b", "c"]);
+        assert_eq!(a.widths.as_deref(), Some("60,20,20"));
     }
 }

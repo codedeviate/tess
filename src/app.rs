@@ -1625,6 +1625,7 @@ pub fn run(
     mut tag_file: Option<crate::tags::TagFile>,
     extra_panes: Vec<crate::pane::Pane>,
     orientation: Orientation,
+    pane_sizes_seed: Vec<Option<u16>>,
     #[cfg(feature = "image")]
     startup_image_protocol: (crate::viewport::ImageProtocol, Option<(u16, u16)>),
 ) -> Result<()> {
@@ -1655,7 +1656,7 @@ pub fn run(
     // Per-pane size as a percentage of the split axis; None = auto (equal share).
     // Physical-pane-indexed, parallel to the focused-pane + `others`. Empty/all-None
     // = today's even split. Seeded by --widths/--heights; mutated by :width/:height.
-    let mut pane_sizes: Vec<Option<u16>> = Vec::new();
+    let mut pane_sizes: Vec<Option<u16>> = pane_sizes_seed;
     panes_init(&mut others, &mut viewport, focused_pos, cols, rows, orientation, &pane_sizes);
     let mut scroll_lock = false;
     let mut zoomed = false;

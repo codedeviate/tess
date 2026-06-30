@@ -552,6 +552,7 @@ fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) ->
         None,
         vec![],
         tess::app::Orientation::Vertical,
+        vec![],
         #[cfg(feature = "image")]
         (tess::viewport::ImageProtocol::Ascii, None),
     )?;
@@ -1474,6 +1475,35 @@ showing raw (use --content-type=NAME to override)"
         Some(false) => tess::app::Orientation::Vertical,
         None => if args.hsplit { tess::app::Orientation::Horizontal } else { tess::app::Orientation::Vertical },
     };
+
+    // Resolve --widths / --heights into the per-pane size seed.
+    // Orientation guard: --widths only for vertical splits, --heights only for horizontal.
+    // Count guard: the spec may name at most as many panes as are being opened.
+    let pane_sizes_seed: Vec<Option<u16>> = if let Some(spec) = args.widths.as_deref() {
+        if args.hsplit {
+            return Err(Error::Runtime(
+                "--widths applies to vertical splits; use --heights with --hsplit".into(),
+            ));
+        }
+        tess::cli::parse_pane_sizes(spec).map_err(Error::Runtime)?
+    } else if let Some(spec) = args.heights.as_deref() {
+        if !args.hsplit {
+            return Err(Error::Runtime(
+                "--heights applies to horizontal splits; use --widths".into(),
+            ));
+        }
+        tess::cli::parse_pane_sizes(spec).map_err(Error::Runtime)?
+    } else {
+        Vec::new()
+    };
+    let pane_count = 1 + extra_panes.len();
+    if pane_sizes_seed.len() > pane_count {
+        return Err(Error::Runtime(format!(
+            "--widths/--heights: {} sizes given but only {} pane(s) opened",
+            pane_sizes_seed.len(), pane_count,
+        )));
+    }
+
     app::run(
         src,
         viewport,
@@ -1489,6 +1519,7 @@ showing raw (use --content-type=NAME to override)"
         tag_file,
         extra_panes,
         orientation,
+        pane_sizes_seed,
         #[cfg(feature = "image")]
         startup_image_protocol,
     )?;
