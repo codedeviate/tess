@@ -1189,11 +1189,13 @@ fn panes_init(
     cols: u16,
     rows: u16,
     orientation: Orientation,
+    sizes: &[Option<u16>],
 ) {
     let n = others.len() + 1;
+    let norm: Vec<Option<u16>> = (0..n).map(|i| sizes.get(i).copied().flatten()).collect();
     let sizes = match orientation {
-        Orientation::Vertical => crate::pane::split_widths_n(cols, n),
-        Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+        Orientation::Vertical => crate::pane::split_widths_n_weighted(cols, &norm),
+        Orientation::Horizontal => crate::pane::split_heights_n_weighted(rows, &norm),
     };
     if sizes.len() == 1 {
         focused_vp.resize(cols, rows); // too-small fallback (both orientations)
@@ -1224,15 +1226,17 @@ fn resize_split_aware(
     rows: u16,
     focused_pos: usize,
     orientation: Orientation,
+    sizes: &[Option<u16>],
 ) {
     if others.is_empty() {
         focused_vp.resize(cols, rows);
         return;
     }
     let n = others.len() + 1;
+    let norm: Vec<Option<u16>> = (0..n).map(|i| sizes.get(i).copied().flatten()).collect();
     let sizes = match orientation {
-        Orientation::Vertical => crate::pane::split_widths_n(cols, n),
-        Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+        Orientation::Vertical => crate::pane::split_widths_n_weighted(cols, &norm),
+        Orientation::Horizontal => crate::pane::split_heights_n_weighted(rows, &norm),
     };
     if sizes.len() == 1 {
         focused_vp.resize(cols, rows); // too-small fallback (both orientations)
@@ -1261,6 +1265,7 @@ fn toggle_zoom(
     rows: u16,
     focused_pos: usize,
     orientation: Orientation,
+    sizes: &[Option<u16>],
 ) {
     if others.is_empty() {
         focused_vp.flash("zoom needs a split", 40);
@@ -1274,7 +1279,7 @@ fn toggle_zoom(
     if *zoomed {
         focused_vp.resize(cols, rows);
     } else {
-        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation);
+        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation, sizes);
     }
 }
 
@@ -1289,10 +1294,11 @@ fn unzoom(
     rows: u16,
     focused_pos: usize,
     orientation: Orientation,
+    sizes: &[Option<u16>],
 ) {
     if *zoomed {
         *zoomed = false;
-        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation);
+        resize_split_aware(focused_vp, others, cols, rows, focused_pos, orientation, sizes);
     }
 }
 
@@ -1646,7 +1652,11 @@ pub fn run(
     // a focus rotation (matters on odd widths where columns differ).
     let mut others: Vec<crate::pane::Pane> = extra_panes;
     let mut focused_pos: usize = 0;
-    panes_init(&mut others, &mut viewport, focused_pos, cols, rows, orientation);
+    // Per-pane size as a percentage of the split axis; None = auto (equal share).
+    // Physical-pane-indexed, parallel to the focused-pane + `others`. Empty/all-None
+    // = today's even split. Seeded by --widths/--heights; mutated by :width/:height.
+    let mut pane_sizes: Vec<Option<u16>> = Vec::new();
+    panes_init(&mut others, &mut viewport, focused_pos, cols, rows, orientation, &pane_sizes);
     let mut scroll_lock = false;
     let mut zoomed = false;
     // Per-physical-column scroll-lock offsets relative to the leftmost pane,
@@ -1804,9 +1814,10 @@ pub fn run(
                 f
             } else if !others.is_empty() {
                 let n = others.len() + 1;
+                let norm: Vec<Option<u16>> = (0..n).map(|i| pane_sizes.get(i).copied().flatten()).collect();
                 let sizes = match orientation {
-                    Orientation::Vertical => crate::pane::split_widths_n(cols, n),
-                    Orientation::Horizontal => crate::pane::split_heights_n(rows, n),
+                    Orientation::Vertical => crate::pane::split_widths_n_weighted(cols, &norm),
+                    Orientation::Horizontal => crate::pane::split_heights_n_weighted(rows, &norm),
                 };
                 if sizes.len() == 1 {
                     // Too narrow to split: focused pane full-width.
@@ -2151,7 +2162,7 @@ pub fn run(
                             Event::Key(KeyEvent { code: KeyCode::Char('z'), .. })
                         );
                         if is_z {
-                            toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                            toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation, &pane_sizes);
                             needs_redraw = true;
                             mode = InputMode::Normal;
                             continue;
@@ -2201,7 +2212,7 @@ pub fn run(
                                     } else {
                                         match parse_colon_command(buffer) {
                                             Ok(ColonCommand::VSplit(path_arg)) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 if !others.is_empty() {
                                                     viewport.flash("already split (`:only` first)", 30);
                                                 } else {
@@ -2232,6 +2243,8 @@ pub fn run(
                                                                 viewport.resize(lw, rows);
                                                                 pane.viewport.resize(rw, rows);
                                                                 others.push(pane);
+                                                                // New pane defaults to auto-size.
+                                                                pane_sizes.resize(others.len() + 1, None);
                                                                 sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Err(e) => viewport.flash(format!("vsplit: {e}"), 40),
@@ -2241,7 +2254,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::HSplit(path_arg)) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 if !others.is_empty() {
                                                     viewport.flash("already split (`:only` first)", 30);
                                                 } else {
@@ -2272,6 +2285,8 @@ pub fn run(
                                                                 viewport.resize(cols, heights[0]);
                                                                 pane.viewport.resize(cols, heights[1]);
                                                                 others.push(pane);
+                                                                // New pane defaults to auto-size.
+                                                                pane_sizes.resize(others.len() + 1, None);
                                                                 sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Err(e) => viewport.flash(format!("hsplit: {e}"), 40),
@@ -2281,7 +2296,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Rotate) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 if others.is_empty() {
                                                     viewport.flash("no split to rotate", 30);
                                                 } else if diff.is_some() {
@@ -2293,17 +2308,18 @@ pub fn run(
                                                     };
                                                     resize_split_aware(
                                                         &mut viewport, &mut others, cols, rows,
-                                                        focused_pos, orientation,
+                                                        focused_pos, orientation, &pane_sizes,
                                                     );
                                                 }
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Only) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 if !others.is_empty() {
                                                     others.clear();
                                                     scroll_lock = false;
                                                     lock_offsets.clear();
+                                                    pane_sizes.clear();
                                                     diff = None;
                                                     viewport.resize(cols, rows);
                                                     #[cfg(feature = "image")]
@@ -2316,7 +2332,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Layout(name)) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 let layouts = crate::format::load_layouts().unwrap_or_default();
                                                 match layouts.get(&name) {
                                                     None => { viewport.flash(format!("unknown layout: {name}"), 40); }
@@ -2355,6 +2371,9 @@ pub fn run(
                                                                 others.clear();
                                                                 scroll_lock = false;
                                                                 lock_offsets.clear();
+                                                                // Layout rebuild: fresh pane_sizes (all auto for now;
+                                                                // Task 5 will wire per-pane width/height from the layout).
+                                                                pane_sizes.clear();
                                                                 diff = None;
                                                                 // pane 0 -> focused loose locals.
                                                                 let p0 = panes.remove(0);
@@ -2370,7 +2389,7 @@ pub fn run(
                                                                 };
                                                                 force_cell_mode(&mut viewport);
                                                                 for o in others.iter_mut() { force_cell_mode(&mut o.viewport); }
-                                                                resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                                resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                                 sync_mouse_badge(&mut viewport, &mut others, mouse_enabled);
                                                             }
                                                             Ok(_) => { viewport.flash("layout produced no panes", 40); }
@@ -2397,7 +2416,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Zoom) => {
-                                                toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                                                toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation, &pane_sizes);
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Mouse(arg)) => {
@@ -2430,7 +2449,7 @@ pub fn run(
                                                 mode = InputMode::Normal;
                                             }
                                             Ok(ColonCommand::Diff { force }) => {
-                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                                unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                                 if others.len() >= 2 {
                                                     viewport.flash("diff needs exactly 2 panes", 40);
                                                 } else if others.len() == 1 {
@@ -2681,7 +2700,7 @@ pub fn run(
                     if zoomed {
                         viewport.resize(cols, rows);
                     } else {
-                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                     }
                     if was_at_bottom {
                         viewport.goto_bottom(src.as_ref(), &mut idx);
@@ -2810,18 +2829,20 @@ pub fn run(
                         // wheel/key paths below.
                         if let MouseEventKind::Down(MouseButton::Left) = me.kind {
                             if !others.is_empty() && diff.is_none() {
+                                let n = others.len() + 1;
+                                let norm: Vec<Option<u16>> = (0..n).map(|i| pane_sizes.get(i).copied().flatten()).collect();
                                 let target = match orientation {
                                     Orientation::Vertical => {
-                                        let widths = crate::pane::split_widths_n(cols, others.len() + 1);
+                                        let widths = crate::pane::split_widths_n_weighted(cols, &norm);
                                         crate::pane::pane_at_column(me.column, &widths)
                                     }
                                     Orientation::Horizontal => {
-                                        let heights = crate::pane::split_heights_n(rows, others.len() + 1);
+                                        let heights = crate::pane::split_heights_n_weighted(rows, &norm);
                                         crate::pane::pane_at_row(me.row, &heights)
                                     }
                                 };
                                 if target != focused_pos {
-                                    unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                    unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                     // Same move-by-value swap as Tab/FocusOtherPane:
                                     // the loop owns the loose locals, so they can't
                                     // be factored behind a `&mut` helper without a
@@ -2844,7 +2865,7 @@ pub fn run(
                                     let _ = nf.last_tick;
                                     others = no;
                                     focused_pos = np;
-                                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                                    resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                                     needs_redraw = true;
                                 }
                             }
@@ -2857,13 +2878,15 @@ pub fn run(
                         // before). Single pane → only pane is the focused one.
                         let route = !others.is_empty() && !scroll_lock && diff.is_none();
                         let vis = if route {
+                            let n = others.len() + 1;
+                            let norm: Vec<Option<u16>> = (0..n).map(|i| pane_sizes.get(i).copied().flatten()).collect();
                             match orientation {
                                 Orientation::Vertical => {
-                                    let widths = crate::pane::split_widths_n(cols, others.len() + 1);
+                                    let widths = crate::pane::split_widths_n_weighted(cols, &norm);
                                     crate::pane::pane_at_column(me.column, &widths)
                                 }
                                 Orientation::Horizontal => {
-                                    let heights = crate::pane::split_heights_n(rows, others.len() + 1);
+                                    let heights = crate::pane::split_heights_n_weighted(rows, &norm);
                                     crate::pane::pane_at_row(me.row, &heights)
                                 }
                             }
@@ -3028,7 +3051,7 @@ pub fn run(
                     Command::Resize(c, r) => {
                         let was_at_bottom = viewport.is_at_bottom(src.as_ref(), &idx);
                         cols = c; rows = r;
-                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                        resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                         if was_at_bottom {
                             viewport.goto_bottom(src.as_ref(), &mut idx);
                         }
@@ -3136,7 +3159,7 @@ pub fn run(
                     }
                     cmd @ (Command::FocusOtherPane | Command::FocusPrevPane) => {
                         let forward = cmd == Command::FocusOtherPane;
-                        unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                        unzoom(&mut zoomed, &mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                         if diff.is_some() {
                             // In diff mode the panes are aligned and scroll as one
                             // unit, so "focus" is meaningless — and a swap would
@@ -3175,7 +3198,7 @@ pub fn run(
                             // Re-assert physical-side widths: each viewport must be
                             // resized to the column it now occupies (matters on odd
                             // widths where columns differ).
-                            resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation);
+                            resize_split_aware(&mut viewport, &mut others, cols, rows, focused_pos, orientation, &pane_sizes);
                             needs_redraw = true;
                         }
                     }
@@ -3195,7 +3218,7 @@ pub fn run(
                         }
                     }
                     Command::ZoomPane => {
-                        toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation);
+                        toggle_zoom(&mut zoomed, &mut viewport, &mut others, diff.is_some(), cols, rows, focused_pos, orientation, &pane_sizes);
                         needs_redraw = true;
                     }
                     Command::ToggleMouse => {
@@ -4238,22 +4261,23 @@ mod tests {
     #[test]
     fn toggle_zoom_flips_only_with_a_split_and_not_in_diff() {
         let mut vp = Viewport::new(80, 24, "f".into());
+        let no_sizes: Vec<Option<u16>> = Vec::new();
 
         // Single pane (no others): no-op.
         let mut z = false;
         let mut none: Vec<crate::pane::Pane> = Vec::new();
-        toggle_zoom(&mut z, &mut vp, &mut none, false, 80, 24, 0, Orientation::Vertical);
+        toggle_zoom(&mut z, &mut vp, &mut none, false, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(!z, "single pane must not zoom");
 
         // Split present but diff active: no-op.
         let mut others = vec![pane_with_id(1)];
-        toggle_zoom(&mut z, &mut vp, &mut others, true, 80, 24, 0, Orientation::Vertical);
+        toggle_zoom(&mut z, &mut vp, &mut others, true, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(!z, "diff must not zoom");
 
         // Split present, no diff: flips on, then off.
-        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical);
+        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(z, "split should zoom");
-        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical);
+        toggle_zoom(&mut z, &mut vp, &mut others, false, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(!z, "second toggle unzooms");
     }
 
@@ -4262,10 +4286,11 @@ mod tests {
         let mut vp = Viewport::new(80, 24, "f".into());
         let mut others = vec![pane_with_id(1)];
         let mut z = true;
-        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical);
+        let no_sizes: Vec<Option<u16>> = Vec::new();
+        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(!z);
         // Already unzoomed: stays false, no panic.
-        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical);
+        unzoom(&mut z, &mut vp, &mut others, 80, 24, 0, Orientation::Vertical, &no_sizes);
         assert!(!z);
     }
 
