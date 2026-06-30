@@ -335,6 +335,8 @@ struct GroupEntry {
     or_grep: Vec<String>,
     #[serde(default)]
     or: std::collections::HashMap<String, OrSubGroup>,
+    width: Option<u16>,
+    height: Option<u16>,
 }
 
 /// A user-defined CLI shortcut. When `tess --<group_name>` appears in argv,
@@ -373,6 +375,10 @@ pub struct Group {
     pub(crate) source: crate::config_path::ConfigSource,
     #[allow(dead_code)]
     pub(crate) overrides: Option<crate::config_path::ConfigSource>,
+    /// Percentage of the split to allocate to this pane (1–100). Used by
+    /// `[layout.NAME]` panes: vertical layouts use `width`, horizontal use `height`.
+    pub width: Option<u16>,
+    pub height: Option<u16>,
 }
 
 /// Long-form names of every built-in clap flag. A group cannot reuse one of
@@ -593,9 +599,35 @@ pub fn load_layouts() -> Result<HashMap<String, Layout>, String> {
             return Err(format!("layout `{name}`: needs at least one pane"));
         }
         let mut panes = Vec::with_capacity(entry.pane.len());
-        for (i, pane) in entry.pane.into_iter().enumerate() {
+        for (i, mut pane) in entry.pane.into_iter().enumerate() {
             if pane.file.is_none() {
                 return Err(format!("layout `{name}` pane {i}: missing `file`"));
+            }
+            // Validate width/height percentages (1..=100) and ignore wrong-axis.
+            if horizontal {
+                if let Some(w) = pane.width {
+                    eprintln!("tess: layout `{name}` pane {i}: `width` ignored for horizontal layout (use `height`)");
+                    let _ = w;
+                    pane.width = None;
+                }
+                if let Some(h) = pane.height {
+                    if !(1..=100).contains(&h) {
+                        eprintln!("tess: layout `{name}` pane {i}: `height` {h} out of range 1..=100, ignored");
+                        pane.height = None;
+                    }
+                }
+            } else {
+                if let Some(w) = pane.width {
+                    if !(1..=100).contains(&w) {
+                        eprintln!("tess: layout `{name}` pane {i}: `width` {w} out of range 1..=100, ignored");
+                        pane.width = None;
+                    }
+                }
+                if let Some(h) = pane.height {
+                    eprintln!("tess: layout `{name}` pane {i}: `height` ignored for vertical layout (use `width`)");
+                    let _ = h;
+                    pane.height = None;
+                }
             }
             panes.push(promote_group(format!("{name}.pane{i}"), pane));
         }
@@ -643,6 +675,8 @@ fn promote_group(name: String, entry: GroupEntry) -> Group {
             v.sort_by(|a, b| a.0.cmp(&b.0)); // deterministic emission order
             v
         },
+        width: entry.width,
+        height: entry.height,
         ..Group::default()
     }
 }
@@ -801,10 +835,12 @@ pub fn expand_argv(argv: Vec<String>, groups: &HashMap<String, Group>) -> Vec<St
 /// its group-style flags (via `expand_group`) followed by its `file` positional,
 /// with `--` separators between panes. Tokens before the layout token (program
 /// name + globals) stay ahead of section 0; tokens after it are appended after the
-/// last section. Returns `(rewritten_argv, Some(horizontal))`. No layout token →
-/// `(argv, None)`.
+/// last section. Returns `(rewritten_argv, Some(horizontal), pane_sizes)` where
+/// `pane_sizes` holds the per-pane `width` or `height` percentage (vertical=width,
+/// horizontal=height) for immediate use as `pane_sizes_seed`. No layout token →
+/// `(argv, None, vec![])`.
 pub fn expand_layout_argv(argv: Vec<String>, layouts: &std::collections::HashMap<String, Layout>)
-    -> (Vec<String>, Option<bool>)
+    -> (Vec<String>, Option<bool>, Vec<Option<u16>>)
 {
     for i in 1..argv.len() {
         if let Some(name) = argv[i].strip_prefix("--") {
@@ -817,11 +853,14 @@ pub fn expand_layout_argv(argv: Vec<String>, layouts: &std::collections::HashMap
                     expand_group(pane, &mut out);
                 }
                 out.extend_from_slice(&argv[i + 1..]);
-                return (out, Some(layout.horizontal));
+                let sizes: Vec<Option<u16>> = layout.panes.iter()
+                    .map(|g| if layout.horizontal { g.height } else { g.width })
+                    .collect();
+                return (out, Some(layout.horizontal), sizes);
             }
         }
     }
-    (argv, None)
+    (argv, None, vec![])
 }
 
 /// Public wrapper over `expand_group` for reuse by the runtime `:layout` command.
@@ -1946,20 +1985,22 @@ grep = ["ssh", "sshd"]
             ],
         });
         let argv: Vec<String> = ["tess", "--mouse", "--dash"].iter().map(|s| s.to_string()).collect();
-        let (out, horiz) = expand_layout_argv(argv, &layouts);
+        let (out, horiz, sizes) = expand_layout_argv(argv, &layouts);
         assert_eq!(horiz, Some(true));
         let expected: Vec<String> = ["tess", "--mouse", "--format", "myapp", "--filter", "x=1", "a.log",
             "--", "--grep", "5..", "b.log"].iter().map(|s| s.to_string()).collect();
         assert_eq!(out, expected);
+        assert_eq!(sizes, vec![None, None]); // panes have no width/height set
     }
 
     #[test]
     fn expand_layout_argv_noop_without_layout_token() {
         let layouts: std::collections::HashMap<String, Layout> = std::collections::HashMap::new();
         let argv: Vec<String> = ["tess", "a.log"].iter().map(|s| s.to_string()).collect();
-        let (out, horiz) = expand_layout_argv(argv.clone(), &layouts);
+        let (out, horiz, sizes) = expand_layout_argv(argv.clone(), &layouts);
         assert_eq!(out, argv);
         assert_eq!(horiz, None);
+        assert!(sizes.is_empty());
     }
 
     #[test]
@@ -2011,5 +2052,22 @@ grep = ["ssh", "sshd"]
         // global only -> global applies.
         let local_empty: UserConfig = toml::from_str("").unwrap();
         assert_eq!(local_empty.settings.mouse.or(global.settings.mouse), Some(true));
+    }
+
+    #[test]
+    fn layout_pane_width_deserializes_and_promotes() {
+        let toml = "\
+[layout.dash]
+orientation = \"vertical\"
+[[layout.dash.pane]]
+file = \"a.log\"
+width = 60
+[[layout.dash.pane]]
+file = \"b.log\"
+";
+        let cfg: UserConfig = toml::from_str(toml).unwrap();
+        let pane0 = &cfg.layout["dash"].pane[0];
+        assert_eq!(pane0.width, Some(60));
+        assert_eq!(cfg.layout["dash"].pane[1].width, None);
     }
 }
