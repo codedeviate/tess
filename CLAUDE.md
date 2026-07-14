@@ -84,6 +84,12 @@ gh release create vX.Y.Z --generate-notes
 
 (If you're also shipping the `.deb` artifacts described in the "Linux release artifacts" section below, `gh release upload` is the follow-up — but that's adding assets to the same release, not creating a second one.)
 
+**"Latest" pointer.** `https://github.com/codedeviate/tess/releases/latest` always
+redirects to the newest release — no `latest` tag or extra step needed. `gh release
+create` auto-flags the highest-semver, non-prerelease release as "Latest", so this
+pointer advances on its own with every release. Just don't pass `--prerelease` or
+`--latest=false` for a normal release, or GitHub won't move the pointer to it.
+
 ### 2. crates.io
 
 From the repo root, with the new version already in `Cargo.toml`:
