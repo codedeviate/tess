@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.60.1] — 2026-07-17
+
+### Changed
+- **Documentation.** The manual's "Files" section now documents the full set of config-file locations: both per-user files (`~/.config/tess/formats.toml` and `~/.config/tess/keys.toml`), the global `/etc/tess/` layer, the `$TESS_GLOBAL_CONFIG_DIR` override, and the fact that the paths are identical on macOS and Linux (not platform-native locations). Cross-links to the existing "Global and local config" section. Also documented (in `CLAUDE.md`) that GitHub's built-in `/releases/latest` pointer always tracks the newest release, so no moving `latest` tag is needed. Docs-only; no behavior change.
+
 ## [0.60.0] — 2026-06-30
 
 ### Added

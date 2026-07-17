@@ -1986,7 +1986,34 @@ pane with no `file` is an error at load time.
 
 ## Files
 
-- **`~/.config/tess/formats.toml`** — user-defined log formats, groups, and layouts. See [Defining your own](#defining-your-own), [Groups](#groups-command-line-shortcuts), and [Layouts](#layouts-saved-split-arrangements).
+`tess` reads two config files, each resolved from two layers (global, then
+per-user local). The paths are the **same on macOS and Linux** — plain Unix
+conventions, not platform-native locations like macOS's
+`~/Library/Application Support`. Full layering and merge rules are in
+[Global and local config](#global-and-local-config).
+
+**Per-user (local) — `$HOME/.config/tess/`:**
+
+- **`~/.config/tess/formats.toml`** — user-defined log formats, groups, layouts,
+  and the `[settings]` table. See [Defining your own](#defining-your-own),
+  [Groups](#groups-command-line-shortcuts), and
+  [Layouts](#layouts-saved-split-arrangements).
+- **`~/.config/tess/keys.toml`** — custom keybindings. See
+  [Customizing key bindings](#customizing-key-bindings).
+
+**Global (shared / admin) — `/etc/tess/`:**
+
+- **`/etc/tess/formats.toml`** and **`/etc/tess/keys.toml`** — a system-wide
+  baseline every user inherits, for shared hosts. Only consulted if the
+  directory exists; a default install does not create it.
+
+**Overrides:**
+
+- **`$TESS_GLOBAL_CONFIG_DIR`** — if set, replaces `/etc/tess` as the global
+  directory (used as-is, no existence check). Useful for tests, CI, or a
+  brew-writable path such as `$HOMEBREW_PREFIX/etc/tess/` on macOS.
+
+If `$HOME` is unset, no local config is loaded.
 
 ---
 
