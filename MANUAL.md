@@ -269,9 +269,9 @@ tess --clipboard app.log                                # then :yank a line
 
 ### Other
 
-- **`-h`, `--help`** — print a flag list (sorted alphabetically by long name) and exit.
-- **`--manual`** — print this manual to stdout and exit. Pipe to a pager if you want to scroll: `tess --manual | less`.
-- **`--examples`** — print a short, curated list of practical usage recipes and exit. Lighter than `--manual`.
+- **`-h`, `--help`** — show the full flag reference (sorted alphabetically by long name). Since 0.61.0, on a terminal this opens in tess's own pager — scroll, `/` search, `q` to quit — just like `--manual` and `--examples`; when redirected or piped (`tess --help | grep`) it prints plain text and exits. `-h` and `--help` show the same text.
+- **`--manual`** — show this manual. Paginated through tess on a terminal (scroll / search / `q`); prints plain text when redirected (`tess --manual > out.txt`, `tess --manual | grep`).
+- **`--examples`** — show a short, curated list of practical usage recipes. Same pager-on-a-terminal / plain-when-piped behavior; lighter than `--manual`.
 - **`--mouse`** — explicit-on alias for mouse capture (kept for compatibility; capture is **on by default** since 0.56.0). Conflicts with `--no-mouse`.
 - **`--no-mouse`** — disable mouse capture at startup, restoring native terminal text-selection. Conflicts with `--mouse`. See [Mouse capture](#mouse-capture) for the full story and runtime controls.
 - **`--wheel-lines N`** — the absolute number of body lines scrolled per mouse-wheel notch. Default `3`.

@@ -513,6 +513,46 @@ fn resolve_truecolor(args: &Args) -> std::result::Result<bool, String> {
     }
 }
 
+/// True when a clap parse outcome is a request to display `--help` / `-h`
+/// (as opposed to `--version` or a genuine argument error, which keep clap's
+/// default exit behavior). Kept pure so it's unit-testable without a terminal.
+fn help_was_requested(kind: clap::error::ErrorKind) -> bool {
+    use clap::error::ErrorKind;
+    matches!(
+        kind,
+        ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    )
+}
+
+/// Render the full `--help` text. Uses clap's *long* help (`render_long_help`)
+/// — the multi-line form clap's `--help` action has always produced — so both
+/// `-h` and `--help` page the same complete text. `colored` embeds the clap
+/// `HELP_STYLES` ANSI codes (for the pager, which interprets them); plain text
+/// otherwise (for a redirected / piped `tess --help`).
+fn render_help_string(colored: bool) -> String {
+    use clap::CommandFactory;
+    let mut cmd = Args::command();
+    let styled = cmd.render_long_help();
+    if colored {
+        styled.ansi().to_string()
+    } else {
+        styled.to_string()
+    }
+}
+
+/// Show `--help` the same way `--manual` / `--examples` are shown: page it
+/// through tess itself on a TTY (scroll / search / `q`), print plain when
+/// stdout is redirected.
+fn show_help_paged() -> Result<()> {
+    let is_tty = io::stdout().is_terminal();
+    let text = render_help_string(is_tty);
+    if is_tty {
+        return page_bytes("(help)", text.as_bytes(), tess::render::AnsiMode::Interpret);
+    }
+    print!("{}", text);
+    Ok(())
+}
+
 fn page_bytes(label: &str, content: &[u8], ansi_mode: tess::render::AnsiMode) -> Result<()> {
     let src = MockSource::new();
     src.append(content);
@@ -638,7 +678,13 @@ fn real_main() -> Result<()> {
 
     let argv = format::expand_argv(cleaned_argv, &groups);
     let or_spec = tess::or::extract_from_argv(&argv);
-    let args = Args::parse_from(argv);
+    // Intercept `--help` / `-h` so it pages through tess like `--examples`.
+    // `--version` and real argument errors keep clap's default exit behavior.
+    let args = match Args::try_parse_from(argv) {
+        Ok(a) => a,
+        Err(e) if help_was_requested(e.kind()) => return show_help_paged(),
+        Err(e) => e.exit(),
+    };
 
     // Sections 1..N: each group-expands and parses into its own per-view `Args`.
     // OR-groups and `+CMD` are section-0-only. `+CMD` is only stripped from
@@ -1564,6 +1610,43 @@ mod tests {
     fn inject_version_replaces_token() {
         assert_eq!(inject_version("a {{VERSION}} b", "9.9.9"), "a 9.9.9 b");
         assert_eq!(inject_version("none here", "9.9.9"), "none here");
+    }
+
+    #[test]
+    fn help_flags_are_recognized_as_help_requests() {
+        // Both `-h` and `--help` produce a DisplayHelp outcome we intercept.
+        for flag in ["--help", "-h"] {
+            let err = Args::try_parse_from(["tess", flag]).unwrap_err();
+            assert!(
+                help_was_requested(err.kind()),
+                "{flag} should be treated as a help request",
+            );
+        }
+    }
+
+    #[test]
+    fn version_and_errors_are_not_help_requests() {
+        // --version must stay unpaginated; a bad flag must fall through to
+        // clap's normal error exit. Neither is a help request.
+        let ver = Args::try_parse_from(["tess", "--version"]).unwrap_err();
+        assert!(!help_was_requested(ver.kind()));
+        let bad = Args::try_parse_from(["tess", "--no-such-flag"]).unwrap_err();
+        assert!(!help_was_requested(bad.kind()));
+    }
+
+    #[test]
+    fn render_help_string_plain_has_flags_and_no_escapes() {
+        let plain = render_help_string(false);
+        assert!(plain.contains("--examples"), "help should list --examples");
+        assert!(plain.contains("--manual"), "help should list --manual");
+        assert!(!plain.contains('\x1b'), "plain help must carry no ANSI escapes");
+    }
+
+    #[test]
+    fn render_help_string_colored_has_escapes() {
+        let colored = render_help_string(true);
+        assert!(colored.contains("--examples"), "colored help still lists flags");
+        assert!(colored.contains('\x1b'), "colored help must embed ANSI escapes");
     }
 
     #[test]

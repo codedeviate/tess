@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.61.0] — 2026-07-17
+
+### Changed
+- **`--help` / `-h` now paginate.** The full flag reference opens in tess's own pager on a terminal — scroll, `/` search, `q` to quit — exactly like `--manual` and `--examples`, instead of scrolling off the top of the screen. When stdout is redirected or piped (`tess --help | grep`, `> out.txt`) it prints plain text and exits, unchanged. `-h` and `--help` show the same complete (long-form) help. `--version` and argument errors are unaffected.
+
 ## [0.60.1] — 2026-07-17
 
 ### Changed
