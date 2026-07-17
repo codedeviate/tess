@@ -67,6 +67,7 @@ cmd | tess [OPTIONS]
 - **`--tail N`** — show only the last `N` logical lines. For files, reverse-scans for the byte offset and only indexes from there forward, so a 10 GB log stays cheap. Mutually exclusive with `--head`. Streaming stdin (`-f` without a file) is not supported. Re-applied on every reload under `--live`.
 - **`--head N`** — cap the visible content to the first `N` logical lines. Mutually exclusive with `--tail`. Re-applied on every reload under `--live`.
 - **`--encoding LABEL`** — decode the input as `LABEL` (a WHATWG charset label) instead of UTF-8. See [Character encoding](#character-encoding).
+- **`--file PATH`** — open `PATH`, overriding any positional file argument. Its main use is to override a group's configured `file`: `tess --error --file ./local.error` applies the `error` group's view (format, filters, …) but reads `./local.error` instead of the group's fixed path — handy when the log lives elsewhere, e.g. a Docker-mounted directory. Single file; rejected in combination with the `--` per-pane form. See [Groups](#groups-command-line-shortcuts).
 - **`--diff`** — open a side-by-side aligned diff of two files (implies a split). Interactive only. See [Diff mode](#diff-mode---diff--diff). Runtime: `:diff`.
 - **`--diff-force`** — allow `--diff` past the size cap (large files; may be slow / memory-heavy). Runtime: `:diff!`.
 - **`--gitdiff`** — aligned diff of one file against git: `HEAD` (or a given revision / the `--staged` index) vs the working tree. Requires a git repo. See [Git diff](#git-diff---gitdiff).
@@ -174,6 +175,7 @@ UTF-16 file would misalign after the first line.
   Works with `--filter`, `--grep`, or both. Keeps surrounding context visible.
 - **`--display TEMPLATE`** — reformat each parsed line into a custom view. Placeholders `<fieldname>` are replaced with the captured value (empty if the regex didn't capture the field on this line). `\<` is a literal `<`, `\\` is a literal `\`; other `\X` is left as-is. Lines that don't parse against the format regex fall back to their raw form so no data is silently dropped. Requires `--format`. Overrides the format's `display` key (if set in `formats.toml`). Affects both the interactive view and `--output` / `--stdout`. Search runs against the rendered template (what you see is what you can find); filtering still operates on the raw captures. Mutually exclusive with `--prettify`.
 - **`--list-formats`** — print available formats and their named fields, then exit.
+- **`--list-groups`** — print the names of available CLI groups (defined in `formats.toml`), one per line, indented, then exit. See [Groups](#groups-command-line-shortcuts).
 
 #### Runtime filtering & per-pane predicates
 
@@ -1848,6 +1850,19 @@ tess --errorlog 'msg~timeout' 'reqid=deadbeefcafe'
 # Override a group flag with a CLI flag (the CLI value wins):
 tess --errorlog --tail 50 'msg~timeout'
 # Group has tail=1000 but you override to 50.
+
+# Override the group's file (keep its view, read a different path):
+tess --errorlog --file ./captured.error
+# Applies format/follow/tail/filter from the group, but opens ./captured.error
+# instead of /var/log/apache2/SE.error — e.g. a Docker-mounted log directory.
+```
+
+List the group names you have defined:
+
+```sh
+tess --list-groups
+#   access5xx
+#   errorlog
 ```
 
 ### Group fields
@@ -1924,7 +1939,7 @@ grep = ["timeout", "deadlock"]   # both patterns must match
 
 ### Restrictions
 
-- A group cannot be named the same as a built-in flag (`format`, `filter`, `dim`, `head`, `tail`, `follow`, `LINE-NUMBERS`, `chop-long-lines`, `tab-width`, `list-formats`, `help`, `version`). Trying to load such a group prints an error and exits.
+- A group cannot be named the same as a built-in flag (`format`, `filter`, `dim`, `head`, `tail`, `follow`, `LINE-NUMBERS`, `chop-long-lines`, `tab-width`, `list-formats`, `list-groups`, `file`, `help`, `version`). Trying to load such a group prints an error and exits.
 - Once a group token is seen, every subsequent bare positional in argv (anything that doesn't start with `-`) becomes a `--filter` argument. To open a different file alongside an active group, edit the group or define a second one — there is no `--file` override flag yet.
 
 ## Layouts: saved split arrangements

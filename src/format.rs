@@ -395,6 +395,8 @@ const RESERVED_LONG_FLAGS: &[&str] = &[
     "chop-long-lines",
     "tab-width",
     "list-formats",
+    "list-groups",
+    "file",
     "live",
     "manual",
     "examples",
@@ -746,6 +748,7 @@ pub fn load_all() -> Result<HashMap<String, LogFormat>, String> {
 const VALUE_TAKING_LONG_FLAGS: &[&str] = &[
     "--content-type",
     "--display",
+    "--file",
     "--filter",
     "--format",
     "--grep",
@@ -957,6 +960,26 @@ fn format_source_label(
         // practice but kept for total-match completeness.
         Some(Local) => format!("[{layer}, overrides local]"),
     }
+}
+
+/// Render the group names, sorted and each indented two spaces, one per line
+/// (trailing newline). Kept pure so `--list-groups` output is unit-testable.
+pub fn format_group_list(groups: &HashMap<String, Group>) -> String {
+    let mut names: Vec<&String> = groups.keys().collect();
+    names.sort();
+    let mut out = String::new();
+    for name in names {
+        out.push_str("  ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out
+}
+
+/// Print the available CLI group names, indented, to stdout. Used by
+/// `--list-groups`.
+pub fn print_group_list(groups: &HashMap<String, Group>) {
+    print!("{}", format_group_list(groups));
 }
 
 /// Print one line per format, with the named field list and source
@@ -1290,6 +1313,69 @@ file = "/tmp/x.log"
             out,
             argv(&["tess", "--tail", "50", "--filter", "msg=hi"])
         );
+    }
+
+    #[test]
+    fn expand_argv_keeps_file_flag_after_group() {
+        // `--file X` after a group must survive filter-mode: X is the flag's
+        // value (a file override), not a bare positional to rewrite as --filter.
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert(
+            "error".into(),
+            Group {
+                name: "error".into(),
+                format: Some("apache-combined".into()),
+                file: Some("/var/log/x.error".into()),
+                ..Group::default()
+            },
+        );
+        let out = expand_argv(argv(&["tess", "--error", "--file", "./local.error"]), &groups);
+        assert_eq!(
+            out,
+            argv(&[
+                "tess",
+                "--format", "apache-combined",
+                "/var/log/x.error",
+                "--file", "./local.error",
+            ])
+        );
+        // The override value did NOT become a filter.
+        assert!(!out.windows(2).any(|w| w == ["--filter", "./local.error"]));
+    }
+
+    #[test]
+    fn format_group_list_is_sorted_and_indented() {
+        let mut groups: HashMap<String, Group> = HashMap::new();
+        groups.insert("zebra".into(), group("zebra"));
+        groups.insert("error".into(), group("error"));
+        groups.insert("log".into(), group("log"));
+        assert_eq!(format_group_list(&groups), "  error\n  log\n  zebra\n");
+    }
+
+    #[test]
+    fn format_group_list_empty_is_empty_string() {
+        let groups: HashMap<String, Group> = HashMap::new();
+        assert_eq!(format_group_list(&groups), "");
+    }
+
+    #[test]
+    fn load_groups_rejects_file_and_list_groups_names() {
+        for name in ["file", "list-groups"] {
+            let _g = crate::test_env::lock();
+            let tmp = tempfile::tempdir().unwrap();
+            let cfg_dir = tmp.path().join(".config").join("tess");
+            std::fs::create_dir_all(&cfg_dir).unwrap();
+            std::fs::write(
+                cfg_dir.join("formats.toml"),
+                format!("[group.\"{name}\"]\nfile = \"/x.log\"\n"),
+            )
+            .unwrap();
+            let saved = std::env::var_os("HOME");
+            std::env::set_var("HOME", tmp.path());
+            let result = load_groups();
+            if let Some(h) = saved { std::env::set_var("HOME", h); } else { std::env::remove_var("HOME"); }
+            assert!(result.is_err(), "group named `{name}` should be rejected");
+        }
     }
 
     #[test]

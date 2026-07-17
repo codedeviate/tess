@@ -230,6 +230,11 @@ pub struct Args {
     #[arg(long = "list-formats")]
     pub list_formats: bool,
 
+    /// Print the names of available CLI groups (defined in formats.toml),
+    /// one per line, then exit.
+    #[arg(long = "list-groups")]
+    pub list_groups: bool,
+
     /// Live mode: re-read the file when its on-disk content changes (mtime,
     /// size, or inode). Use this for files rewritten in place — source files
     /// being edited, files saved by an editor or AI agent. Different from
@@ -550,6 +555,15 @@ pub struct Args {
     /// when no whitespace fits in the row. Mirrors `less --wordwrap`.
     #[arg(long = "wordwrap")]
     pub word_wrap: bool,
+
+    /// Override the input file. Takes precedence over positional file
+    /// arguments and, in particular, over a group's configured `file` — so
+    /// `tess --error --file ./local.error` applies the `error` group's view
+    /// but opens `./local.error` (useful when a log lives at a different path,
+    /// e.g. a Docker-mounted directory). Single file; not for the `--` per-pane
+    /// form.
+    #[arg(long = "file", value_name = "PATH")]
+    pub file: Option<PathBuf>,
 
     /// Files to view. Navigate between them with `:n` / `:p` / `:e` / `:x`.
     pub files: Vec<PathBuf>,
@@ -1090,6 +1104,21 @@ mod tests {
         assert!(Args::parse_from(["tess", "-g"]).hilite_only_match);
         assert!(Args::parse_from(["tess", "--hilite-search"]).hilite_only_match);
         assert!(!Args::parse_from(["tess"]).hilite_only_match);
+    }
+
+    #[test]
+    fn parses_list_groups() {
+        assert!(Args::parse_from(["tess", "--list-groups"]).list_groups);
+        assert!(!Args::parse_from(["tess"]).list_groups);
+    }
+
+    #[test]
+    fn parses_file_override() {
+        assert_eq!(
+            Args::parse_from(["tess", "--file", "x.log"]).file,
+            Some(std::path::PathBuf::from("x.log")),
+        );
+        assert_eq!(Args::parse_from(["tess"]).file, None);
     }
 
     #[test]

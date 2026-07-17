@@ -10,6 +10,12 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.62.0] — 2026-07-17
+
+### Added
+- **`--list-groups`.** Prints the names of the CLI groups defined in `formats.toml`, one per line, indented, then exits — the group-oriented companion to `--list-formats`.
+- **`--file PATH`.** Overrides the input file, winning over any positional argument — in particular a group's configured `file`. `tess --error --file ./local.error` applies the `error` group's view (format, filters, follow, …) but reads `./local.error`, so a group can point at a log that lives elsewhere (e.g. a Docker-mounted directory) without editing `formats.toml`. Single file; rejected in combination with the `--` per-pane form. `file` and `list-groups` are now reserved group names.
+
 ## [0.61.0] — 2026-07-17
 
 ### Changed

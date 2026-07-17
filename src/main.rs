@@ -152,6 +152,8 @@ fn build_examples_text() -> String {
         "tess --errorlog",
         "tess --errorlog 'msg~timeout'",
         "tess --errorlog --tail 50",
+        "tess --errorlog --file ./captured.error   # keep the view, override the file",
+        "tess --list-groups                         # list defined group names",
     ]);
 
     examples_section(&mut buf, "OR-group filtering (complex log queries)");
@@ -680,7 +682,7 @@ fn real_main() -> Result<()> {
     let or_spec = tess::or::extract_from_argv(&argv);
     // Intercept `--help` / `-h` so it pages through tess like `--examples`.
     // `--version` and real argument errors keep clap's default exit behavior.
-    let args = match Args::try_parse_from(argv) {
+    let mut args = match Args::try_parse_from(argv) {
         Ok(a) => a,
         Err(e) if help_was_requested(e.kind()) => return show_help_paged(),
         Err(e) => e.exit(),
@@ -702,6 +704,21 @@ fn real_main() -> Result<()> {
     } else {
         Vec::new()
     };
+
+    // `--file PATH` overrides the file to open, winning over any positional —
+    // in particular a group's configured `file` (injected as a trailing
+    // positional by `expand_group`). Single-file only; the `--` per-pane form
+    // has its own per-section files, so `--file` in ANY section is rejected
+    // (rather than silently ignored) when the per-pane form is in play.
+    if per_pane {
+        if args.file.is_some() || section_args.iter().any(|a| a.file.is_some()) {
+            return Err(Error::Runtime(
+                "--file can't be combined with the `--` per-pane form".to_string(),
+            ));
+        }
+    } else if let Some(override_path) = args.file.take() {
+        args.files = vec![override_path];
+    }
 
     if per_pane {
         validate_per_pane_argv(&args, sections.len())?;
@@ -799,6 +816,11 @@ fn real_main() -> Result<()> {
     if args.list_formats {
         let formats = format::load_all().map_err(Error::Runtime)?;
         format::print_format_list(&formats);
+        return Ok(());
+    }
+
+    if args.list_groups {
+        format::print_group_list(&groups);
         return Ok(());
     }
 
