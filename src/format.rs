@@ -381,6 +381,13 @@ pub struct Group {
     pub height: Option<u16>,
 }
 
+/// The built-in flag long-names a group cannot shadow. Exposed so the
+/// man-page generator can render the GROUPS reserved-names list from the same
+/// source of truth the loader enforces (no hand-maintained second copy).
+pub fn reserved_group_names() -> &'static [&'static str] {
+    RESERVED_LONG_FLAGS
+}
+
 /// Long-form names of every built-in clap flag. A group cannot reuse one of
 /// these names — it would shadow the real flag at expansion time.
 const RESERVED_LONG_FLAGS: &[&str] = &[
@@ -1341,6 +1348,16 @@ file = "/tmp/x.log"
         );
         // The override value did NOT become a filter.
         assert!(!out.windows(2).any(|w| w == ["--filter", "./local.error"]));
+    }
+
+    #[test]
+    fn reserved_group_names_covers_new_flags() {
+        // The man page's GROUPS section is generated from this list, so it must
+        // stay in sync with the flags the loader actually reserves.
+        let names = reserved_group_names();
+        for expected in ["file", "list-groups", "list-formats", "format"] {
+            assert!(names.contains(&expected), "reserved names missing `{expected}`");
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH tess 1  "tess 0.62.0" 
+.TH tess 1  "tess 0.62.1" 
 .SH NAME
 tess \- A less\-style terminal pager.
 .SH SYNOPSIS
@@ -287,5 +287,7 @@ Print version
 .TP
 [\fIFILES\fR]
 Files to view. Navigate between them with `:n` / `:p` / `:e` / `:x`
+.SH GROUPS
+A CLI group (a \fB\-\-<name>\fR shortcut defined in \fBformats.toml\fR) cannot be named the same as a built\-in flag. Reserved names: \fBformat\fR, \fBfilter\fR, \fBgrep\fR, \fBdim\fR, \fBhead\fR, \fBtail\fR, \fBfollow\fR, \fBLINE\-NUMBERS\fR, \fBchop\-long\-lines\fR, \fBtab\-width\fR, \fBlist\-formats\fR, \fBlist\-groups\fR, \fBfile\fR, \fBlive\fR, \fBmanual\fR, \fBexamples\fR, \fBprettify\fR, \fBcontent\-type\fR, \fBhelp\fR, \fBversion\fR, \fBrecord\-start\fR, \fBhex\fR, \fBprompt\fR, \fBdisplay\fR, \fBor\-filter\fR, \fBor\-grep\fR, \fBor\-group\fR, \fBpreprocess\fR, \fBno\-preprocess\fR, \fBno\-color\fR, \fBraw\-control\-chars\fR, \fBtag\fR, \fBtag\-file\fR, \fBsplit\fR. Attempting to load such a group prints an error and exits.
 .SH VERSION
-v0.62.0
+v0.62.1

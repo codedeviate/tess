@@ -10,6 +10,11 @@ are called out where relevant.
 
 ## [Unreleased]
 
+## [0.62.1] — 2026-07-18
+
+### Changed
+- **Man page now documents reserved group names.** `man tess` gains a `GROUPS` section listing the built-in flag names a group cannot shadow. The list is generated from the same `RESERVED_LONG_FLAGS` constant the group loader enforces (via a new `format::reserved_group_names()`), so it can never drift from the code. Docs-only; no behavior change.
+
 ## [0.62.0] — 2026-07-17
 
 ### Added
